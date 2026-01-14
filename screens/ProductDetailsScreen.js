@@ -14,7 +14,7 @@ import {
   Alert,
   SafeAreaView,
   Platform,
-  Pressable, // ✅ NEW (for outside-tap-to-close)
+  Pressable,
 } from "react-native";
 
 import { useDispatch, useSelector } from "react-redux";
@@ -38,7 +38,7 @@ const font = {
   black: Platform.select({ ios: "AvenirNext-Bold", android: "sans-serif-black", default: "System" }),
 };
 
-/* ----------------- helpers ----------------- */
+/* ----------------- colors ----------------- */
 const palette = {
   bg: "#f8fafc",
   card: "#ffffff",
@@ -59,6 +59,7 @@ const palette = {
   dangerBorder: "#fecaca",
 };
 
+/* ----------------- helpers ----------------- */
 const formatPrice = (price) => {
   const n = Number(price);
   if (!Number.isFinite(n)) return "0";
@@ -104,6 +105,11 @@ const CATEGORY_ROUTE_MAP = {
 const getCategoryRouteName = (categoryName) => {
   const key = normalizeCategoryName(categoryName);
   return CATEGORY_ROUTE_MAP[key] || null;
+};
+
+const calcCartTotal = (items) => {
+  if (!Array.isArray(items)) return 0;
+  return items.reduce((acc, it) => acc + (Number(it?.price) || 0) * (Number(it?.quantity) || 0), 0);
 };
 
 /* ---------------- description parsing ---------------- */
@@ -187,7 +193,7 @@ const splitDescription = (product) => {
   return { intro: intro.trim(), sections };
 };
 
-/* ---------------- UI bits ---------------- */
+/* ---------------- UI components ---------------- */
 const InfoPill = ({ icon, label, tone = "green" }) => {
   const isRed = tone === "red";
   return (
@@ -219,7 +225,7 @@ const ProductSpecsList = ({ product }) => {
       <View style={styles.specsBody}>
         {intro ? <Text style={styles.specsIntro}>{intro}</Text> : null}
 
-        {sections.length > 0 && (
+        {sections.length > 0 ? (
           <View style={[styles.specsSections, intro ? { marginTop: 12 } : null]}>
             {sections.map((sec) => (
               <View key={sec.title} style={styles.specsSection}>
@@ -242,7 +248,7 @@ const ProductSpecsList = ({ product }) => {
               </View>
             ))}
           </View>
-        )}
+        ) : null}
       </View>
     </View>
   );
@@ -255,7 +261,7 @@ const MoneyRow = ({ label, value, bold = false }) => (
   </View>
 );
 
-/* ---------------- skeleton (minimal) ---------------- */
+/* ---------------- skeleton ---------------- */
 const ProductDetailSkeleton = () => (
   <SafeAreaView style={styles.safeArea}>
     <View style={styles.skeletonHeaderBar}>
@@ -279,7 +285,7 @@ const ProductDetailSkeleton = () => (
   </SafeAreaView>
 );
 
-/* ---------------- main screen ---------------- */
+/* ---------------- related helpers ---------------- */
 const RELATED_LIMIT = 10;
 const RECENT_LIMIT = 12;
 
@@ -303,6 +309,9 @@ const getMostRecentSortKey = (p) => {
   return 0;
 };
 
+/* =========================
+   PRODUCT DETAILS SCREEN
+========================= */
 const ProductDetailsScreen = () => {
   const route = useRoute();
   const navigation = useNavigation();
@@ -316,32 +325,34 @@ const ProductDetailsScreen = () => {
   const scrollRef = useRef(null);
 
   const [networkStatus, setNetworkStatus] = useState(true);
-  const [isAddingToCart, setIsAddingToCart] = useState(false);
-  const [addingRelatedToCart, setAddingRelatedToCart] = useState({});
-  const [mobileQty, setMobileQty] = useState(1);
   const [cartSyncError, setCartSyncError] = useState(null);
 
-  // ✅ NEW: to reduce the big space under "View more"
+  const [mobileQty, setMobileQty] = useState(1);
+  const [isAddingToCart, setIsAddingToCart] = useState(false);
+  const [addingRelatedToCart, setAddingRelatedToCart] = useState({});
+
   const [bottomBarHeight, setBottomBarHeight] = useState(0);
 
-  // Basket sheet (now shown inside a Modal)
+  // Basket sheet modal
   const [showBasketSheet, setShowBasketSheet] = useState(false);
   const [lastAddedSummary, setLastAddedSummary] = useState(null);
   const sheetAnim = useRef(new Animated.Value(140)).current;
 
+  // Image modal
   const [isImageModalVisible, setIsImageModalVisible] = useState(false);
 
+  // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const scaleAnim = useRef(new Animated.Value(0.96)).current;
 
-  /* ----- fetch products & product ----- */
+  /* ----- fetch ----- */
   useEffect(() => {
     if (!products || products.length === 0) dispatch(fetchProducts());
     dispatch(fetchProductById(productId));
   }, [dispatch, productId, products?.length]);
 
-  /* ----- anti-flicker + reset scroll/animation ----- */
+  /* ----- reset on product switch ----- */
   useEffect(() => {
     setIsImageModalVisible(false);
     fadeAnim.setValue(0);
@@ -350,7 +361,7 @@ const ProductDetailsScreen = () => {
     requestAnimationFrame(() => scrollRef.current?.scrollTo?.({ y: 0, animated: false }));
   }, [productId, fadeAnim, slideAnim, scaleAnim]);
 
-  /* ----- network status ----- */
+  /* ----- network ----- */
   useEffect(() => {
     const unsub = NetInfo.addEventListener((state) => {
       const online = !!state.isConnected && !!state.isInternetReachable;
@@ -378,11 +389,6 @@ const ProductDetailsScreen = () => {
       setCartSyncError("Failed to sync cart. Changes saved locally.");
     }
   };
-
-  useEffect(() => {
-    if (cartId && networkStatus) syncCartWithDatabase();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cartId, networkStatus]);
 
   /* ----- product resolution ----- */
   const productFromList = useMemo(() => {
@@ -431,7 +437,7 @@ const ProductDetailsScreen = () => {
     return Math.round(((oldP - newP) / oldP) * 100);
   }, [product]);
 
-  /* ---------------- related + fallback to most recent ---------------- */
+  /* ----- related ----- */
   const hasValidCategory = !!product?.categoryName;
   const hasValidBrand = !!product?.brandName;
 
@@ -463,11 +469,8 @@ const ProductDetailsScreen = () => {
     return getCategoryRouteName(product.categoryName);
   }, [product]);
 
-  /* ---------------- cart totals/line ---------------- */
-  const basketTotal = useMemo(() => {
-    if (!Array.isArray(cartItems)) return 0;
-    return cartItems.reduce((acc, item) => acc + (Number(item.price) || 0) * (Number(item.quantity) || 0), 0);
-  }, [cartItems]);
+  /* ----- cart totals/line ----- */
+  const basketTotal = useMemo(() => calcCartTotal(cartItems), [cartItems]);
 
   const cartLineForThisProduct = useMemo(() => {
     if (!product || !Array.isArray(cartItems)) return null;
@@ -483,19 +486,7 @@ const ProductDetailsScreen = () => {
 
   const isCartButtonLoading = isAddingToCart || cartLoading;
 
-  /* ---------------- actions ---------------- */
-  const handleShare = async () => {
-    if (!product) return;
-    try {
-      const message = `Check out this product on Franko Trading:\n\n${product.productName}\nPrice: ₵${formatPrice(
-        product.price
-      )}.00`;
-      await Share.share({ message, title: product.productName });
-    } catch {
-      Alert.alert("Error", "Failed to share product.");
-    }
-  };
-
+  /* ----- basket sheet controls ----- */
   const openBasketSheet = (summary) => {
     setLastAddedSummary(summary);
     setShowBasketSheet(true);
@@ -507,6 +498,19 @@ const ProductDetailsScreen = () => {
       setShowBasketSheet(false);
       setLastAddedSummary(null);
     });
+  };
+
+  /* ----- actions ----- */
+  const handleShare = async () => {
+    if (!product) return;
+    try {
+      const message = `Check out this product on Franko Trading:\n\n${product.productName}\nPrice: ₵${formatPrice(
+        product.price
+      )}.00`;
+      await Share.share({ message, title: product.productName });
+    } catch {
+      Alert.alert("Error", "Failed to share product.");
+    }
   };
 
   const refreshCartAndPersist = async () => {
@@ -536,10 +540,19 @@ const ProductDetailsScreen = () => {
     return await refreshCartAndPersist();
   };
 
+  /**
+   * ✅ IMPLEMENTED (your exact rule):
+   * Every time the sheet opens, show:
+   *   Basket total (display) = Basket total (BEFORE) + Item total
+   * If basket total before is 0, this naturally displays the item total.
+   */
   const handleStickyAddOrUpdate = async () => {
     if (!product || outOfStock) return;
 
     const desiredQty = Math.max(1, Math.min(99, Number(mobileQty) || 1));
+
+    // snapshot BEFORE cart update
+    const basketTotalBefore = Number(basketTotal) || 0;
 
     try {
       setIsAddingToCart(true);
@@ -560,16 +573,15 @@ const ProductDetailsScreen = () => {
       const unit = Number(updatedLine?.price ?? product.price ?? 0);
       const lineTotal = qtyInCart * unit;
 
-      const newBasketTotal = Array.isArray(updatedCart)
-        ? updatedCart.reduce((acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0)
-        : basketTotal;
+      // ✅ REQUIRED DISPLAY
+      const basketTotalDisplay = basketTotalBefore + (Number(lineTotal) || 0);
 
       openBasketSheet({
         productName: product.productName,
         qty: qtyInCart,
         unit,
         lineTotal,
-        basketTotal: newBasketTotal,
+        basketTotalDisplay,
       });
     } catch {
       setCartSyncError("Failed to update cart. Please try again.");
@@ -580,6 +592,10 @@ const ProductDetailsScreen = () => {
 
   const handleAddRelatedToCart = async (p) => {
     if (!p || isOutOfStock(p)) return;
+
+    // snapshot BEFORE cart update
+    const basketTotalBefore = Number(basketTotal) || 0;
+
     try {
       setAddingRelatedToCart((prev) => ({ ...prev, [p.productID]: true }));
 
@@ -592,16 +608,15 @@ const ProductDetailsScreen = () => {
       const unit = Number(updatedLine?.price ?? p.price ?? 0);
       const lineTotal = qtyInCart * unit;
 
-      const newBasketTotal = Array.isArray(updatedCart)
-        ? updatedCart.reduce((acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0)
-        : basketTotal;
+      // ✅ REQUIRED DISPLAY
+      const basketTotalDisplay = basketTotalBefore + (Number(lineTotal) || 0);
 
       openBasketSheet({
         productName: p.productName,
         qty: qtyInCart,
         unit,
         lineTotal,
-        basketTotal: newBasketTotal,
+        basketTotalDisplay,
       });
     } catch {
       setCartSyncError("Failed to add product to cart. Please try again.");
@@ -674,11 +689,7 @@ const ProductDetailsScreen = () => {
           ref={scrollRef}
           style={styles.scrollView}
           showsVerticalScrollIndicator={false}
-          // ✅ FIX: dynamic paddingBottom so there's no huge space under "View more"
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingBottom: Math.max(24, bottomBarHeight + 16) },
-          ]}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(24, bottomBarHeight + 16) }]}
         >
           <Animated.View
             key={String(productId)}
@@ -763,9 +774,7 @@ const ProductDetailsScreen = () => {
                   <View style={styles.viewMoreWrapper}>
                     <TouchableOpacity
                       style={styles.viewMoreBtn}
-                      onPress={() =>
-                        navigation.navigate(categoryRouteName, { categoryName: product.categoryName })
-                      }
+                      onPress={() => navigation.navigate(categoryRouteName, { categoryName: product.categoryName })}
                       activeOpacity={0.9}
                     >
                       <Text style={styles.viewMoreText}>View more</Text>
@@ -783,11 +792,7 @@ const ProductDetailsScreen = () => {
         </ScrollView>
 
         {/* Bottom bar */}
-        <View
-          style={styles.bottomBar}
-          // ✅ NEW: measure real bar height so ScrollView paddingBottom isn't excessive
-          onLayout={(e) => setBottomBarHeight(e.nativeEvent.layout.height)}
-        >
+        <View style={styles.bottomBar} onLayout={(e) => setBottomBarHeight(e.nativeEvent.layout.height)}>
           <View style={styles.qtyWrapper}>
             <View style={styles.qtyBox}>
               <TouchableOpacity
@@ -830,7 +835,7 @@ const ProductDetailsScreen = () => {
           </TouchableOpacity>
         </View>
 
-        {/* ✅ FIX: Basket sheet is now a Modal with backdrop. Tap outside closes automatically */}
+        {/* Basket sheet (Modal) */}
         <Modal
           visible={showBasketSheet && !!lastAddedSummary}
           transparent
@@ -839,7 +844,6 @@ const ProductDetailsScreen = () => {
           onRequestClose={closeBasketSheet}
         >
           <Pressable style={styles.basketBackdrop} onPress={closeBasketSheet}>
-            {/* inner pressable prevents closing when tapping the sheet */}
             <Pressable style={styles.basketSheetWrap} onPress={() => {}}>
               <Animated.View
                 style={[
@@ -878,9 +882,10 @@ const ProductDetailsScreen = () => {
                       bold
                     />
                     <View style={styles.divider} />
+                    {/* ✅ This is the REQUIRED value: basket total (before) + item total */}
                     <MoneyRow
                       label="Basket total"
-                      value={`₵${formatPrice(lastAddedSummary?.basketTotal ?? 0)}.00`}
+                      value={`₵${formatPrice(lastAddedSummary?.basketTotalDisplay ?? 0)}.00`}
                       bold
                     />
                   </View>
@@ -916,9 +921,7 @@ const ProductDetailsScreen = () => {
         >
           <View style={styles.imageModalOverlay}>
             <View style={styles.imageModalContent}>
-              {imageUrl ? (
-                <Image source={{ uri: imageUrl }} style={styles.imageModalImage} resizeMode="contain" />
-              ) : null}
+              {imageUrl ? <Image source={{ uri: imageUrl }} style={styles.imageModalImage} resizeMode="contain" /> : null}
               <TouchableOpacity style={styles.imageModalClose} onPress={() => setIsImageModalVisible(false)}>
                 <View style={styles.imageModalCloseInner}>
                   <Icon name="close" size={24} color="#ffffff" />
@@ -973,7 +976,6 @@ const styles = StyleSheet.create({
   bannerText: { flex: 1, fontSize: 13, color: palette.text, fontFamily: font.medium },
 
   scrollView: { flex: 1 },
-  // ✅ removed fixed paddingBottom from here (now dynamic in JSX)
   scrollContent: { paddingHorizontal: 12, paddingTop: 12 },
 
   gridWrapper: { flexDirection: screenWidth >= 768 ? "row" : "column", gap: 12 },
@@ -1091,8 +1093,7 @@ const styles = StyleSheet.create({
   },
   noRelatedText: { marginTop: 6, fontSize: 13, color: palette.gray, fontFamily: font.medium },
 
-  // ✅ reduced extra spacing around "View more"
-  viewMoreWrapper: {  marginBottom: 2, alignItems: "center" },
+  viewMoreWrapper: { marginBottom: 2, alignItems: "center" },
   viewMoreBtn: {
     borderRadius: 36,
     borderWidth: 1,
@@ -1143,15 +1144,13 @@ const styles = StyleSheet.create({
   bottomAddBtnDisabled: { backgroundColor: "#e5e7eb" },
   bottomAddBtnText: { fontSize: 15, color: "#ffffff", fontFamily: font.black },
 
-  // ✅ NEW: basket modal backdrop
+  // basket modal backdrop
   basketBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.25)",
     justifyContent: "flex-end",
   },
-  basketSheetWrap: {
-    width: "100%",
-  },
+  basketSheetWrap: { width: "100%" },
 
   // basket sheet
   basketSheet: { paddingHorizontal: 10, paddingBottom: 10 },
