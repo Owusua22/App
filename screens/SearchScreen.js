@@ -308,13 +308,7 @@ export default function SearchScreen() {
         </View>
       </View>
 
-      {/* Hint */}
-      <View style={styles.tipCard}>
-        <Icon name="tips-and-updates" size={18} color="#065F46" />
-        <Text style={styles.tipText}>
-          Tip: search by product name (e.g. “iPhone”, “Samsung”, “HP”).
-        </Text>
-      </View>
+    
     </ScrollView>
   );
 
