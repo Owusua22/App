@@ -1,10 +1,4 @@
-
-import React, {
-  useEffect,
-  useState,
-  useMemo,
-  useRef,
-} from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -16,13 +10,12 @@ import {
   ActivityIndicator,
   Modal,
   Dimensions,
-  
   Animated,
   Alert,
   SafeAreaView,
-
+  Platform,
+  Pressable, // ✅ NEW (for outside-tap-to-close)
 } from "react-native";
-
 
 import { useDispatch, useSelector } from "react-redux";
 import { useRoute, useNavigation } from "@react-navigation/native";
@@ -30,36 +23,40 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import Icon from "react-native-vector-icons/MaterialIcons";
 
-import {
-  fetchProductById,
-  fetchProducts,
-} from "../redux/slice/productSlice";
-import {
-  addToCart,
-  getCartById,
-  updateCartItem,
-} from "../redux/slice/cartSlice";
+import { fetchProductById, fetchProducts } from "../redux/slice/productSlice";
+import { addToCart, getCartById, updateCartItem } from "../redux/slice/cartSlice";
 
-// ⬇️ Use your existing ProductCard UI for "You may also like"
-import { OptimizedProductList } from "../components/ProductCard"; // adjust path
+import { OptimizedProductList } from "../components/ProductCard";
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
 
-/* ----------------- colors & small helpers ----------------- */
+/* ----------------- typography ----------------- */
+const font = {
+  regular: Platform.select({ ios: "AvenirNext-Regular", android: "sans-serif", default: "System" }),
+  medium: Platform.select({ ios: "AvenirNext-Medium", android: "sans-serif-medium", default: "System" }),
+  bold: Platform.select({ ios: "AvenirNext-DemiBold", android: "sans-serif-medium", default: "System" }),
+  black: Platform.select({ ios: "AvenirNext-Bold", android: "sans-serif-black", default: "System" }),
+};
 
+/* ----------------- helpers ----------------- */
 const palette = {
-  greenBg: "#f0fdf4",
-  greenBorder: "#bbf7d0",
-  greenText: "#15803d",
-  greenDeep: "#14532d",
-  greenBadge: "#dcfce7",
-  white: "#ffffff",
-  text: "#0f172a",
-  subtleText: "#166534",
-  grayText: "#6b7280",
-  mutedText: "#9ca3af",
+  bg: "#f8fafc",
+  card: "#ffffff",
   border: "#e5e7eb",
-  blue: "#2563EB",
+
+  primary: "#16a34a",
+  primaryDeep: "#15803d",
+  primarySoft: "#f0fdf4",
+  primaryBorder: "#bbf7d0",
+
+  text: "#0b0f19",
+  textSoft: "#111827",
+  gray: "#6b7280",
+  muted: "#9ca3af",
+
+  danger: "#dc2626",
+  dangerSoft: "#fef2f2",
+  dangerBorder: "#fecaca",
 };
 
 const formatPrice = (price) => {
@@ -73,8 +70,8 @@ const getValidImageUrl = (imagePath) => {
   const file = imagePath.includes("\\")
     ? imagePath.split("\\").pop()
     : imagePath.includes("/")
-    ? imagePath.split("/").pop()
-    : imagePath;
+      ? imagePath.split("/").pop()
+      : imagePath;
   return `https://fte002n1.salesmate.app/Media/Products_Images/${file}`;
 };
 
@@ -109,8 +106,7 @@ const getCategoryRouteName = (categoryName) => {
   return CATEGORY_ROUTE_MAP[key] || null;
 };
 
-/* ---------------- description parsing (web‑like) ---------------- */
-
+/* ---------------- description parsing ---------------- */
 const normalizeDescriptionToLines = (raw) => {
   let text = typeof raw === "string" ? raw : "";
   if (!text.trim()) return [];
@@ -149,17 +145,12 @@ const splitDescription = (product) => {
   const isSectionHeader = (l) => /^[^:]{2,}:\s*$/.test(stripLeadingBullet(l));
   const isKeyValue = (l) => /^([^:]{1,}):\s*(.+)$/.test(stripLeadingBullet(l));
 
-  const firstStructuredIdx = lines.findIndex(
-    (l) => isSectionHeader(l) || isKeyValue(l)
-  );
+  const firstStructuredIdx = lines.findIndex((l) => isSectionHeader(l) || isKeyValue(l));
 
   const intro =
-    firstStructuredIdx === -1
-      ? lines.join(" ")
-      : lines.slice(0, firstStructuredIdx).join(" ");
+    firstStructuredIdx === -1 ? lines.join(" ") : lines.slice(0, firstStructuredIdx).join(" ");
 
-  const structuredLines =
-    firstStructuredIdx === -1 ? [] : lines.slice(firstStructuredIdx);
+  const structuredLines = firstStructuredIdx === -1 ? [] : lines.slice(firstStructuredIdx);
 
   const sections = [];
   let current = null;
@@ -196,16 +187,25 @@ const splitDescription = (product) => {
   return { intro: intro.trim(), sections };
 };
 
-/* ---------------- small UI bits ---------------- */
-
-const Chip = ({ iconName, label }) => (
-  <View style={styles.chip}>
-    {iconName ? (
-      <Icon name={iconName} size={14} color={palette.greenText} />
-    ) : null}
-    <Text style={styles.chipText}>{label}</Text>
-  </View>
-);
+/* ---------------- UI bits ---------------- */
+const InfoPill = ({ icon, label, tone = "green" }) => {
+  const isRed = tone === "red";
+  return (
+    <View
+      style={[
+        styles.infoPill,
+        isRed
+          ? { backgroundColor: palette.dangerSoft, borderColor: palette.dangerBorder }
+          : { backgroundColor: palette.primarySoft, borderColor: palette.primaryBorder },
+      ]}
+    >
+      <Icon name={icon} size={16} color={isRed ? palette.danger : palette.primaryDeep} />
+      <Text style={[styles.infoPillText, { color: isRed ? palette.danger : palette.primaryDeep }]}>
+        {label}
+      </Text>
+    </View>
+  );
+};
 
 const ProductSpecsList = ({ product }) => {
   const { intro, sections } = splitDescription(product);
@@ -225,10 +225,7 @@ const ProductSpecsList = ({ product }) => {
               <View key={sec.title} style={styles.specsSection}>
                 <Text style={styles.specsSectionTitle}>{sec.title}</Text>
                 {sec.items.map((it, idx) => (
-                  <Text
-                    key={`${sec.title}-${idx}`}
-                    style={styles.specsItemText}
-                  >
+                  <Text key={`${sec.title}-${idx}`} style={styles.specsItemText}>
                     {it.label ? (
                       <>
                         <Text style={styles.specsItemLabel}>
@@ -251,62 +248,31 @@ const ProductSpecsList = ({ product }) => {
   );
 };
 
-/* ---------------- skeleton that imitates layout ---------------- */
+const MoneyRow = ({ label, value, bold = false }) => (
+  <View style={styles.moneyRow}>
+    <Text style={[styles.moneyLabel, bold && styles.moneyLabelBold]}>{label}</Text>
+    <Text style={[styles.moneyValue, bold && styles.moneyValueBold]}>{value}</Text>
+  </View>
+);
 
+/* ---------------- skeleton (minimal) ---------------- */
 const ProductDetailSkeleton = () => (
   <SafeAreaView style={styles.safeArea}>
     <View style={styles.skeletonHeaderBar}>
       <View style={styles.skeletonBackBtn} />
       <View style={styles.skeletonHeaderTextBlock}>
         <View style={styles.skeletonLineShort} />
-        <View style={[styles.skeletonLineTiny, { marginTop: 4 }]} />
+        <View style={[styles.skeletonLineTiny, { marginTop: 6 }]} />
       </View>
       <View style={styles.skeletonShareBtn} />
     </View>
 
-    <ScrollView
-      contentContainerStyle={styles.skeletonScroll}
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.gridWrapper}>
-        <View style={styles.leftColumn}>
-          <View style={styles.skeletonImageCard}>
-            <View style={styles.skeletonImageBox} />
-            <View style={styles.skeletonSummaryBox}>
-              <View style={styles.skeletonLineLg} />
-              <View style={styles.skeletonPriceRow}>
-                <View style={styles.skeletonPrice} />
-                <View style={styles.skeletonOldPrice} />
-                <View style={styles.skeletonPill} />
-              </View>
-              <View style={styles.skeletonChipRow}>
-                <View style={styles.skeletonChip} />
-                <View style={styles.skeletonChip} />
-              </View>
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.rightColumn}>
-          <View style={styles.skeletonSpecsCard}>
-            <View style={styles.skeletonSpecsHeader} />
-            <View style={styles.skeletonSpecsBody}>
-              <View style={styles.skeletonLineMd} />
-              <View style={styles.skeletonLineMd} />
-              <View style={styles.skeletonLineShort} />
-              <View style={styles.skeletonLineTiny} />
-              <View
-                style={[styles.skeletonLineTiny, { width: "40%", marginTop: 4 }]}
-              />
-            </View>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.relatedSection}>
-        <View style={styles.relatedHeader}>
-          <View style={styles.skeletonLineShort} />
-          <View style={styles.relatedDivider} />
+    <ScrollView contentContainerStyle={styles.skeletonScroll} showsVerticalScrollIndicator={false}>
+      <View style={styles.skeletonImageCard}>
+        <View style={styles.skeletonImageBox} />
+        <View style={styles.skeletonSummaryBox}>
+          <View style={styles.skeletonLineLg} />
+          <View style={[styles.skeletonLineMd, { width: "60%", marginTop: 10 }]} />
         </View>
       </View>
     </ScrollView>
@@ -314,8 +280,28 @@ const ProductDetailSkeleton = () => (
 );
 
 /* ---------------- main screen ---------------- */
-
 const RELATED_LIMIT = 10;
+const RECENT_LIMIT = 12;
+
+const getMostRecentSortKey = (p) => {
+  const raw =
+    p?.createdAt ||
+    p?.created_at ||
+    p?.dateCreated ||
+    p?.date_created ||
+    p?.createdOn ||
+    p?.created_on ||
+    p?.updatedAt ||
+    p?.updated_at;
+
+  const t = raw ? new Date(raw).getTime() : NaN;
+  if (Number.isFinite(t)) return t;
+
+  const id = Number(p?.productID);
+  if (Number.isFinite(id)) return id;
+
+  return 0;
+};
 
 const ProductDetailsScreen = () => {
   const route = useRoute();
@@ -324,12 +310,10 @@ const ProductDetailsScreen = () => {
 
   const { productId } = route.params;
 
-  const { currentProduct, products, loading: productsLoading } = useSelector(
-    (state) => state.products
-  );
-  const { cartItems, cartId, loading: cartLoading } = useSelector(
-    (state) => state.cart
-  );
+  const { currentProduct, products, loading: productsLoading } = useSelector((state) => state.products);
+  const { cartItems, cartId, loading: cartLoading } = useSelector((state) => state.cart);
+
+  const scrollRef = useRef(null);
 
   const [networkStatus, setNetworkStatus] = useState(true);
   const [isAddingToCart, setIsAddingToCart] = useState(false);
@@ -337,35 +321,42 @@ const ProductDetailsScreen = () => {
   const [mobileQty, setMobileQty] = useState(1);
   const [cartSyncError, setCartSyncError] = useState(null);
 
+  // ✅ NEW: to reduce the big space under "View more"
+  const [bottomBarHeight, setBottomBarHeight] = useState(0);
+
+  // Basket sheet (now shown inside a Modal)
   const [showBasketSheet, setShowBasketSheet] = useState(false);
-  const [lastAddedProduct, setLastAddedProduct] = useState(null);
-  const sheetAnim = useRef(new Animated.Value(120)).current;
+  const [lastAddedSummary, setLastAddedSummary] = useState(null);
+  const sheetAnim = useRef(new Animated.Value(140)).current;
 
   const [isImageModalVisible, setIsImageModalVisible] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(40)).current;
-  const scaleAnim = useRef(new Animated.Value(0.95)).current;
+  const slideAnim = useRef(new Animated.Value(30)).current;
+  const scaleAnim = useRef(new Animated.Value(0.96)).current;
 
-  /* ----- fetch product + products ----- */
-
+  /* ----- fetch products & product ----- */
   useEffect(() => {
-    if (!products || products.length === 0) {
-      dispatch(fetchProducts());
-    }
+    if (!products || products.length === 0) dispatch(fetchProducts());
     dispatch(fetchProductById(productId));
   }, [dispatch, productId, products?.length]);
 
-  /* ----- network status ----- */
+  /* ----- anti-flicker + reset scroll/animation ----- */
+  useEffect(() => {
+    setIsImageModalVisible(false);
+    fadeAnim.setValue(0);
+    slideAnim.setValue(30);
+    scaleAnim.setValue(0.96);
+    requestAnimationFrame(() => scrollRef.current?.scrollTo?.({ y: 0, animated: false }));
+  }, [productId, fadeAnim, slideAnim, scaleAnim]);
 
+  /* ----- network status ----- */
   useEffect(() => {
     const unsub = NetInfo.addEventListener((state) => {
       const online = !!state.isConnected && !!state.isInternetReachable;
       setNetworkStatus(online);
       if (!online) {
-        setCartSyncError(
-          "You're offline. Cart changes will sync when connection is restored."
-        );
+        setCartSyncError("You're offline. Cart changes will sync when connection is restored.");
       } else {
         setCartSyncError(null);
         if (cartId) syncCartWithDatabase();
@@ -393,59 +384,44 @@ const ProductDetailsScreen = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cartId, networkStatus]);
 
-  /* ----- select product, animate when ready ----- */
-
+  /* ----- product resolution ----- */
   const productFromList = useMemo(() => {
     if (!Array.isArray(products)) return null;
-    return (
-      products.find((p) => String(p.productID) === String(productId)) ||
-      null
-    );
+    return products.find((p) => String(p.productID) === String(productId)) || null;
   }, [products, productId]);
 
-  const product = currentProduct?.[0] || productFromList;
+  const productFromApi = useMemo(() => {
+    const p = currentProduct?.[0] || null;
+    if (!p) return null;
+    return String(p.productID) === String(productId) ? p : null;
+  }, [currentProduct, productId]);
+
+  const product = productFromList || productFromApi;
+  const isSwitchingOrLoadingCorrectProduct = !product && productsLoading;
 
   useEffect(() => {
     if (!product) return;
     Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 350,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 350,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        friction: 8,
-        useNativeDriver: true,
-      }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+      Animated.spring(scaleAnim, { toValue: 1, friction: 9, useNativeDriver: true }),
     ]).start();
   }, [product, fadeAnim, slideAnim, scaleAnim]);
 
   const isOutOfStock = (p) => {
     if (!p) return false;
-    const indicators = [
-      "products out of stock",
-      "out of stock",
-      "unavailable",
-      "not available",
-    ];
-    if (p.brandName && indicators.some((x) => p.brandName.toLowerCase().includes(x)))
-      return true;
-    if (p.categoryName && indicators.some((x) => p.categoryName.toLowerCase().includes(x)))
-      return true;
-    if (p.showRoomName && indicators.some((x) => p.showRoomName.toLowerCase().includes(x)))
-      return true;
+    const indicators = ["products out of stock", "out of stock", "unavailable", "not available"];
+    if (p.brandName && indicators.some((x) => p.brandName.toLowerCase().includes(x))) return true;
+    if (p.categoryName && indicators.some((x) => p.categoryName.toLowerCase().includes(x))) return true;
+    if (p.showRoomName && indicators.some((x) => p.showRoomName.toLowerCase().includes(x))) return true;
     if (p.stockStatus && p.stockStatus.toLowerCase() === "out of stock") return true;
     if (p.quantity !== undefined && Number(p.quantity) <= 0) return true;
     return false;
   };
 
   const outOfStock = isOutOfStock(product);
+  const inStock = !!product && !outOfStock;
+
   const imageUrl = useMemo(() => getValidImageUrl(product?.productImage), [product]);
 
   const discountPercent = useMemo(() => {
@@ -455,37 +431,42 @@ const ProductDetailsScreen = () => {
     return Math.round(((oldP - newP) / oldP) * 100);
   }, [product]);
 
+  /* ---------------- related + fallback to most recent ---------------- */
+  const hasValidCategory = !!product?.categoryName;
+  const hasValidBrand = !!product?.brandName;
+
   const sameCategoryProducts = useMemo(() => {
     if (!Array.isArray(products) || !product?.categoryName) return [];
-    return products.filter(
-      (p) =>
-        p.categoryName === product.categoryName &&
-        p.productID !== product.productID
-    );
+    return products.filter((p) => p.categoryName === product.categoryName && p.productID !== product.productID);
   }, [products, product]);
 
-  const related = useMemo(
-    () => sameCategoryProducts.slice(0, RELATED_LIMIT),
-    [sameCategoryProducts]
-  );
+  const mostRecentProducts = useMemo(() => {
+    if (!Array.isArray(products)) return [];
+    const currentId = String(product?.productID ?? productId);
+    return [...products]
+      .filter((p) => String(p.productID) !== currentId)
+      .sort((a, b) => getMostRecentSortKey(b) - getMostRecentSortKey(a))
+      .slice(0, RECENT_LIMIT);
+  }, [products, product, productId]);
+
+  const shouldUseRecentFallback = !hasValidCategory || !hasValidBrand;
+
+  const relatedProducts = useMemo(() => {
+    if (shouldUseRecentFallback) return mostRecentProducts;
+    const catRelated = sameCategoryProducts.slice(0, RELATED_LIMIT);
+    return catRelated.length > 0 ? catRelated : mostRecentProducts;
+  }, [shouldUseRecentFallback, mostRecentProducts, sameCategoryProducts]);
+
   const hasMoreInCategory = sameCategoryProducts.length > RELATED_LIMIT;
+  const categoryRouteName = useMemo(() => {
+    if (!product?.categoryName) return null;
+    return getCategoryRouteName(product.categoryName);
+  }, [product]);
 
-  const categoryRouteName = useMemo(
-    () =>
-      product?.categoryName
-        ? getCategoryRouteName(product.categoryName)
-        : null,
-    [product]
-  );
-
+  /* ---------------- cart totals/line ---------------- */
   const basketTotal = useMemo(() => {
     if (!Array.isArray(cartItems)) return 0;
-    return cartItems.reduce(
-      (acc, item) =>
-        acc +
-        (Number(item.price) || 0) * (Number(item.quantity) || 0),
-      0
-    );
+    return cartItems.reduce((acc, item) => acc + (Number(item.price) || 0) * (Number(item.quantity) || 0), 0);
   }, [cartItems]);
 
   const cartLineForThisProduct = useMemo(() => {
@@ -502,6 +483,7 @@ const ProductDetailsScreen = () => {
 
   const isCartButtonLoading = isAddingToCart || cartLoading;
 
+  /* ---------------- actions ---------------- */
   const handleShare = async () => {
     if (!product) return;
     try {
@@ -514,56 +496,83 @@ const ProductDetailsScreen = () => {
     }
   };
 
-  const openBasketSheet = (addedProduct) => {
-    setLastAddedProduct(addedProduct);
+  const openBasketSheet = (summary) => {
+    setLastAddedSummary(summary);
     setShowBasketSheet(true);
-    Animated.spring(sheetAnim, {
-      toValue: 0,
-      friction: 8,
-      useNativeDriver: true,
-    }).start();
+    Animated.spring(sheetAnim, { toValue: 0, friction: 9, useNativeDriver: true }).start();
   };
 
   const closeBasketSheet = () => {
-    Animated.timing(sheetAnim, {
-      toValue: 120,
-      duration: 180,
-      useNativeDriver: true,
-    }).start(() => setShowBasketSheet(false));
+    Animated.timing(sheetAnim, { toValue: 140, duration: 180, useNativeDriver: true }).start(() => {
+      setShowBasketSheet(false);
+      setLastAddedSummary(null);
+    });
+  };
+
+  const refreshCartAndPersist = async () => {
+    if (!cartId) return null;
+    const updated = await dispatch(getCartById(cartId)).unwrap();
+    if (Array.isArray(updated)) {
+      await AsyncStorage.setItem("cart", JSON.stringify(updated));
+      return updated;
+    }
+    return null;
   };
 
   const addProductToCartWithSync = async (p, quantity = 1) => {
-    if (!p) return;
+    if (!p) return null;
     if (!networkStatus) {
       setCartSyncError("No internet connection. Please check your network.");
-      return;
+      return null;
     }
-
-    const payload = {
-      cartId,
-      productId: p.productID,
-      price: p.price,
-      quantity,
-    };
-
+    const payload = { cartId, productId: p.productID, price: p.price, quantity };
     await dispatch(addToCart(payload)).unwrap();
-
-    if (cartId) {
-      const updated = await dispatch(getCartById(cartId)).unwrap();
-      if (Array.isArray(updated)) {
-        await AsyncStorage.setItem("cart", JSON.stringify(updated));
-      }
-    }
+    return await refreshCartAndPersist();
   };
 
-  const handleAddToCartMain = async () => {
-    if (!product || isOutOfStock(product)) return;
+  const updateProductQtyWithSync = async (productIdToUpdate, quantity) => {
+    if (!cartId) return null;
+    await dispatch(updateCartItem({ cartId, productId: productIdToUpdate, quantity })).unwrap();
+    return await refreshCartAndPersist();
+  };
+
+  const handleStickyAddOrUpdate = async () => {
+    if (!product || outOfStock) return;
+
+    const desiredQty = Math.max(1, Math.min(99, Number(mobileQty) || 1));
+
     try {
       setIsAddingToCart(true);
-      await addProductToCartWithSync(product, 1);
-      openBasketSheet(product);
+
+      let updatedCart = null;
+
+      if (cartLineForThisProduct?.productId && cartId) {
+        updatedCart = await updateProductQtyWithSync(cartLineForThisProduct.productId, desiredQty);
+      } else {
+        updatedCart = await addProductToCartWithSync(product, desiredQty);
+      }
+
+      const updatedLine =
+        Array.isArray(updatedCart) &&
+        updatedCart.find((it) => String(it.productId) === String(product.productID));
+
+      const qtyInCart = Number(updatedLine?.quantity ?? desiredQty);
+      const unit = Number(updatedLine?.price ?? product.price ?? 0);
+      const lineTotal = qtyInCart * unit;
+
+      const newBasketTotal = Array.isArray(updatedCart)
+        ? updatedCart.reduce((acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0)
+        : basketTotal;
+
+      openBasketSheet({
+        productName: product.productName,
+        qty: qtyInCart,
+        unit,
+        lineTotal,
+        basketTotal: newBasketTotal,
+      });
     } catch {
-      setCartSyncError("Failed to add product to cart. Please try again.");
+      setCartSyncError("Failed to update cart. Please try again.");
     } finally {
       setIsAddingToCart(false);
     }
@@ -572,58 +581,56 @@ const ProductDetailsScreen = () => {
   const handleAddRelatedToCart = async (p) => {
     if (!p || isOutOfStock(p)) return;
     try {
-      setAddingRelatedToCart((prev) => ({
-        ...prev,
-        [p.productID]: true,
-      }));
-      await addProductToCartWithSync(p, 1);
-      openBasketSheet(p);
+      setAddingRelatedToCart((prev) => ({ ...prev, [p.productID]: true }));
+
+      const updatedCart = await addProductToCartWithSync(p, 1);
+
+      const updatedLine =
+        Array.isArray(updatedCart) && updatedCart.find((it) => String(it.productId) === String(p.productID));
+
+      const qtyInCart = Number(updatedLine?.quantity ?? 1);
+      const unit = Number(updatedLine?.price ?? p.price ?? 0);
+      const lineTotal = qtyInCart * unit;
+
+      const newBasketTotal = Array.isArray(updatedCart)
+        ? updatedCart.reduce((acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0)
+        : basketTotal;
+
+      openBasketSheet({
+        productName: p.productName,
+        qty: qtyInCart,
+        unit,
+        lineTotal,
+        basketTotal: newBasketTotal,
+      });
     } catch {
       setCartSyncError("Failed to add product to cart. Please try again.");
     } finally {
-      setAddingRelatedToCart((prev) => ({
-        ...prev,
-        [p.productID]: false,
-      }));
+      setAddingRelatedToCart((prev) => ({ ...prev, [p.productID]: false }));
     }
   };
 
-  const handleStickyAddOrUpdate = async () => {
-    if (!product || isOutOfStock(product)) return;
-
-    if (cartLineForThisProduct?.productId && cartId) {
-      try {
-        await dispatch(
-          updateCartItem({
-            cartId,
-            productId: cartLineForThisProduct.productId,
-            quantity: mobileQty,
-          })
-        ).unwrap();
-        const updated = await dispatch(getCartById(cartId)).unwrap();
-        if (Array.isArray(updated)) {
-          await AsyncStorage.setItem("cart", JSON.stringify(updated));
-        }
-        openBasketSheet(product);
-      } catch {
-        setCartSyncError("Failed to update cart. Please try again.");
-      }
-      return;
-    }
-
-    await handleAddToCartMain();
-  };
-
-  if (!product && productsLoading) {
-    return <ProductDetailSkeleton />;
-  }
+  /* ---------------- early returns ---------------- */
+  if (isSwitchingOrLoadingCorrectProduct) return <ProductDetailSkeleton />;
 
   if (!product) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.skeletonHeader} />
-        <View style={styles.skeletonBody}>
-          <Text style={{ textAlign: "center", color: palette.grayText }}>
+        <View style={styles.stickyHeader}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} activeOpacity={0.8}>
+              <Icon name="arrow-back-ios" size={20} color={palette.primaryDeep} />
+            </TouchableOpacity>
+            <View style={styles.headerTitleBlock}>
+              <Text style={styles.headerTitle} numberOfLines={1}>
+                Product not found
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={{ padding: 16 }}>
+          <Text style={{ textAlign: "center", color: palette.gray, fontSize: 15, fontFamily: font.medium }}>
             Product not found.
           </Text>
         </View>
@@ -631,128 +638,97 @@ const ProductDetailsScreen = () => {
     );
   }
 
-  /* ----- main render ----- */
+  const addBtnLabel = outOfStock ? "OUT OF STOCK" : "ADD TO CART";
 
+  /* ---------------- render ---------------- */
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         {/* Sticky header */}
         <View style={styles.stickyHeader}>
           <View style={styles.headerRow}>
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              style={styles.backButton}
-              activeOpacity={0.8}
-            >
-              <Icon
-                name="arrow-back-ios"
-                size={18}
-                color={palette.greenText}
-              />
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} activeOpacity={0.8}>
+              <Icon name="arrow-back-ios" size={20} color={palette.primaryDeep} />
             </TouchableOpacity>
 
             <View style={styles.headerTitleBlock}>
               <Text style={styles.headerTitle} numberOfLines={1}>
                 {product.productName}
               </Text>
-              <Text style={styles.headerSubtitle} numberOfLines={1}>
-                {product.brandName || "Brand"} •{" "}
-                {product.categoryName || "Category"}
-              </Text>
             </View>
 
-            <TouchableOpacity
-              onPress={handleShare}
-              style={styles.shareButton}
-              activeOpacity={0.8}
-            >
-              <Icon name="share" size={18} color={palette.greenText} />
+            <TouchableOpacity onPress={handleShare} style={styles.shareButton} activeOpacity={0.8}>
+              <Icon name="share" size={20} color={palette.primaryDeep} />
             </TouchableOpacity>
           </View>
+
+          {!!cartSyncError && (
+            <View style={styles.banner}>
+              <Icon name="info" size={16} color={palette.text} />
+              <Text style={styles.bannerText}>{cartSyncError}</Text>
+            </View>
+          )}
         </View>
 
-        {/* Content */}
         <ScrollView
+          ref={scrollRef}
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          // ✅ FIX: dynamic paddingBottom so there's no huge space under "View more"
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: Math.max(24, bottomBarHeight + 16) },
+          ]}
         >
           <Animated.View
+            key={String(productId)}
             style={[
               styles.gridWrapper,
-              {
-                opacity: fadeAnim,
-                transform: [
-                  { translateY: slideAnim },
-                  { scale: scaleAnim },
-                ],
-              },
+              { opacity: fadeAnim, transform: [{ translateY: slideAnim }, { scale: scaleAnim }] },
             ]}
           >
             {/* Left column */}
             <View style={styles.leftColumn}>
               <View style={styles.imageCard}>
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  onPress={() => setIsImageModalVisible(true)}
-                >
+                <TouchableOpacity activeOpacity={0.9} onPress={() => setIsImageModalVisible(true)}>
                   <View style={styles.imageOuter}>
                     {imageUrl ? (
-                      <Image
-                        source={{ uri: imageUrl }}
-                        style={styles.mainImage}
-                        resizeMode="contain"
-                      />
+                      <Image source={{ uri: imageUrl }} style={styles.mainImage} resizeMode="contain" />
                     ) : (
                       <View style={styles.imagePlaceholder}>
-                        <Icon
-                          name="image-not-supported"
-                          size={36}
-                          color={palette.mutedText}
-                        />
-                        <Text style={styles.imagePlaceholderText}>
-                          No image
-                        </Text>
+                        <Icon name="image-not-supported" size={40} color={palette.muted} />
+                        <Text style={styles.imagePlaceholderText}>No image</Text>
                       </View>
                     )}
                   </View>
                 </TouchableOpacity>
 
-                {/* Name + price card */}
                 <View style={styles.summaryCard}>
                   <View style={styles.summaryBody}>
-                    <Text style={styles.productName}>
-                      {product.productName}
-                    </Text>
+                    <Text style={styles.productName}>{product.productName}</Text>
 
                     <View style={styles.priceRow}>
-                      <Text style={styles.priceText}>
-                        ₵{formatPrice(product.price)}.00
-                      </Text>
-                      {Number(product.oldPrice) >
-                        Number(product.price) && (
-                        <Text style={styles.oldPriceText}>
-                          ₵{formatPrice(product.oldPrice)}.00
-                        </Text>
+                      <Text style={styles.priceText}>₵{formatPrice(product.price)}.00</Text>
+
+                      {Number(product.oldPrice) > Number(product.price) && (
+                        <Text style={styles.oldPriceText}>₵{formatPrice(product.oldPrice)}.00</Text>
                       )}
+
                       {discountPercent > 0 && (
                         <View style={styles.discountBadge}>
-                          <Text style={styles.discountBadgeText}>
-                            -{discountPercent}%
-                          </Text>
+                          <Text style={styles.discountBadgeText}>-{discountPercent}%</Text>
                         </View>
                       )}
                     </View>
 
-                    <View style={styles.chipsRow}>
-                      <Chip
-                        iconName="local-offer"
-                        label={product.brandName || "Brand"}
+                    <View style={styles.trustRow}>
+                      <InfoPill icon="local-shipping" label="Delivery 24–48hrs" />
+                      <InfoPill
+                        icon={inStock ? "inventory" : "remove-shopping-cart"}
+                        label={inStock ? "In stock" : "Out of stock"}
+                        tone={inStock ? "green" : "red"}
                       />
-                      <Chip
-                        iconName="category"
-                        label={product.categoryName || "Category"}
-                      />
+                      <InfoPill icon="verified" label="Quality guaranteed" />
                     </View>
                   </View>
                 </View>
@@ -765,108 +741,83 @@ const ProductDetailsScreen = () => {
             </View>
           </Animated.View>
 
-          {/* You may also like — using your ProductCard / OptimizedProductList */}
+          {/* Related */}
           <View style={styles.relatedSection}>
             <View style={styles.relatedHeader}>
-              <Text style={styles.relatedTitle}>You may also like</Text>
+              <Text style={styles.relatedTitle}>{shouldUseRecentFallback ? "New arrivals" : "You may also like"}</Text>
               <View style={styles.relatedDivider} />
             </View>
 
-            {related.length > 0 ? (
+            {relatedProducts.length > 0 ? (
               <>
                 <OptimizedProductList
-                  products={related}
+                  products={relatedProducts}
                   loading={productsLoading}
-                  onProductPress={(pid) =>
-                    navigation.push("ProductDetails", { productId: pid })
-                  }
+                  onProductPress={(pid) => navigation.push("ProductDetails", { productId: pid })}
                   onAddToCart={handleAddRelatedToCart}
                   addingToCart={addingRelatedToCart}
                   showHotDeal={true}
                 />
 
-                {hasMoreInCategory && categoryRouteName && (
+                {!shouldUseRecentFallback && hasMoreInCategory && categoryRouteName && (
                   <View style={styles.viewMoreWrapper}>
                     <TouchableOpacity
                       style={styles.viewMoreBtn}
                       onPress={() =>
-                        navigation.navigate(categoryRouteName, {
-                          categoryName: product.categoryName,
-                        })
+                        navigation.navigate(categoryRouteName, { categoryName: product.categoryName })
                       }
                       activeOpacity={0.9}
                     >
-                      <Text style={styles.viewMoreText}>
-                        View more in {product.categoryName}
-                      </Text>
+                      <Text style={styles.viewMoreText}>View more</Text>
                     </TouchableOpacity>
                   </View>
                 )}
               </>
             ) : (
               <View style={styles.noRelatedCard}>
-                <Icon
-                  name="remove-shopping-cart"
-                  size={32}
-                  color={palette.mutedText}
-                />
-                <Text style={styles.noRelatedText}>
-                  No related products found.
-                </Text>
+                <Icon name="search-off" size={34} color={palette.muted} />
+                <Text style={styles.noRelatedText}>No products found.</Text>
               </View>
             )}
           </View>
         </ScrollView>
 
-        {/* Bottom bar: qty + Add to Cart */}
-        <View style={styles.bottomBar}>
+        {/* Bottom bar */}
+        <View
+          style={styles.bottomBar}
+          // ✅ NEW: measure real bar height so ScrollView paddingBottom isn't excessive
+          onLayout={(e) => setBottomBarHeight(e.nativeEvent.layout.height)}
+        >
           <View style={styles.qtyWrapper}>
             <View style={styles.qtyBox}>
               <TouchableOpacity
                 style={styles.qtyBtn}
-                onPress={() =>
-                  setMobileQty((q) => Math.max(1, q - 1))
-                }
+                onPress={() => setMobileQty((q) => Math.max(1, q - 1))}
                 disabled={outOfStock || mobileQty <= 1}
               >
                 <Icon
                   name="remove"
-                  size={18}
-                  color={
-                    outOfStock || mobileQty <= 1
-                      ? palette.mutedText
-                      : palette.greenText
-                  }
+                  size={20}
+                  color={outOfStock || mobileQty <= 1 ? palette.muted : palette.primaryDeep}
                 />
               </TouchableOpacity>
+
               <View style={styles.qtyValueBox}>
                 <Text style={styles.qtyValueText}>{mobileQty}</Text>
               </View>
+
               <TouchableOpacity
                 style={styles.qtyBtn}
-                onPress={() =>
-                  setMobileQty((q) => Math.min(99, q + 1))
-                }
+                onPress={() => setMobileQty((q) => Math.min(99, q + 1))}
                 disabled={outOfStock}
               >
-                <Icon
-                  name="add"
-                  size={18}
-                  color={
-                    outOfStock
-                      ? palette.mutedText
-                      : palette.greenText
-                  }
-                />
+                <Icon name="add" size={20} color={outOfStock ? palette.muted : palette.primaryDeep} />
               </TouchableOpacity>
             </View>
           </View>
 
           <TouchableOpacity
-            style={[
-              styles.bottomAddBtn,
-              outOfStock && styles.bottomAddBtnDisabled,
-            ]}
+            style={[styles.bottomAddBtn, outOfStock && styles.bottomAddBtnDisabled]}
             disabled={isCartButtonLoading || outOfStock}
             onPress={handleStickyAddOrUpdate}
             activeOpacity={0.9}
@@ -874,86 +825,89 @@ const ProductDetailsScreen = () => {
             {isCartButtonLoading ? (
               <ActivityIndicator size="small" color="#ffffff" />
             ) : (
-              <Text style={styles.bottomAddBtnText}>
-                {outOfStock ? "Out of Stock" : "Add to Cart"}
-              </Text>
+              <Text style={styles.bottomAddBtnText}>{addBtnLabel}</Text>
             )}
           </TouchableOpacity>
         </View>
 
-        {/* Success “Added to basket” bottom sheet */}
-        {showBasketSheet && lastAddedProduct && (
-          <Animated.View
-            style={[
-              styles.basketSheet,
-              {
-                transform: [
+        {/* ✅ FIX: Basket sheet is now a Modal with backdrop. Tap outside closes automatically */}
+        <Modal
+          visible={showBasketSheet && !!lastAddedSummary}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={closeBasketSheet}
+        >
+          <Pressable style={styles.basketBackdrop} onPress={closeBasketSheet}>
+            {/* inner pressable prevents closing when tapping the sheet */}
+            <Pressable style={styles.basketSheetWrap} onPress={() => {}}>
+              <Animated.View
+                style={[
+                  styles.basketSheet,
                   {
-                    translateY: sheetAnim.interpolate({
-                      inputRange: [0, 120],
-                      outputRange: [0, 120],
-                    }),
+                    transform: [
+                      {
+                        translateY: sheetAnim.interpolate({
+                          inputRange: [0, 140],
+                          outputRange: [0, 140],
+                        }),
+                      },
+                    ],
                   },
-                ],
-              },
-            ]}
-          >
-            <View style={styles.basketSheetContent}>
-              <View style={styles.basketSuccessRow}>
-                <View style={styles.basketSuccessIconWrapper}>
-                  <Icon name="check" size={18} color="#22c55e" />
+                ]}
+              >
+                <View style={styles.basketSheetContent}>
+                  <View style={styles.basketHeaderRow}>
+                    <View style={styles.basketSuccessIconWrapper}>
+                      <Icon name="check" size={18} color={palette.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.basketProductName} numberOfLines={1}>
+                        {lastAddedSummary?.productName}
+                      </Text>
+                      <Text style={styles.basketAddedText}>Added to basket</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.basketTotalsCard}>
+                    <MoneyRow label="Quantity" value={`${lastAddedSummary?.qty ?? 0}`} />
+                    <MoneyRow label="Unit price" value={`₵${formatPrice(lastAddedSummary?.unit ?? 0)}.00`} />
+                    <MoneyRow
+                      label="Item total"
+                      value={`₵${formatPrice(lastAddedSummary?.lineTotal ?? 0)}.00`}
+                      bold
+                    />
+                    <View style={styles.divider} />
+                    <MoneyRow
+                      label="Basket total"
+                      value={`₵${formatPrice(lastAddedSummary?.basketTotal ?? 0)}.00`}
+                      bold
+                    />
+                  </View>
+
+                  <View style={styles.basketButtonsWrapper}>
+                    <TouchableOpacity style={styles.basketOutlineBtn} onPress={closeBasketSheet} activeOpacity={0.9}>
+                      <Text style={styles.basketOutlineText}>CONTINUE SHOPPING</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.basketPrimaryBtn}
+                      onPress={() => {
+                        closeBasketSheet();
+                        navigation.navigate("cart");
+                      }}
+                      activeOpacity={0.9}
+                    >
+                      <Text style={styles.basketPrimaryText}>VIEW BASKET</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={styles.basketProductName}
-                    numberOfLines={1}
-                  >
-                    {lastAddedProduct.productName}
-                  </Text>
-                  <Text style={styles.basketAddedText}>
-                    Added to basket
-                  </Text>
-                </View>
-              </View>
+              </Animated.View>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
-              <View style={styles.basketTotalRow}>
-                <Text style={styles.basketTotalLabel}>
-                  Basket Total
-                </Text>
-                <Text style={styles.basketTotalValue}>
-                  {formatPrice(basketTotal)} GH₵
-                </Text>
-              </View>
-
-              <View style={styles.basketButtonsWrapper}>
-                <TouchableOpacity
-                  style={styles.basketOutlineBtn}
-                  onPress={closeBasketSheet}
-                  activeOpacity={0.9}
-                >
-                  <Text style={styles.basketOutlineText}>
-                    CONTINUE SHOPPING
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.basketPrimaryBtn}
-                  onPress={() => {
-                    closeBasketSheet();
-                    navigation.navigate("cart");
-                  }}
-                  activeOpacity={0.9}
-                >
-                  <Text style={styles.basketPrimaryText}>
-                    VIEW BASKET
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Animated.View>
-        )}
-
-        {/* Image preview modal */}
+        {/* Image modal */}
         <Modal
           visible={isImageModalVisible}
           transparent
@@ -963,16 +917,9 @@ const ProductDetailsScreen = () => {
           <View style={styles.imageModalOverlay}>
             <View style={styles.imageModalContent}>
               {imageUrl ? (
-                <Image
-                  source={{ uri: imageUrl }}
-                  style={styles.imageModalImage}
-                  resizeMode="contain"
-                />
+                <Image source={{ uri: imageUrl }} style={styles.imageModalImage} resizeMode="contain" />
               ) : null}
-              <TouchableOpacity
-                style={styles.imageModalClose}
-                onPress={() => setIsImageModalVisible(false)}
-              >
+              <TouchableOpacity style={styles.imageModalClose} onPress={() => setIsImageModalVisible(false)}>
                 <View style={styles.imageModalCloseInner}>
                   <Icon name="close" size={24} color="#ffffff" />
                 </View>
@@ -986,432 +933,175 @@ const ProductDetailsScreen = () => {
 };
 
 /* ---------------- styles ---------------- */
-
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-  },
-  container: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-  },
+  safeArea: { flex: 1, backgroundColor: palette.bg },
+  container: { flex: 1 },
 
-  // skeleton layout
-  skeletonHeaderBar: {
-    height: 56,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.border,
-    backgroundColor: "#ffffff",
-  },
-  skeletonBackBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#e5e7eb",
-  },
-  skeletonShareBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#e5e7eb",
-  },
-  skeletonHeaderTextBlock: {
-    flex: 1,
-    marginHorizontal: 12,
-  },
-  skeletonScroll: {
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 120,
-  },
-  skeletonImageCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "#ffffff",
-    padding: 10,
-  },
-  skeletonImageBox: {
-    borderRadius: 18,
-    height: 260,
-    backgroundColor: "#e5e7eb",
-    marginBottom: 10,
-  },
-  skeletonSummaryBox: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: palette.border,
-    padding: 10,
-  },
-  skeletonPriceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 8,
-  },
-  skeletonPrice: {
-    width: 80,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: "#e5e7eb",
-    marginRight: 6,
-  },
-  skeletonOldPrice: {
-    width: 60,
-    height: 12,
-    borderRadius: 8,
-    backgroundColor: "#e5e7eb",
-    marginRight: 6,
-  },
-  skeletonPill: {
-    width: 50,
-    height: 14,
-    borderRadius: 12,
-    backgroundColor: "#e5e7eb",
-  },
-  skeletonChipRow: {
-    flexDirection: "row",
-    marginTop: 8,
-  },
-  skeletonChip: {
-    width: 70,
-    height: 20,
-    borderRadius: 999,
-    backgroundColor: "#e5e7eb",
-    marginRight: 6,
-  },
-  skeletonSpecsCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "#ffffff",
-    overflow: "hidden",
-  },
-  skeletonSpecsHeader: {
-    height: 28,
-    backgroundColor: "#e5e7eb",
-  },
-  skeletonSpecsBody: {
-    padding: 10,
-  },
-  skeletonLineLg: {
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: "#e5e7eb",
-    marginTop: 4,
-    width: "80%",
-  },
-  skeletonLineMd: {
-    height: 12,
-    borderRadius: 8,
-    backgroundColor: "#e5e7eb",
-    marginTop: 4,
-    width: "70%",
-  },
-  skeletonLineShort: {
-    height: 12,
-    borderRadius: 8,
-    backgroundColor: "#e5e7eb",
-    width: "50%",
-  },
-  skeletonLineTiny: {
-    height: 10,
-    borderRadius: 8,
-    backgroundColor: "#e5e7eb",
-    width: "80%",
-    marginTop: 4,
-  },
-  skeletonRelatedCard: {
-    width: 140,
-    marginRight: 10,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "#ffffff",
-    padding: 8,
-  },
-  skeletonRelatedImage: {
-    height: 90,
-    borderRadius: 12,
-    backgroundColor: "#e5e7eb",
-    marginBottom: 6,
-  },
-
-  // header
   stickyHeader: {
     borderBottomWidth: 1,
-    borderBottomColor: palette.greenBorder,
-    backgroundColor: "rgba(255,255,255,0.96)",
+    borderBottomColor: palette.border,
+    backgroundColor: "rgba(248,250,252,0.98)",
     zIndex: 20,
   },
-  headerRow: {
+  headerRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10 },
+  backButton: {
+    padding: 9,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.primaryBorder,
+    backgroundColor: palette.primarySoft,
+  },
+  headerTitleBlock: { flex: 1, marginHorizontal: 10, minWidth: 0 },
+  headerTitle: { fontSize: 16, color: palette.text, fontFamily: font.black },
+  shareButton: {
+    padding: 9,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.primaryBorder,
+    backgroundColor: palette.primarySoft,
+  },
+  banner: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+    backgroundColor: palette.card,
   },
-  backButton: {
-    padding: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: palette.greenBorder,
-    backgroundColor: palette.greenBg,
-  },
-  headerTitleBlock: {
-    flex: 1,
-    marginHorizontal: 8,
-    minWidth: 0,
-  },
-  headerTitle: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: palette.greenText,
-  },
-  headerSubtitle: {
-    fontSize: 11,
-    color: palette.subtleText,
-    marginTop: 2,
-  },
-  shareButton: {
-    padding: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: palette.greenBorder,
-    backgroundColor: palette.greenBg,
-  },
+  bannerText: { flex: 1, fontSize: 13, color: palette.text, fontFamily: font.medium },
 
-  // scroll
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 120,
-  },
+  scrollView: { flex: 1 },
+  // ✅ removed fixed paddingBottom from here (now dynamic in JSX)
+  scrollContent: { paddingHorizontal: 12, paddingTop: 12 },
 
-  gridWrapper: {
-    flexDirection: screenWidth >= 768 ? "row" : "column",
-    gap: 12,
-  },
-  leftColumn: {
-    flex: screenWidth >= 768 ? 1 : 0,
-  },
-  rightColumn: {
-    flex: screenWidth >= 768 ? 1 : 0,
-    marginTop: screenWidth >= 768 ? 0 : 12,
-  },
+  gridWrapper: { flexDirection: screenWidth >= 768 ? "row" : "column", gap: 12 },
+  leftColumn: { flex: screenWidth >= 768 ? 1 : 0 },
+  rightColumn: { flex: screenWidth >= 768 ? 1 : 0, marginTop: screenWidth >= 768 ? 0 : 12 },
 
-  // image + summary
   imageCard: {
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: palette.greenBorder,
-   
-    padding: 10,
+    borderColor: palette.border,
+    backgroundColor: palette.card,
+    padding: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   imageOuter: {
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: palette.greenBorder,
- 
+    borderColor: palette.border,
+    backgroundColor: "#fff",
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
     minHeight: 260,
   },
-  mainImage: {
-    width: "100%",
-    height: 320,
-  },
-  imagePlaceholder: {
-    width: "100%",
-    height: 260,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  imagePlaceholderText: {
-    marginTop: 4,
-    fontSize: 11,
-    color: palette.mutedText,
-  },
+  mainImage: { width: "100%", height: 320 },
+  imagePlaceholder: { width: "100%", height: 260, alignItems: "center", justifyContent: "center" },
+  imagePlaceholderText: { marginTop: 6, fontSize: 12, color: palette.muted, fontFamily: font.bold },
+
   summaryCard: {
-    marginTop: 10,
+    marginTop: 12,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: palette.greenBorder,
-    backgroundColor: "#ffffff",
+    borderColor: palette.border,
+    backgroundColor: palette.card,
     overflow: "hidden",
   },
-  summaryBody: {
-    padding: 10,
-  },
-  productName: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: palette.greenDeep,
-  },
-  priceRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    flexWrap: "wrap",
-    marginTop: 6,
-  },
-  priceText: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: palette.greenText,
-    marginRight: 8,
-  },
+  summaryBody: { padding: 12 },
+
+  productName: { fontSize: 20, color: palette.text, fontFamily: font.black },
+  priceRow: { flexDirection: "row", alignItems: "flex-end", flexWrap: "wrap", marginTop: 8 },
+  priceText: { fontSize: 28, color: palette.primaryDeep, fontFamily: font.black, marginRight: 10 },
   oldPriceText: {
-    fontSize: 12,
-    color: palette.subtleText,
+    fontSize: 14,
+    color: palette.gray,
     textDecorationLine: "line-through",
-    opacity: 0.8,
-    marginRight: 6,
+    marginRight: 8,
+    marginBottom: 4,
+    fontFamily: font.medium,
   },
   discountBadge: {
     borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderWidth: 1,
-    borderColor: palette.greenBorder,
-    backgroundColor: palette.greenBg,
+    borderColor: palette.primaryBorder,
+    backgroundColor: palette.primarySoft,
+    marginBottom: 2,
   },
-  discountBadgeText: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: palette.subtleText,
-  },
-  chipsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginTop: 6,
-  },
-  chip: {
+  discountBadgeText: { fontSize: 12, color: palette.primaryDeep, fontFamily: font.black },
+
+  trustRow: { marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  infoPill: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: palette.greenBorder,
-    backgroundColor: palette.greenBg,
-    marginRight: 6,
-    marginBottom: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    gap: 6,
   },
-  chipText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: palette.greenText,
-    marginLeft: 4,
-  },
+  infoPillText: { fontSize: 13, fontFamily: font.bold },
 
   // specs
   specsCard: {
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: palette.greenBorder,
-    backgroundColor: "#ffffff",
+    borderColor: palette.border,
+    backgroundColor: palette.card,
     overflow: "hidden",
   },
   specsHeader: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.greenBorder,
-    backgroundColor: palette.greenBg,
-  },
-  specsHeaderText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: palette.greenText,
-  },
-  specsBody: {
-    padding: 10,
-  },
-  specsIntro: {
-    fontSize: 12,
-    color: palette.subtleText,
-    lineHeight: 18,
-  },
-  specsSections: {
-    marginTop: 4,
-  },
-  specsSection: {
-    marginTop: 8,
-  },
-  specsSectionTitle: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: palette.greenDeep,
-  },
-  specsItemText: {
-    fontSize: 12,
-    color: palette.subtleText,
-    marginTop: 2,
-  },
-  specsItemLabel: {
-    fontWeight: "600",
-  },
-
-  // related section header
-  relatedSection: {
-    marginTop: 18,
-  },
-  relatedHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  relatedTitle: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: palette.greenText,
-  },
-  relatedDivider: {
-    flex: 1,
-    height: 1,
-    backgroundColor: palette.greenBorder,
-    marginLeft: 8,
-  },
-  relatedScrollContent: {
-    paddingVertical: 4,
-  },
-  noRelatedCard: {
-    marginTop: 8,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: palette.greenBorder,
-    backgroundColor: palette.greenBg,
-    padding: 16,
-    alignItems: "center",
-  },
-  noRelatedText: {
-    marginTop: 4,
-    fontSize: 11,
-    color: palette.subtleText,
-  },
-  viewMoreWrapper: {
-    marginTop: 4,
-    alignItems: "center",
-  },
-  viewMoreBtn: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: palette.greenBorder,
-    backgroundColor: palette.greenBg,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+    backgroundColor: "#fafafa",
   },
-  viewMoreText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: palette.greenText,
+  specsHeaderText: { fontSize: 15, color: palette.text, fontFamily: font.black },
+  specsBody: { padding: 12 },
+  specsIntro: { fontSize: 14, color: palette.textSoft, lineHeight: 20, fontFamily: font.regular },
+  specsSections: { marginTop: 6 },
+  specsSection: { marginTop: 12 },
+  specsSectionTitle: { fontSize: 14, color: palette.text, fontFamily: font.black },
+  specsItemText: { fontSize: 14, color: palette.textSoft, marginTop: 6, lineHeight: 20, fontFamily: font.regular },
+  specsItemLabel: { fontFamily: font.black, color: palette.text },
+
+  // related
+  relatedSection: { marginTop: 18 },
+  relatedHeader: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
+  relatedTitle: { fontSize: 16, color: palette.text, fontFamily: font.black },
+  relatedDivider: { flex: 1, height: 1, backgroundColor: palette.border, marginLeft: 10 },
+
+  noRelatedCard: {
+    marginTop: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.card,
+    padding: 18,
+    alignItems: "center",
   },
+  noRelatedText: { marginTop: 6, fontSize: 13, color: palette.gray, fontFamily: font.medium },
+
+  // ✅ reduced extra spacing around "View more"
+  viewMoreWrapper: {  marginBottom: 2, alignItems: "center" },
+  viewMoreBtn: {
+    borderRadius: 36,
+    borderWidth: 1,
+    borderColor: palette.primaryBorder,
+    backgroundColor: palette.primarySoft,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  viewMoreText: { fontSize: 16, color: palette.primaryDeep, fontFamily: font.black },
 
   // bottom bar
   bottomBar: {
@@ -1420,177 +1110,153 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     borderTopWidth: 1,
-    borderTopColor: palette.greenBorder,
-    backgroundColor: "rgba(255,255,255,0.96)",
+    borderTopColor: palette.border,
+    backgroundColor: "rgba(255,255,255,0.98)",
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
     zIndex: 30,
   },
-  qtyWrapper: {
-    width: 120,
-  },
+  qtyWrapper: { width: 132 },
   qtyBox: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: palette.greenBorder,
-    backgroundColor: palette.greenBg,
+    borderColor: palette.border,
+    backgroundColor: "#fafafa",
   },
-  qtyBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-  },
-  qtyValueBox: {
-    width: 34,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  qtyValueText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: palette.greenDeep,
-  },
+  qtyBtn: { paddingVertical: 10, paddingHorizontal: 12 },
+  qtyValueBox: { width: 40, alignItems: "center", justifyContent: "center" },
+  qtyValueText: { fontSize: 16, color: palette.text, fontFamily: font.black },
+
   bottomAddBtn: {
     flex: 1,
-    borderRadius: 14,
-    backgroundColor: "#22c55e",
+    borderRadius: 16,
+    backgroundColor: palette.primary,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
+    paddingVertical: 13,
   },
-  bottomAddBtnDisabled: {
-    backgroundColor: "#e5e7eb",
+  bottomAddBtnDisabled: { backgroundColor: "#e5e7eb" },
+  bottomAddBtnText: { fontSize: 15, color: "#ffffff", fontFamily: font.black },
+
+  // ✅ NEW: basket modal backdrop
+  basketBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.25)",
+    justifyContent: "flex-end",
   },
-  bottomAddBtnText: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: "#ffffff",
+  basketSheetWrap: {
+    width: "100%",
   },
 
   // basket sheet
-  basketSheet: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 8,
-    paddingBottom: 10,
-    zIndex: 40,
-  },
+  basketSheet: { paddingHorizontal: 10, paddingBottom: 10 },
   basketSheetContent: {
-    borderRadius: 18,
+    borderRadius: 20,
     backgroundColor: "#ffffff",
     padding: 14,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    elevation: 10,
   },
-  basketSuccessRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
+  basketHeaderRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
   basketSuccessIconWrapper: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: palette.greenBg,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: palette.primarySoft,
     borderWidth: 1,
-    borderColor: palette.greenBorder,
+    borderColor: palette.primaryBorder,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 8,
+    marginRight: 10,
   },
-  basketProductName: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: palette.text,
-  },
-  basketAddedText: {
-    fontSize: 12,
-    color: palette.greenText,
-    marginTop: 2,
-  },
-  basketTotalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  basketTotalLabel: {
-    fontSize: 13,
-    color: palette.grayText,
-  },
-  basketTotalValue: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: palette.text,
-  },
-  basketButtonsWrapper: {
-    gap: 8,
-  },
-  basketOutlineBtn: {
-    borderRadius: 12,
+  basketProductName: { fontSize: 15, color: palette.text, fontFamily: font.black },
+  basketAddedText: { fontSize: 13, color: palette.primaryDeep, marginTop: 2, fontFamily: font.bold },
+
+  basketTotalsCard: {
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: palette.border,
-    paddingVertical: 10,
+    backgroundColor: "#fafafa",
+    padding: 12,
+    marginBottom: 12,
+  },
+  divider: { height: 1, backgroundColor: palette.border, marginVertical: 10 },
+
+  moneyRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6 },
+  moneyLabel: { fontSize: 14, color: palette.gray, fontFamily: font.bold },
+  moneyValue: { fontSize: 14, color: palette.text, fontFamily: font.bold },
+  moneyLabelBold: { fontFamily: font.black, color: palette.text },
+  moneyValueBold: { fontFamily: font.black, color: palette.text },
+
+  basketButtonsWrapper: { gap: 10 },
+  basketOutlineBtn: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.border,
+    paddingVertical: 12,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#fff",
   },
-  basketOutlineText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: palette.text,
-  },
+  basketOutlineText: { fontSize: 14, color: palette.text, fontFamily: font.black },
   basketPrimaryBtn: {
-    borderRadius: 12,
-    backgroundColor: palette.greenText,
-    paddingVertical: 11,
+    borderRadius: 14,
+    backgroundColor: palette.primaryDeep,
+    paddingVertical: 13,
     alignItems: "center",
     justifyContent: "center",
   },
-  basketPrimaryText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#ffffff",
-  },
+  basketPrimaryText: { fontSize: 15, color: "#ffffff", fontFamily: font.black },
 
   // image modal
-  imageModalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.9)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  imageModalContent: {
-    width: screenWidth,
-    height: screenHeight,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  imageModalImage: {
-    width: screenWidth * 0.9,
-    height: screenHeight * 0.7,
-  },
-  imageModalClose: {
-    position: "absolute",
-    top: 40,
-    right: 20,
-  },
+  imageModalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.9)", justifyContent: "center", alignItems: "center" },
+  imageModalContent: { width: screenWidth, height: screenHeight, justifyContent: "center", alignItems: "center" },
+  imageModalImage: { width: screenWidth * 0.92, height: screenHeight * 0.72 },
+  imageModalClose: { position: "absolute", top: 40, right: 20 },
   imageModalCloseInner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: "rgba(0,0,0,0.6)",
     alignItems: "center",
     justifyContent: "center",
   },
+
+  // skeleton
+  skeletonHeaderBar: {
+    height: 60,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+    backgroundColor: palette.bg,
+  },
+  skeletonBackBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#e5e7eb" },
+  skeletonShareBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#e5e7eb" },
+  skeletonHeaderTextBlock: { flex: 1, marginHorizontal: 12 },
+  skeletonScroll: { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 160 },
+  skeletonImageCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "#fff",
+    padding: 12,
+  },
+  skeletonImageBox: { borderRadius: 18, height: 280, backgroundColor: "#e5e7eb", marginBottom: 12 },
+  skeletonSummaryBox: { borderRadius: 16, borderWidth: 1, borderColor: palette.border, padding: 12 },
+  skeletonLineLg: { height: 18, borderRadius: 9, backgroundColor: "#e5e7eb", width: "80%" },
+  skeletonLineMd: { height: 14, borderRadius: 9, backgroundColor: "#e5e7eb", width: "70%" },
+  skeletonLineShort: { height: 14, borderRadius: 9, backgroundColor: "#e5e7eb", width: "55%" },
+  skeletonLineTiny: { height: 12, borderRadius: 9, backgroundColor: "#e5e7eb", width: "75%" },
 });
 
 export default ProductDetailsScreen;

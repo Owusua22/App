@@ -1,107 +1,222 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
-import { Ionicons } from '@expo/vector-icons'; // Use Ionicons for icons
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  SafeAreaView,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
-const OrderReceivedScreen = ({ navigation }) => {
+const OrderReceivedScreen = ({ navigation, route }) => {
+  const orderId = route?.params?.orderId;
+
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.card}>
-        <Ionicons
-          name="checkmark-circle-outline"
-          size={90}
-          color="#28A745" // Green color for the success icon
-          style={styles.icon}
-        />
-        <Text style={styles.headerText}>Thank You for Your Order!</Text>
-        <Text style={styles.message}>
-          Your order has been successfully received and is being processed.
-        </Text>
+    <SafeAreaView style={styles.safeArea}>
+      <LinearGradient
+        colors={['#ECFDF5', '#F9FAFB']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={styles.container}
+      >
+        <View style={styles.card}>
+          {/* Icon + halo */}
+          <View style={styles.iconWrapper}>
+            <View style={styles.iconHalo}>
+              <Ionicons
+                name="checkmark-circle"
+                size={72}
+                color="#10B981"
+              />
+            </View>
+          </View>
 
-        <View style={styles.buttonContainer}>
-    
+          {/* Title & message */}
+          <Text style={styles.headerText}>Order Confirmed!</Text>
+          <Text style={styles.message}>
+            Thank you for your purchase. Your order has been received and is now
+            being processed.
+          </Text>
 
-          {/* Navigate to Home Screen */}
-          <TouchableOpacity
-            style={[styles.button, styles.backToShoppingButton]}
-            onPress={() => navigation.navigate('Home')}
-          >
-            <Ionicons name="home-outline" size={20} color="#fff" style={styles.buttonIcon} />
-            <Text style={styles.buttonText}>Back to Shopping</Text>
-          </TouchableOpacity>
+          {orderId && (
+            <View style={styles.orderInfo}>
+              <Text style={styles.orderLabel}>Order ID</Text>
+              <Text style={styles.orderValue}>{orderId}</Text>
+            </View>
+          )}
+
+          <View style={styles.divider} />
+
+          {/* Extra info */}
+          <View style={styles.infoRow}>
+            <Ionicons
+              name="notifications-outline"
+              size={18}
+              color="#6B7280"
+            />
+            <Text style={styles.infoText}>
+              You’ll receive a call when your items are ready for delivery.
+            </Text>
+          </View>
+
+          {/* Buttons */}
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.button, styles.secondaryButton]}
+              onPress={() => navigation.navigate('OrderHistoryScreen')}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="document-text-outline"
+                size={16}
+                color="#065F46"
+                style={styles.buttonIcon}
+              />
+              <Text style={styles.secondaryButtonText}>View Orders</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.button, styles.primaryButton]}
+              onPress={() => navigation.navigate('Home')}
+              activeOpacity={0.9}
+            >
+              <Ionicons
+                name="home-outline"
+                size={18}
+                color="#ffffff"
+                style={styles.buttonIcon}
+              />
+              <Text style={styles.primaryButtonText}>Back to Shopping</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </LinearGradient>
     </SafeAreaView>
   );
 };
 
+export default OrderReceivedScreen;
+
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#ECFDF5',
+  },
   container: {
     flex: 1,
+    paddingHorizontal: 20,
     justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#E8F9F0', // Light green background
-    padding: 20,
   },
   card: {
-    backgroundColor: 'white',
-    padding: 30,
-    borderRadius: 15,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.08,
     shadowRadius: 20,
-    width: '100%',
-    maxWidth: 400,
-    textAlign: 'center',
-    alignItems: 'center', // Center-align contents
+    elevation: 6,
+    alignItems: 'center',
   },
-  icon: {
-    marginBottom: 20,
+  iconWrapper: {
+    marginBottom: 12,
+  },
+  iconHalo: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
   },
   headerText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#2F4F4F', // Dark gray color
-    marginBottom: 10,
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#022C22',
+    marginTop: 8,
+    marginBottom: 6,
     textAlign: 'center',
   },
   message: {
-    fontSize: 16,
-    color: '#555',
-    marginBottom: 30,
+    fontSize: 14,
+    color: '#4B5563',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  orderInfo: {
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  orderLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  orderValue: {
+    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  divider: {
+    width: '100%',
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginVertical: 12,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  infoText: {
+    marginLeft: 8,
+    fontSize: 12,
+    color: '#6B7280',
+    flex: 1,
     textAlign: 'center',
   },
-  buttonContainer: {
+  buttonRow: {
+    flexDirection: 'row',
     width: '100%',
-    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
   },
   button: {
-    flexDirection: 'row', // Align icon and text horizontally
-    justifyContent: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    borderRadius: 999,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
     alignItems: 'center',
-    width: '80%',
-    paddingVertical: 15,
-    borderRadius: 5,
-    marginBottom: 15,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    justifyContent: 'center',
   },
   buttonIcon: {
-    marginRight: 10, // Add spacing between icon and text
+    marginRight: 6,
   },
-  viewOrdersButton: {
-    backgroundColor: '#28A745',
+  primaryButton: {
+    backgroundColor: '#10B981',
+    marginLeft: 8,
   },
-  backToShoppingButton: {
-    backgroundColor: '#28A745',
-    borderWidth: 2,
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    backgroundColor: '#ECFDF5',
+    marginRight: 8,
+  },
+  secondaryButtonText: {
+    color: '#065F46',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
-
-export default OrderReceivedScreen;

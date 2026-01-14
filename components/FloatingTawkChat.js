@@ -8,35 +8,38 @@ import {
   Animated,
   Linking,
   Alert,
-  Dimensions,
+  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
+
+const WHATSAPP_NUMBER = '+233555939311';
+const PHONE_NUMBER = '+233302225651';
+
+const RED = '#EF4444';
+const WHATSAPP_GREEN = '#25D366';
 
 const FloatingTawkChat = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [animation] = useState(new Animated.Value(0));
   const [pulseAnimation] = useState(new Animated.Value(1));
 
-  const WHATSAPP_NUMBER = '+233246422338';
-  const PHONE_NUMBER = '+233302225651';
-
-  // Pulse animation for main button
+  // Pulse animation for main FAB
   useEffect(() => {
     const pulse = () => {
       Animated.sequence([
         Animated.timing(pulseAnimation, {
-          toValue: 1.1,
-          duration: 1000,
+          toValue: 1.05,
+          duration: 800,
           useNativeDriver: true,
         }),
         Animated.timing(pulseAnimation, {
           toValue: 1,
-          duration: 1000,
+          duration: 800,
           useNativeDriver: true,
         }),
       ]).start(() => {
-        if (!isOpen) setTimeout(pulse, 2000);
+        if (!isOpen) setTimeout(pulse, 1800);
       });
     };
     if (!isOpen) pulse();
@@ -48,57 +51,79 @@ const FloatingTawkChat = () => {
     Animated.spring(animation, {
       toValue,
       useNativeDriver: true,
-      tension: 120,
-      friction: 7,
+      tension: 170,
+      friction: 14,
     }).start();
 
     setIsOpen(!isOpen);
   };
 
   const openWhatsApp = () => {
-    const message = "Hello! I'm interested in your products at Franko Trading Enterprise.";
-    const whatsappUrl = `whatsapp://send?phone=${WHATSAPP_NUMBER}&text=${encodeURIComponent(message)}`;
+    const message =
+      "Hello! I'm interested in your products at Franko Trading Enterprise.";
+    const sanitized = WHATSAPP_NUMBER.replace(/[^0-9+]/g, '');
+    const whatsappUrl = `whatsapp://send?phone=${sanitized}&text=${encodeURIComponent(
+      message
+    )}`;
 
     Linking.canOpenURL(whatsappUrl)
       .then((supported) => {
         if (supported) {
-          Linking.openURL(whatsappUrl);
-        } else {
-          const webUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
-          Linking.openURL(webUrl);
+          return Linking.openURL(whatsappUrl);
         }
+        const webUrl = `https://wa.me/${sanitized}?text=${encodeURIComponent(
+          message
+        )}`;
+        return Linking.openURL(webUrl);
       })
       .catch((err) => {
         console.error('Error opening WhatsApp:', err);
-        Alert.alert('Error', 'Could not open WhatsApp. Please make sure WhatsApp is installed.');
-      });
-
-    toggleMenu();
+        Alert.alert(
+          'Unable to open WhatsApp',
+          'Please make sure WhatsApp is installed or try again later.'
+        );
+      })
+      .finally(() => toggleMenu());
   };
 
-  const makeCall = () => {
-    const phoneUrl = `tel:${PHONE_NUMBER}`;
-    Linking.canOpenURL(phoneUrl)
-      .then((supported) => {
-        if (supported) Linking.openURL(phoneUrl);
-        else Alert.alert('Error', 'Phone calls are not supported on this device.');
-      })
-      .catch((err) => {
-        console.error('Error making call:', err);
-        Alert.alert('Error', 'Could not initiate call.');
-      });
+  const makeCall = async () => {
+    const sanitized = PHONE_NUMBER.replace(/[^0-9+]/g, '');
+    const scheme = Platform.OS === 'ios' ? 'telprompt:' : 'tel:';
+    const url = `${scheme}${sanitized}`;
+    const fallbackUrl = `tel:${sanitized}`;
 
-    toggleMenu();
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        await Linking.openURL(fallbackUrl);
+      }
+    } catch (err) {
+      console.error('Error making call:', err);
+      Alert.alert(
+        'Unable to place call',
+        'Please check that your device supports phone calls and try again.'
+      );
+    } finally {
+      toggleMenu();
+    }
   };
 
   const whatsappStyle = {
     opacity: animation,
     transform: [
       {
-        scale: animation.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
+        scale: animation.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.7, 1],
+        }),
       },
       {
-        translateY: animation.interpolate({ inputRange: [0, 1], outputRange: [0, -80] }),
+        translateY: animation.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, -55],
+        }),
       },
     ],
   };
@@ -107,10 +132,16 @@ const FloatingTawkChat = () => {
     opacity: animation,
     transform: [
       {
-        scale: animation.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
+        scale: animation.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.7, 1],
+        }),
       },
       {
-        translateY: animation.interpolate({ inputRange: [0, 1], outputRange: [0, -150] }),
+        translateY: animation.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, -105],
+        }),
       },
     ],
   };
@@ -118,25 +149,35 @@ const FloatingTawkChat = () => {
   const rotation = {
     transform: [
       {
-        rotate: animation.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }),
+        rotate: animation.interpolate({
+          inputRange: [0, 1],
+          outputRange: ['0deg', '45deg'],
+        }),
       },
     ],
   };
 
   const backgroundOpacity = {
-    opacity: animation.interpolate({ inputRange: [0, 1], outputRange: [0, 0.3] }),
+    opacity: animation.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, 0.18],
+    }),
   };
 
   return (
     <>
       {isOpen && (
         <Animated.View style={[styles.overlay, backgroundOpacity]}>
-          <TouchableOpacity style={styles.overlayTouch} onPress={toggleMenu} activeOpacity={1} />
+          <TouchableOpacity
+            style={styles.overlayTouch}
+            onPress={toggleMenu}
+            activeOpacity={1}
+          />
         </Animated.View>
       )}
 
       <View style={styles.container}>
-        {/* WhatsApp Button */}
+        {/* WhatsApp Button (green) */}
         <Animated.View style={[styles.actionButton, whatsappStyle]}>
           <TouchableOpacity
             onPress={openWhatsApp}
@@ -144,13 +185,13 @@ const FloatingTawkChat = () => {
             activeOpacity={0.9}
           >
             <View style={styles.iconContainer}>
-              <FontAwesome name="whatsapp" size={18} color="white" />
+              <FontAwesome name="whatsapp" size={14} color="#ffffff" />
             </View>
             <Text style={styles.actionButtonText}>WhatsApp</Text>
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Call Button */}
+        {/* Call Button (red) */}
         <Animated.View style={[styles.actionButton, callStyle]}>
           <TouchableOpacity
             onPress={makeCall}
@@ -158,17 +199,30 @@ const FloatingTawkChat = () => {
             activeOpacity={0.9}
           >
             <View style={styles.iconContainer}>
-              <Icon name="phone" size={18} color="white" />
+              <Icon name="phone" size={14} color="#ffffff" />
             </View>
             <Text style={styles.actionButtonText}>Call us</Text>
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Main Floating Button */}
-        <Animated.View style={[styles.floatingButtonContainer, { transform: [{ scale: pulseAnimation }] }]}>
-          <TouchableOpacity style={styles.floatingButton} onPress={toggleMenu} activeOpacity={0.8}>
+        {/* Main Floating Button (red) */}
+        <Animated.View
+          style={[
+            styles.floatingButtonContainer,
+            { transform: [{ scale: pulseAnimation }] },
+          ]}
+        >
+          <TouchableOpacity
+            style={styles.floatingButton}
+            onPress={toggleMenu}
+            activeOpacity={0.8}
+          >
             <Animated.View style={rotation}>
-              {isOpen ? <Icon name="close" size={24} color="white" /> : <Icon name="chat" size={24} color="white" />}
+              {isOpen ? (
+                <Icon name="close" size={20} color="#ffffff" />
+              ) : (
+                <Icon name="chat" size={20} color="#ffffff" />
+              )}
             </Animated.View>
           </TouchableOpacity>
         </Animated.View>
@@ -177,8 +231,6 @@ const FloatingTawkChat = () => {
   );
 };
 
-const { width, height } = Dimensions.get('window');
-
 const styles = StyleSheet.create({
   overlay: {
     position: 'absolute',
@@ -186,62 +238,79 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(15,23,42,0.6)',
     zIndex: 999,
   },
   overlayTouch: { flex: 1 },
   container: {
     position: 'absolute',
-    bottom: 110,
-    right: 20,
+    bottom: 90,
+    right: 14,
     zIndex: 1000,
     alignItems: 'center',
   },
-  floatingButtonContainer: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
+  floatingButtonContainer: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   floatingButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#FF6B6B',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: RED,
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 12,
-    shadowColor: '#FF6B6B',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    zIndex: 3,
-    borderWidth: 3,
-    borderColor: 'rgba(255,255,255,0.3)',
+    elevation: 10,
+    shadowColor: RED,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 5,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.7)',
   },
-  actionButton: { position: 'absolute', bottom: 0, right: 0, zIndex: 2 },
+  actionButton: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    zIndex: 2,
+  },
   actionButtonInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 30,
-    minWidth: 140,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.2)',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 18,
+    minWidth: 100,
+    elevation: 6,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.28,
+    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
   },
-  whatsappButton: { backgroundColor: '#25D366', shadowColor: '#25D366' },
-  callButton: { backgroundColor: '#FF4757', shadowColor: '#FF4757' },
+  whatsappButton: {
+    backgroundColor: WHATSAPP_GREEN,
+    shadowColor: WHATSAPP_GREEN,
+  },
+  callButton: {
+    backgroundColor: RED,
+    shadowColor: RED,
+  },
   iconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.18)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: 6,
   },
-  actionButtonText: { color: 'white', fontWeight: '700', fontSize: 15, letterSpacing: 0.5 },
+  actionButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 12,
+  },
 });
 
 export default FloatingTawkChat;

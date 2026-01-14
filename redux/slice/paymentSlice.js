@@ -39,24 +39,6 @@ export const getHubtelCallbackById = createAsyncThunk(
   }
 );
 
-// Get all Hubtel callback records
-export const getAllHubtelCallbackRecords = createAsyncThunk(
-  'payment/getAllHubtelCallbackRecords',
-  async (_, { rejectWithValue }) => {
-    try {
-      const response = await axios.get(
-        `${API_URL}/PaymentSystem/GetHubtelCallBackAllRecords`
-      );
-
-      const sortedData = response.data?.slice().reverse(); // newest to oldest based on position
-
-      return sortedData;
-    } catch (error) {
-      return rejectWithValue(error.response?.data || 'Something went wrong');
-    }
-  }
-);
-
 
 const paymentSlice = createSlice({
   name: 'payment',
@@ -102,19 +84,7 @@ const paymentSlice = createSlice({
         state.error = action.payload;
       })
 
-      // getAllHubtelCallbackRecords
-      .addCase(getAllHubtelCallbackRecords.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(getAllHubtelCallbackRecords.fulfilled, (state, action) => {
-        state.loading = false;
-        state.callbackData = action.payload;
-      })
-      .addCase(getAllHubtelCallbackRecords.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      });
+      
   },
 });
 

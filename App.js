@@ -9,7 +9,6 @@ import {
   StatusBar as RNStatusBar,
   Animated,
   Dimensions,
-  Platform,          // <-- import Platform (safe, even if unused here)
 } from 'react-native';
 import { Provider, useDispatch } from 'react-redux';
 import { PersistGate } from 'redux-persist/integration/react';
@@ -91,12 +90,10 @@ const WelcomeScreen = ({ onReady }) => {
   }, [dispatch]);
 
   useEffect(() => {
-    // update time every second (state kept but not rendered yet)
     const interval = setInterval(() => {
       setDateTime(new Date());
     }, 1000);
 
-    // Start animations
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -117,7 +114,6 @@ const WelcomeScreen = ({ onReady }) => {
       }),
     ]).start();
 
-    // Pulse animation for logo
     const pulseLoop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
@@ -135,7 +131,6 @@ const WelcomeScreen = ({ onReady }) => {
     pulseLoop.start();
 
     const fetchData = async () => {
-      // Simulate some startup work
       await new Promise((resolve) => setTimeout(resolve, 3000));
       setLoading(false);
       onReady();
@@ -147,6 +142,13 @@ const WelcomeScreen = ({ onReady }) => {
       clearInterval(interval);
     };
   }, [onReady, fadeAnim, scaleAnim, slideAnim, pulseAnim]);
+
+  const formattedDate = dateTime.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 
   return (
     <View style={styles.welcomeWrapper}>
@@ -208,6 +210,7 @@ const WelcomeScreen = ({ onReady }) => {
             <Text style={styles.welcomeTitle}>Welcome to</Text>
             <Text style={styles.companyName}>Franko Trading Ent</Text>
             <Text style={styles.tagline}>Your trusted electronics partner</Text>
+    
           </Animated.View>
 
           {/* Loading Indicator */}
@@ -215,11 +218,14 @@ const WelcomeScreen = ({ onReady }) => {
             <Animated.View
               style={[
                 styles.loadingContainer,
-                { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+                {
+                  opacity: fadeAnim,
+                  transform: [{ translateY: slideAnim }],
+                },
               ]}
             >
               <ActivityIndicator size="large" color="#ffffff" />
-              <Text style={styles.loadingText}>Phone Papa fie...</Text>
+              <Text style={styles.loadingText}>Home of quality phones and electronic appliances.</Text>
             </Animated.View>
           )}
         </Animated.View>
@@ -291,6 +297,7 @@ const MainAppContainer = () => {
 
   return (
     <View style={styles.mainContainer}>
+      {/* App header sits below the system status bar area */}
       <View style={{ paddingTop: insets.top, backgroundColor: '#fff' }}>
         <Header />
       </View>
@@ -367,25 +374,30 @@ const AddressManagementScreenWithFooter = () => (
 /* ---------------- App Content ---------------- */
 const AppContent = () => {
   const [showWelcome, setShowWelcome] = useState(true);
+
   const handleReady = () => setShowWelcome(false);
 
   return (
-    <NavigationContainer>
-      {/* Global transparent status bar for entire app */}
+    <>
+      {/* Global, non-translucent status bar for all devices.
+         - Light background + dark-content ensures time/date/icons are readable
+           on iOS & Android. */}
       <RNStatusBar
         barStyle="dark-content"
-        backgroundColor="transparent"
-        translucent={true}
+        backgroundColor="#F9FAFB"
+        translucent={false}
       />
 
-      <SafeAreaView style={styles.container} edges={['bottom']}>
-        {showWelcome ? (
-          <WelcomeScreen onReady={handleReady} />
-        ) : (
-          <MainAppContainer />
-        )}
-      </SafeAreaView>
-    </NavigationContainer>
+      <NavigationContainer>
+        <SafeAreaView style={styles.container} edges={['bottom']}>
+          {showWelcome ? (
+            <WelcomeScreen onReady={handleReady} />
+          ) : (
+            <MainAppContainer />
+          )}
+        </SafeAreaView>
+      </NavigationContainer>
+    </>
   );
 };
 
@@ -406,7 +418,7 @@ export default App;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#F9FAFB',
   },
   mainContainer: {
     flex: 1,
@@ -490,7 +502,7 @@ const styles = StyleSheet.create({
   },
   dateText: {
     marginTop: 10,
-    fontSize: 16,
+    fontSize: 15,
     color: '#fff',
     fontWeight: '600',
   },

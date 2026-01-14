@@ -1,21 +1,26 @@
 import React from "react";
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
   StatusBar,
-  Dimensions 
+  SafeAreaView,
+  ScrollView,
+  Dimensions,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
+import Icon from "react-native-vector-icons/MaterialIcons";
 
-const { width } = Dimensions.get('window');
+const { width } = Dimensions.get("window");
+const MAX_CONTENT_WIDTH = 520;
 
 const OrderCancellationScreen = () => {
   const navigation = useNavigation();
 
   const handleBackToShopping = () => {
     navigation.navigate("Home");
+    // or: navigation.navigate("Home", { screen: "Products" });
   };
 
   const handleContactSupport = () => {
@@ -23,227 +28,260 @@ const OrderCancellationScreen = () => {
   };
 
   return (
-    <>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
 
-      <View style={styles.container}>
-        {/* Header Section */}
-        <View style={styles.cancelledheader}>
-          <View style={styles.iconContainer}>
-            <Text style={styles.iconText}>⚠️</Text>
-          </View>
-          <Text style={styles.title}>Order Cancelled</Text>
-          <Text style={styles.subtitle}>
-            Your payment was not successful or the order was cancelled.
-          </Text>
-        </View>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+      >
+        <View style={styles.container}>
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.iconWrap}>
+              <View style={styles.iconRing}>
+                <Icon name="cancel" size={34} color="#DC2626" />
+              </View>
+            </View>
 
-        {/* Main Content Card */}
-        <View style={styles.card}>
-    
-
-       
-
-          {/* Divider */}
-          <View style={styles.divider} />
-
-          {/* Support Section */}
-          <View style={styles.supportSection}>
-            <Text style={styles.supportTitle}>Need help?</Text>
-            <Text style={styles.supportText}>
-              If you have any questions or concerns about your cancellation, 
-              our support team is here to assist you.
+            <Text style={styles.title}>Order Cancelled</Text>
+            <Text style={styles.subtitle}>
+              Your payment didn’t go through, or the order was cancelled before completion.
             </Text>
+
+            
           </View>
-        </View>
 
-        {/* Action Buttons */}
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={handleBackToShopping}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.primaryButtonText}>Continue Shopping</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={handleContactSupport}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.secondaryButtonText}>Contact Support</Text>
-          </TouchableOpacity>
-        </View>
+          {/* Card */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>What you can do next</Text>
 
-        {/* Footer */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Thank you for choosing our service
-          </Text>
+            <View style={styles.row}>
+              <View style={styles.rowIcon}>
+                <Icon name="refresh" size={18} color="#0F766E" />
+              </View>
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowTitle}>Try again</Text>
+                <Text style={styles.rowText}>
+                  Double‑check your payment details or try a different payment method.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.row}>
+              <View style={styles.rowIcon}>
+                <Icon name="wifi-off" size={18} color="#0F766E" />
+              </View>
+              <View style={styles.rowTextWrap}>
+                <Text style={styles.rowTitle}>Check your connection</Text>
+                <Text style={styles.rowText}>
+                  If your network dropped during checkout, retry from a stable connection.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.supportHeader}>
+              <Icon name="support-agent" size={20} color="#111827" />
+              <Text style={styles.supportTitle}>Need help?</Text>
+            </View>
+
+            <Text style={styles.supportText}>
+              If you have any questions about the cancellation, our support team can help you.
+            </Text>
+
+            {/* NEW: Contact us link right under “Need help?” */}
+            <TouchableOpacity
+              style={styles.supportLink}
+              onPress={handleContactSupport}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.supportLinkText}>Contact us</Text>
+              <Icon name="chevron-right" size={20} color="#059669" />
+            </TouchableOpacity>
+
+            
+          </View>
+
+          {/* Actions */}
+          <View style={styles.actions}>
+            {/* UPDATED: Continue Shopping button is now GREEN */}
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={handleBackToShopping}
+              activeOpacity={0.85}
+            >
+              <Icon name="shopping-bag" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryButtonText}>Continue Shopping</Text>
+            </TouchableOpacity>
+
+           
+          </View>
+
+          {/* Footer */}
+          <Text style={styles.footerText}>Thank you for choosing our service</Text>
         </View>
-      </View>
-    </>
+      </ScrollView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f8fafc",
-    paddingHorizontal: 20,
-  },
-  cancelledheader: {
+  safe: { flex: 1, backgroundColor: "#F8FAFC" },
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     alignItems: "center",
-    paddingTop: 10,
-    paddingBottom: 10,
   },
-  iconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: "#fef2f2",
+  container: { width: "100%", maxWidth: MAX_CONTENT_WIDTH },
+
+  header: { alignItems: "center", paddingTop: 8, paddingBottom: 14 },
+  iconWrap: { marginBottom: 14 },
+  iconRing: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
+    backgroundColor: "#FEF2F2",
+    borderWidth: 2,
+    borderColor: "#FECACA",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 20,
-    borderWidth: 2,
-    borderColor: "#fecaca",
-  },
-  iconText: {
-    fontSize: 36,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#1f2937",
-    marginBottom: 8,
-    textAlign: "center",
-  },
-  subtitle: {
-    fontSize: 16,
-    color: "#6b7280",
-    textAlign: "center",
-    lineHeight: 24,
-  },
-  card: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 12,
-    elevation: 8,
-    marginBottom: 30,
-    overflow: "hidden",
-  },
-  statusBadge: {
-    backgroundColor: "#dc2626",
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    alignSelf: "center",
-    borderRadius: 20,
-    marginTop: 20,
-    marginBottom: 24,
-  },
-  statusText: {
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "600",
-    letterSpacing: 1,
-  },
-  infoSection: {
-    paddingHorizontal: 24,
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#1f2937",
-    marginBottom: 16,
-  },
-  infoItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 12,
-  },
-  bulletPoint: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#10b981",
-    marginTop: 8,
-    marginRight: 12,
-  },
-  infoText: {
-    fontSize: 15,
-    color: "#4b5563",
-    lineHeight: 22,
-    flex: 1,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#e5e7eb",
-    marginHorizontal: 24,
-    marginVertical: 20,
-  },
-  supportSection: {
-    paddingHorizontal: 24,
-    paddingBottom: 24,
-  },
-  supportTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#1f2937",
-    marginBottom: 8,
-  },
-  supportText: {
-    fontSize: 14,
-    color: "#6b7280",
-    lineHeight: 20,
-  },
-  buttonContainer: {
-    gap: 12,
-    marginBottom: 30,
-  },
-  primaryButton: {
-    backgroundColor: "#3b82f6",
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: 12,
-    alignItems: "center",
-    shadowColor: "#3b82f6",
-    shadowOpacity: 0.3,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 8,
+    shadowColor: "#DC2626",
+    shadowOpacity: 0.12,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 14,
     elevation: 6,
   },
-  primaryButtonText: {
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "600",
+  title: {
+    fontSize: 26,
+    fontWeight: "800",
+    color: "#111827",
+    textAlign: "center",
+    letterSpacing: 0.2,
   },
-  secondaryButton: {
-    backgroundColor: "#ffffff",
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: 12,
+  subtitle: {
+    marginTop: 8,
+    fontSize: 15,
+    color: "#6B7280",
+    textAlign: "center",
+    lineHeight: 22,
+    paddingHorizontal: 6,
+  },
+  badge: {
+    marginTop: 12,
+    flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1.5,
-    borderColor: "#d1d5db",
+    gap: 6,
+    backgroundColor: "#FEE2E2",
+    borderColor: "#FECACA",
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
   },
-  secondaryButtonText: {
-    color: "#374151",
-    fontSize: 16,
-    fontWeight: "500",
+  badgeText: { fontSize: 12, fontWeight: "700", color: "#991B1B", letterSpacing: 0.6 },
+
+  card: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: 10 },
+    shadowRadius: 18,
+    elevation: 5,
   },
-  footer: {
+  cardTitle: { fontSize: 16, fontWeight: "800", color: "#111827", marginBottom: 12 },
+
+  row: { flexDirection: "row", gap: 12, paddingVertical: 10 },
+  rowIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
     alignItems: "center",
-    paddingBottom: 40,
+    justifyContent: "center",
   },
-  footerText: {
+  rowTextWrap: { flex: 1 },
+  rowTitle: { fontSize: 14, fontWeight: "800", color: "#111827", marginBottom: 3 },
+  rowText: { fontSize: 13, color: "#6B7280", lineHeight: 19 },
+
+  divider: { height: 1, backgroundColor: "#E5E7EB", marginVertical: 12 },
+
+  supportHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
+  supportTitle: { fontSize: 15, fontWeight: "800", color: "#111827" },
+  supportText: { fontSize: 13, color: "#6B7280", lineHeight: 19 },
+
+  // NEW link styles
+  supportLink: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    alignSelf: "flex-start",
+    gap: 2,
+    paddingVertical: 6,
+  },
+  supportLinkText: {
     fontSize: 14,
-    color: "#9ca3af",
-    fontStyle: "italic",
+    fontWeight: "800",
+    color: "#059669",
   },
+
+  supportPills: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 10 },
+  supportPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#ECFDF5",
+    borderColor: "#A7F3D0",
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  supportPillText: { fontSize: 12, fontWeight: "700", color: "#065F46" },
+
+  actions: { marginTop: 14, gap: 12 },
+
+  // UPDATED: green primary button
+  primaryButton: {
+    backgroundColor: "#10B981",
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 10,
+    shadowColor: "#10B981",
+    shadowOpacity: 0.22,
+    shadowOffset: { width: 0, height: 10 },
+    shadowRadius: 16,
+    elevation: 7,
+  },
+  primaryButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
+
+  secondaryButton: {
+    backgroundColor: "#FFFFFF",
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  secondaryButtonText: { color: "#111827", fontSize: 15, fontWeight: "800" },
+
+  footerText: { marginTop: 18, textAlign: "center", fontSize: 13, color: "#9CA3AF" },
 });
 
 export default OrderCancellationScreen;

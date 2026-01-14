@@ -1,6 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { useDispatch, useSelector } from "react-redux";
-import { fetchOrdersByCustomer } from "../redux/slice/orderSlice";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -9,303 +7,234 @@ import {
   ActivityIndicator,
   StyleSheet,
   Image,
-  Dimensions,
   RefreshControl,
   SafeAreaView,
   Modal,
   ScrollView,
   Alert,
+  Dimensions,
 } from "react-native";
-import DateTimePicker from "@react-native-community/datetimepicker";
-import { useNavigation } from "@react-navigation/native";
+import { useDispatch, useSelector } from "react-redux";
 import moment from "moment";
-import noOrders from "../assets/noOrders.avif";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Icon from "react-native-vector-icons/MaterialIcons";
+import { useNavigation } from "@react-navigation/native";
+
+import noOrders from "../assets/noOrders.avif";
 import OrderModal from "../components/OrderDetailsModal";
 
-const { width } = Dimensions.get('window');
+import {
+  fetchOrdersByCustomer,
+  selectOrders,
+  selectOrdersError,
+  selectOrdersLoading,
+} from "../redux/slice/orderSlice";
 
-const OrderHistoryScreen = () => {
+const { width } = Dimensions.get("window");
+
+const DEFAULT_FROM = moment("2000-01-01").startOf("day");
+const DEFAULT_TO = moment().add(1, "day").endOf("day");
+
+const datePresets = [
+  { label: "All Time", fromDate: DEFAULT_FROM, toDate: DEFAULT_TO, icon: "all-inclusive" },
+  { label: "Last 7 Days", days: 7, icon: "today" },
+  { label: "Last 30 Days", days: 30, icon: "date-range" },
+  { label: "Last 3 Months", days: 90, icon: "calendar-today" },
+  { label: "Last 6 Months", days: 180, icon: "event" },
+  { label: "This Year", fromDate: moment().startOf("year"), toDate: DEFAULT_TO, icon: "event-note" },
+  { label: "Custom", days: null, icon: "edit-calendar" },
+];
+
+function normalizeOrderCode(order, fallback) {
+  const code =
+    order?.orderCode ??
+    order?.OrderCode ??
+    order?.orderId ??
+    order?.id ??
+    order?.orderNumber ??
+    order?.salesOrderId ??
+    order?.code;
+
+  return code != null ? String(code).trim() : String(fallback);
+}
+
+function normalizeOrderStatus(order) {
+  const status =
+    (typeof order?.orderCycle === "string" && order.orderCycle) ||
+    order?.orderCycle?.status ||
+    order?.orderCycle?.name ||
+    order?.status ||
+    "Pending";
+
+  return String(status);
+}
+
+function normalizeOrderDate(order) {
+  const raw = order?.orderDate || order?.createdAt || order?.date;
+  if (!raw) return "Date not available";
+  return moment(raw).format("MMM DD, YYYY");
+}
+
+function getStatusColor(status) {
+  const s = String(status || "").toLowerCase();
+  if (["delivered", "delivery", "completed"].includes(s)) return "#10B981";
+  if (["pending", "processing", "order placement"].includes(s)) return "#F59E0B";
+  if (["cancelled", "canceled", "wrong number", "unreachable"].includes(s)) return "#EF4444";
+  if (["Multiple Orders", "testing"].includes(s)) return "#9CA3AF";
+  return "#6B7280";
+}
+
+export default function OrderHistoryScreen() {
   const dispatch = useDispatch();
   const navigation = useNavigation();
-  
-  const orders = useSelector((state) => state.order.orders || []);
-  const loading = useSelector((state) => state.order.loading?.orders || false);
-  const error = useSelector((state) => state.order.error?.orders || null);
 
-  const defaultFromDate = moment("2000-01-01");
-  const defaultToDate = moment().add(1, 'day').endOf('day');
+  const orders = useSelector(selectOrders);
+  const loading = useSelector(selectOrdersLoading);
+  const error = useSelector(selectOrdersError);
 
-  const [dateRange, setDateRange] = useState([defaultFromDate, defaultToDate]);
-  const [tempDateRange, setTempDateRange] = useState([defaultFromDate, defaultToDate]);
+  const [customerId, setCustomerId] = useState(null);
+
+  const [dateRange, setDateRange] = useState([DEFAULT_FROM, DEFAULT_TO]);
+  const [tempDateRange, setTempDateRange] = useState([DEFAULT_FROM, DEFAULT_TO]);
+  const [selectedPreset, setSelectedPreset] = useState("All Time");
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [showDateRangeModal, setShowDateRangeModal] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [datePickerMode, setDatePickerMode] = useState("from");
+
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [selectedOrderCode, setSelectedOrderCode] = useState(null);
-  const [customerId, setCustomerId] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [showDateRangeModal, setShowDateRangeModal] = useState(false);
-  const [selectedPreset, setSelectedPreset] = useState('All Time');
-  const [isApplyingFilter, setIsApplyingFilter] = useState(false);
-  const [hasFetchedInitial, setHasFetchedInitial] = useState(false);
 
-  const datePresets = [
-    { label: 'All Time', fromDate: moment("2000-01-01"), toDate: moment().add(1, 'day'), icon: 'all-inclusive' },
-    { label: 'Last 7 Days', days: 7, icon: 'today' },
-    { label: 'Last 30 Days', days: 30, icon: 'date-range' },
-    { label: 'Last 3 Months', days: 90, icon: 'calendar-today' },
-    { label: 'Last 6 Months', days: 180, icon: 'event' },
-    { label: 'This Year', fromDate: moment().startOf('year'), toDate: moment().add(1, 'day'), icon: 'event-note' },
-    { label: 'Custom', days: null, icon: 'edit-calendar' },
-  ];
-
+  // Load customerId once
   useEffect(() => {
-    const initializeCustomer = async () => {
+    (async () => {
       try {
         const customerData = await AsyncStorage.getItem("customer");
-    
-        
-        if (customerData) {
-          const customerObject = JSON.parse(customerData);
-    
-          
-          const accountNumber = customerObject?.customerAccountNumber;
-          
-          if (accountNumber) {
-            setCustomerId(accountNumber);
-          } else {
-            console.error("No customer account number found");
-          }
-        } else {
-          console.error("No customer data found in AsyncStorage");
-        }
-      } catch (error) {
-        console.error("Error initializing customer data:", error);
-      }
-    };
+        if (!customerData) return;
 
-    initializeCustomer();
+        const customer = JSON.parse(customerData);
+        const accountNumber = customer?.customerAccountNumber;
+        if (accountNumber) setCustomerId(accountNumber);
+      } catch (e) {
+        console.error("Failed to load customer from AsyncStorage:", e);
+      }
+    })();
   }, []);
 
+  const fetchOrders = useCallback(async () => {
+    if (!customerId) return;
+
+    const [from, to] = dateRange.map((d) => d.format("MM/DD/YYYY"));
+    await dispatch(fetchOrdersByCustomer({ from, to, customerId })).unwrap();
+  }, [dispatch, customerId, dateRange]);
+
+  // auto fetch when inputs change
   useEffect(() => {
-    if (customerId && !hasFetchedInitial) {
-    
-      fetchOrders();
-      setHasFetchedInitial(true);
-    }
-  }, [customerId]);
+    if (!customerId) return;
+    fetchOrders().catch((e) => console.error("Error fetching orders:", e));
+  }, [customerId, fetchOrders]);
 
-  const fetchOrders = async () => {
-    if (!customerId) {
-      console.error("Cannot fetch orders: customerId is null");
-      return;
-    }
-
-    try {
-      const [from, to] = dateRange.map((date) => date.format("MM/DD/YYYY"));
-      await dispatch(fetchOrdersByCustomer({ from, to, customerId })).unwrap();
-    } catch (error) {
-      console.error("Error fetching orders:", error);
-    }
-  };
-
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchOrders();
-    setRefreshing(false);
-  };
-
-  const handleDateChange = (event, selectedDate) => {
-    setShowDatePicker(false);
-    if (selectedDate) {
-      const updatedDateRange = [...tempDateRange];
-      updatedDateRange[datePickerMode === "from" ? 0 : 1] = moment(selectedDate);
-      setTempDateRange(updatedDateRange);
+    try {
+      await fetchOrders();
+    } finally {
+      setRefreshing(false);
     }
-  };
+  }, [fetchOrders]);
 
-  const handlePresetFilter = async (preset) => {
-    setIsApplyingFilter(true);
-    setSelectedPreset(preset.label);
-    
-    if (preset.days === null && !preset.fromDate) {
-      setTempDateRange([...dateRange]);
-      setShowDateRangeModal(true);
-      setIsApplyingFilter(false);
-    } else {
-      let fromDate, toDate;
-      
-      if (preset.fromDate && preset.toDate) {
-        fromDate = preset.fromDate.clone();
-        toDate = preset.toDate.clone().endOf('day');
-      } else {
-        fromDate = moment().subtract(preset.days, 'days').startOf('day');
-        toDate = moment().add(1, 'day').endOf('day');
-      }
-      
-      setDateRange([fromDate, toDate]);
-      
-      setTimeout(async () => {
-        if (customerId) {
-          const [from, to] = [fromDate, toDate].map((date) => date.format("MM/DD/YYYY"));
-          
-          try {
-            await dispatch(fetchOrdersByCustomer({ from, to, customerId })).unwrap();
-          } catch (error) {
-           
-          }
-        }
-        setIsApplyingFilter(false);
-      }, 300);
-    }
-  };
-
-  const applyCustomDateRange = async () => {
-    setIsApplyingFilter(true);
-    setDateRange([...tempDateRange]);
-    setShowDateRangeModal(false);
-    setSelectedPreset('Custom');
-    
-    setTimeout(async () => {
-      if (customerId) {
-        const [from, to] = tempDateRange.map((date) => date.format("MM/DD/YYYY"));
-        console.log("Applying custom date range:", { from, to, customerId });
-        try {
-          await dispatch(fetchOrdersByCustomer({ from, to, customerId })).unwrap();
-        } catch (error) {
-          console.error("Error fetching orders with custom range:", error);
-        }
-      }
-      setIsApplyingFilter(false);
-    }, 300);
-  };
+  const transformedOrders = useMemo(() => {
+    const list = Array.isArray(orders) ? orders : [];
+    return list
+      .filter(Boolean)
+      .map((o, idx) => {
+        const code = normalizeOrderCode(o, idx);
+        const dateKey = o?.orderDate || o?.createdAt || Date.now();
+        return { ...o, __key: `${code}-${dateKey}-${idx}` };
+      })
+      .sort((a, b) => {
+        const da = moment(a?.orderDate || a?.createdAt || 0);
+        const db = moment(b?.orderDate || b?.createdAt || 0);
+        return db.diff(da);
+      });
+  }, [orders]);
 
   const handleViewOrder = useCallback((order) => {
-   
-    
-    // Try multiple possible field names for order code
-    const orderCode = order?.orderCode || 
-                      order?.OrderCode || 
-                      order?.id || 
-                      order?.orderId ||
-                      order?.orderNumber ||
-                      order?.salesOrderId ||
-                      order?.code;
-    
-   
-    
-    if (!orderCode) {
-    
-      console.log("Available keys in order:", Object.keys(order || {}));
-      Alert.alert(
-        "Error",
-        "Unable to open order details. Order code not found.",
-        [{ text: "OK" }]
-      );
+    const code = normalizeOrderCode(order, null);
+    if (!code || code === "null" || code === "undefined") {
+      Alert.alert("Error", "Unable to open order details. Order code not found.");
       return;
     }
-    
-    // Ensure orderCode is a string and set state
-    const orderCodeString = String(orderCode).trim();
-    
-    setSelectedOrderCode(orderCodeString);
+    setSelectedOrderCode(code);
     setIsModalVisible(true);
   }, []);
 
   const handleModalClose = useCallback(() => {
-  
     setIsModalVisible(false);
-    // Delay clearing orderCode to prevent flash
-    setTimeout(() => {
-      setSelectedOrderCode(null);
-    }, 300);
+    setTimeout(() => setSelectedOrderCode(null), 250);
   }, []);
 
-  const getStatusColor = (status) => {
-    const statusLower = String(status || '').toLowerCase();
-    switch (statusLower) {
-      case "Order Placement":
-      case "multiple orders":
-        return "#3B82F6";
-      case "delivered":
-      case "delivery":
-      case "completed":
-        return "#10B981";
-      case "pending":
-      case "processing":
-        return "#F59E0B";
-      case "cancelled":
-      case "canceled":
-        return "#EF4444";
-      case "Delivery":
-      case "shipping":
-        return "#059669";
-      case "wrong number":
-      case "unreachable":
-        return "#EF4444";
-      default:
-        return "#6B7280";
-    }
-  };
+  const applyPreset = useCallback(
+    async (preset) => {
+      setSelectedPreset(preset.label);
 
-  const getOrderStatus = (item) => {
-    try {
-      if (typeof item?.orderCycle === 'string') {
-        return item.orderCycle;
+      // custom -> open modal
+      if (preset.days === null && !preset.fromDate) {
+        setTempDateRange([...dateRange]);
+        setShowDateRangeModal(true);
+        return;
       }
-      if (typeof item?.orderCycle === 'object' && item?.orderCycle !== null) {
-        return item.orderCycle.status || item.orderCycle.name || "Pending";
-      }
-      if (item?.status) {
-        return item.status;
-      }
-      return "Pending";
-    } catch (error) {
-      console.error("Error getting order status:", error);
-      return "Unknown";
-    }
-  };
 
-  const getOrderDate = (item) => {
-    try {
-      if (item?.orderDate) {
-        return moment(item.orderDate).format("MMM DD, YYYY");
+      let fromDate, toDate;
+      if (preset.fromDate && preset.toDate) {
+        fromDate = preset.fromDate.clone().startOf("day");
+        toDate = preset.toDate.clone().endOf("day");
+      } else {
+        fromDate = moment().subtract(preset.days, "days").startOf("day");
+        toDate = moment().add(1, "day").endOf("day");
       }
-      if (item?.createdAt) {
-        return moment(item.createdAt).format("MMM DD, YYYY");
-      }
-      if (item?.date) {
-        return moment(item.date).format("MMM DD, YYYY");
-      }
-      return "Date not available";
-    } catch (error) {
-     
-      return "Date not available";
-    }
-  };
 
-  const getOrderCode = (item) => {
-    return item?.orderCode || 
-           item?.OrderCode || 
-           item?.id || 
-           item?.orderId ||
-           item?.orderNumber || 
-           "N/A";
-  };
+      setDateRange([fromDate, toDate]);
+    },
+    [dateRange]
+  );
 
-  const renderOrderItem = useCallback(({ item, index }) => {
-    const orderStatus = getOrderStatus(item);
-    const orderDate = getOrderDate(item);
-    const orderCode = getOrderCode(item);
+  const applyCustomRange = useCallback(() => {
+    setSelectedPreset("Custom");
+    setDateRange([...tempDateRange]);
+    setShowDateRangeModal(false);
+  }, [tempDateRange]);
+
+  const handleDateChange = useCallback(
+    (event, selectedDate) => {
+      setShowDatePicker(false);
+      if (!selectedDate) return;
+      setTempDateRange((prev) => {
+        const next = [...prev];
+        next[datePickerMode === "from" ? 0 : 1] = moment(selectedDate);
+        return next;
+      });
+    },
+    [datePickerMode]
+  );
+
+  const displayRange = useMemo(() => {
+    if (selectedPreset === "All Time") return "All Orders";
+    return `${dateRange[0].format("MMM DD, YYYY")} - ${dateRange[1].format("MMM DD, YYYY")}`;
+  }, [selectedPreset, dateRange]);
+
+  const renderOrderItem = ({ item, index }) => {
+    const status = normalizeOrderStatus(item);
+    const date = normalizeOrderDate(item);
+    const code = normalizeOrderCode(item, index);
 
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         style={[styles.orderCard, { marginTop: index === 0 ? 0 : 12 }]}
-        onPress={() => {
-          
-          handleViewOrder(item);
-        }}
+        onPress={() => handleViewOrder(item)}
         activeOpacity={0.95}
       >
         <View style={styles.orderCardContent}>
@@ -316,15 +245,14 @@ const OrderHistoryScreen = () => {
               </View>
               <View>
                 <Text style={styles.orderIdLabel}>Order</Text>
-                <Text style={styles.orderId}>{orderCode}</Text>
+                <Text style={styles.orderId}>{code}</Text>
               </View>
             </View>
-            
-            <TouchableOpacity 
+
+            <TouchableOpacity
               style={styles.viewOrderButton}
               onPress={(e) => {
                 e.stopPropagation();
-              
                 handleViewOrder(item);
               }}
             >
@@ -333,33 +261,44 @@ const OrderHistoryScreen = () => {
               <Icon name="chevron-right" size={16} color="#10B981" />
             </TouchableOpacity>
           </View>
-          
+
           <View style={styles.orderDetails}>
             <View style={styles.detailRow}>
               <Icon name="calendar-today" size={14} color="#6B7280" />
-              <Text style={styles.orderDate}>{orderDate}</Text>
+              <Text style={styles.orderDate}>{date}</Text>
             </View>
-            
+
             <View style={styles.detailRow}>
-              <View style={[styles.statusDot, { backgroundColor: getStatusColor(orderStatus) }]} />
-              <Text style={[styles.orderStatus, { color: getStatusColor(orderStatus) }]}>
-                {orderStatus}
+              <View style={[styles.statusDot, { backgroundColor: getStatusColor(status) }]} />
+              <Text style={[styles.orderStatus, { color: getStatusColor(status) }]}>
+                {status}
               </Text>
-            
             </View>
           </View>
-        
         </View>
       </TouchableOpacity>
     );
-  }, [handleViewOrder]);
-
-  const getDisplayDateRange = () => {
-    if (selectedPreset === 'All Time') {
-      return 'All Orders';
-    }
-    return `${dateRange[0].format("MMM DD, YYYY")} - ${dateRange[1].format("MMM DD, YYYY")}`;
   };
+
+  const renderEmptyState = () => (
+    <View style={styles.emptyStateContainer}>
+      <View style={styles.emptyStateImageContainer}>
+        <Image source={noOrders} style={styles.emptyStateImage} />
+      </View>
+      <Text style={styles.emptyStateTitle}>No Orders Found</Text>
+      <Text style={styles.emptyStateSubtitle}>
+        No orders in this date range.{"\n"}Try adjusting your filter or start shopping!
+      </Text>
+      <TouchableOpacity
+        style={styles.startShoppingButton}
+        onPress={() => navigation.navigate("Home", { screen: "Products" })}
+        activeOpacity={0.9}
+      >
+        <Icon name="shopping-bag" size={18} color="#FFFFFF" />
+        <Text style={styles.startShoppingText}>Start Shopping</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   const renderDateFilter = () => (
     <View style={styles.dateFilterContainer}>
@@ -370,36 +309,32 @@ const OrderHistoryScreen = () => {
         </View>
         <View style={styles.dateRangeBadge}>
           <Icon name="event" size={12} color="#059669" />
-          <Text style={styles.dateRangeBadgeText}>
-            {getDisplayDateRange()}
-          </Text>
+          <Text style={styles.dateRangeBadgeText}>{displayRange}</Text>
         </View>
       </View>
 
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.presetsScroll}
-      >
-        {datePresets.map((preset, index) => (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.presetsScroll}>
+        {datePresets.map((preset) => (
           <TouchableOpacity
-            key={index}
+            key={preset.label}
             style={[
               styles.presetChip,
-              selectedPreset === preset.label && styles.presetChipActive
+              selectedPreset === preset.label && styles.presetChipActive,
             ]}
-            onPress={() => handlePresetFilter(preset)}
+            onPress={() => applyPreset(preset)}
             activeOpacity={0.7}
           >
-            <Icon 
-              name={preset.icon} 
-              size={16} 
-              color={selectedPreset === preset.label ? "#FFFFFF" : "#059669"} 
+            <Icon
+              name={preset.icon}
+              size={16}
+              color={selectedPreset === preset.label ? "#FFFFFF" : "#059669"}
             />
-            <Text style={[
-              styles.presetChipText,
-              selectedPreset === preset.label && styles.presetChipTextActive
-            ]}>
+            <Text
+              style={[
+                styles.presetChipText,
+                selectedPreset === preset.label && styles.presetChipTextActive,
+              ]}
+            >
               {preset.label}
             </Text>
           </TouchableOpacity>
@@ -411,7 +346,7 @@ const OrderHistoryScreen = () => {
   const renderDateRangeModal = () => (
     <Modal
       visible={showDateRangeModal}
-      transparent={true}
+      transparent
       animationType="slide"
       onRequestClose={() => setShowDateRangeModal(false)}
     >
@@ -432,7 +367,6 @@ const OrderHistoryScreen = () => {
                   setDatePickerMode("from");
                   setShowDatePicker(true);
                 }}
-                activeOpacity={0.7}
               >
                 <Text style={styles.dateInputLabel}>From Date</Text>
                 <View style={styles.dateInputValue}>
@@ -453,7 +387,6 @@ const OrderHistoryScreen = () => {
                   setDatePickerMode("to");
                   setShowDatePicker(true);
                 }}
-                activeOpacity={0.7}
               >
                 <Text style={styles.dateInputLabel}>To Date</Text>
                 <View style={styles.dateInputValue}>
@@ -463,13 +396,6 @@ const OrderHistoryScreen = () => {
                   </Text>
                 </View>
               </TouchableOpacity>
-            </View>
-
-            <View style={styles.durationBadge}>
-              <Icon name="schedule" size={16} color="#059669" />
-              <Text style={styles.durationText}>
-                {tempDateRange[1].diff(tempDateRange[0], 'days') + 1} days selected
-              </Text>
             </View>
           </View>
 
@@ -483,7 +409,7 @@ const OrderHistoryScreen = () => {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.applyButton}
-              onPress={applyCustomDateRange}
+              onPress={applyCustomRange}
               activeOpacity={0.7}
             >
               <Icon name="check" size={18} color="#FFFFFF" />
@@ -495,74 +421,16 @@ const OrderHistoryScreen = () => {
     </Modal>
   );
 
-  const renderEmptyState = () => (
-    <View style={styles.emptyStateContainer}>
-      <View style={styles.emptyStateImageContainer}>
-        <Image source={noOrders} style={styles.emptyStateImage} />
-      </View>
-      <Text style={styles.emptyStateTitle}>No Orders Found</Text>
-      <Text style={styles.emptyStateSubtitle}>
-        No orders in this date range.{'\n'}Try adjusting your filter or start shopping!
-      </Text>
-      <TouchableOpacity 
-        style={styles.startShoppingButton} 
-        onPress={() => navigation.navigate("Home", { screen: "Products" })}
-        activeOpacity={0.9}
-      >
-        <Icon name="shopping-bag" size={18} color="#FFFFFF" />
-        <Text style={styles.startShoppingText}>Start Shopping</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const transformedOrders = useMemo(() => {
-    try {
-      if (!Array.isArray(orders)) {
-    
-        return [];
-      }
-  
-      const result = orders
-        .filter(order => order != null)
-        .map((order, index) => {
-          const orderCode = order?.orderCode || 
-                           order?.OrderCode || 
-                           order?.id || 
-                           order?.orderId ||
-                           order?.orderNumber || 
-                           index;
-          
-          return {
-            ...order,
-            key: `${orderCode}-${order.orderDate || Date.now()}-${index}`,
-          };
-        })
-        .sort((a, b) => {
-          const dateA = moment(a.orderDate || a.createdAt || 0);
-          const dateB = moment(b.orderDate || b.createdAt || 0);
-          return dateB.diff(dateA);
-        });
-  
-      return result;
-    } catch (error) {
-      console.error("Error transforming orders:", error);
-      return [];
-    }
-  }, [orders]);
-
-  // Log modal state changes
-  useEffect(() => {
-   
-  }, [isModalVisible, selectedOrderCode]);
+  const count = Array.isArray(orders) ? orders.length : 0;
 
   return (
-    <SafeAreaView style={styles.container}>    
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerContent}>
           <View>
             <Text style={styles.title}>Order History</Text>
             <Text style={styles.subtitle}>
-              {orders.length} order{orders.length !== 1 ? 's' : ''} found
+              {count} order{count !== 1 ? "s" : ""} found
             </Text>
           </View>
         </View>
@@ -570,7 +438,7 @@ const OrderHistoryScreen = () => {
 
       {renderDateFilter()}
 
-      {(loading || isApplyingFilter) && !refreshing ? (
+      {loading && !refreshing ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#10B981" />
           <Text style={styles.loadingText}>Loading orders...</Text>
@@ -585,18 +453,18 @@ const OrderHistoryScreen = () => {
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
         </View>
-      ) : transformedOrders?.length > 0 ? (
-        <FlatList 
-          data={transformedOrders} 
-          renderItem={renderOrderItem} 
-          keyExtractor={(item) => item.key}
+      ) : transformedOrders.length > 0 ? (
+        <FlatList
+          data={transformedOrders}
+          renderItem={renderOrderItem}
+          keyExtractor={(item) => item.__key}
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              colors={['#10B981']}
+              colors={["#10B981"]}
               tintColor="#10B981"
             />
           }
@@ -611,14 +479,21 @@ const OrderHistoryScreen = () => {
           mode="date"
           display="default"
           onChange={handleDateChange}
-          maximumDate={datePickerMode === "to" ? moment().add(1, 'day').toDate() : tempDateRange[1].toDate()}
-          minimumDate={datePickerMode === "to" ? tempDateRange[0].toDate() : moment("2000-01-01").toDate()}
+          maximumDate={
+            datePickerMode === "to"
+              ? moment().add(1, "day").toDate()
+              : tempDateRange[1].toDate()
+          }
+          minimumDate={
+            datePickerMode === "to"
+              ? tempDateRange[0].toDate()
+              : moment("2000-01-01").toDate()
+          }
         />
       )}
 
       {renderDateRangeModal()}
 
-      {/* Always render OrderModal when we have an orderCode */}
       {selectedOrderCode && (
         <OrderModal
           orderCode={selectedOrderCode}
@@ -628,266 +503,114 @@ const OrderHistoryScreen = () => {
       )}
     </SafeAreaView>
   );
-};
-
-
+}
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
-  },
+  container: { flex: 1, backgroundColor: "#F9FAFB" },
   header: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: "#E5E7EB",
   },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginTop: 4,
-  },
+  headerContent: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  title: { fontSize: 24, fontWeight: "700", color: "#111827" },
+  subtitle: { fontSize: 14, color: "#6B7280", marginTop: 4 },
+
   dateFilterContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: "#E5E7EB",
   },
   filterHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 16,
     marginBottom: 12,
   },
-  filterTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  filterTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#065f46',
-  },
+  filterTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  filterTitle: { fontSize: 16, fontWeight: "600", color: "#065f46" },
   dateRangeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
-    backgroundColor: '#D1FAE5',
+    backgroundColor: "#D1FAE5",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
   },
-  dateRangeBadgeText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#059669',
-  },
-  presetsScroll: {
-    paddingHorizontal: 16,
-    gap: 8,
-  },
+  dateRangeBadgeText: { fontSize: 12, fontWeight: "500", color: "#059669" },
+  presetsScroll: { paddingHorizontal: 16, gap: 8 },
   presetChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#D1FAE5',
+    backgroundColor: "#D1FAE5",
     marginRight: 8,
   },
-  presetChipActive: {
-    backgroundColor: '#059669',
-  },
-  presetChipText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#059669',
-  },
-  presetChipTextActive: {
-    color: '#FFFFFF',
-  },
-  listContainer: {
-    padding: 16,
-  },
+  presetChipActive: { backgroundColor: "#059669" },
+  presetChipText: { fontSize: 14, fontWeight: "500", color: "#059669" },
+  presetChipTextActive: { color: "#FFFFFF" },
+
+  listContainer: { padding: 16 },
   orderCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 12,
     padding: 16,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
   },
-  orderCardContent: {
-    gap: 12,
-  },
-  orderHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  orderIdContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
+  orderCardContent: { gap: 12 },
+  orderHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  orderIdContainer: { flexDirection: "row", alignItems: "center", gap: 12 },
   receiptIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#D1FAE5',
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: "#D1FAE5", justifyContent: "center", alignItems: "center",
   },
-  orderIdLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  orderId: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
+  orderIdLabel: { fontSize: 12, color: "#6B7280" },
+  orderId: { fontSize: 16, fontWeight: "600", color: "#111827" },
+
   viewOrderButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: '#D1FAE5',
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+    backgroundColor: "#D1FAE5",
   },
-  viewOrderText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#10B981',
-  },
-  orderDetails: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  orderDate: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  orderStatus: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  amountContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  amountLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  amountValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 16,
-  },
-  loadingText: {
-    fontSize: 16,
-    color: '#6B7280',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 16,
-    padding: 32,
-  },
-  errorText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#EF4444',
-  },
-  errorSubtext: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-  },
+  viewOrderText: { fontSize: 14, fontWeight: "500", color: "#10B981" },
+
+  orderDetails: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  detailRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  orderDate: { fontSize: 14, color: "#6B7280" },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  orderStatus: { fontSize: 14, fontWeight: "500" },
+
+  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", gap: 16 },
+  loadingText: { fontSize: 16, color: "#6B7280" },
+
+  errorContainer: { flex: 1, justifyContent: "center", alignItems: "center", gap: 16, padding: 32 },
+  errorText: { fontSize: 18, fontWeight: "600", color: "#EF4444" },
+  errorSubtext: { fontSize: 14, color: "#6B7280", textAlign: "center" },
   retryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#10B981',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginTop: 16,
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "#10B981", paddingHorizontal: 24, paddingVertical: 12,
+    borderRadius: 8, marginTop: 16,
   },
-  retryText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  emptyStateContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  emptyStateImageContainer: {
-    width: 200,
-    height: 200,
-    marginBottom: 24,
-  },
-  emptyStateImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'contain',
-  },
-  emptyStateTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 8,
-  },
-  emptyStateSubtitle: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
+  retryText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
+
+  emptyStateContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 32 },
+  emptyStateImageContainer: { width: 200, height: 200, marginBottom: 24 },
+  emptyStateImage: { width: "100%", height: "100%", resizeMode: "contain" },
+  emptyStateTitle: { fontSize: 20, fontWeight: "700", color: "#111827", marginBottom: 8 },
+  emptyStateSubtitle: { fontSize: 14, color: "#6B7280", textAlign: "center", marginBottom: 24 },
+
   startShoppingButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -896,123 +619,45 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     backgroundColor: "#10B981",
     gap: 8,
-    shadowColor: "#10B981",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
   },
-  startShoppingText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#FFFFFF",
-  },
+  startShoppingText: { fontSize: 15, fontWeight: "600", color: "#FFFFFF" },
+
   modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    flex: 1, backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center", alignItems: "center",
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 20,
     padding: 20,
     width: width * 0.9,
-    maxHeight: '80%',
+    maxHeight: "80%",
   },
   modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
+    flexDirection: "row", justifyContent: "space-between",
+    alignItems: "center", marginBottom: 20,
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  modalBody: {
-    marginBottom: 20,
-  },
-  dateInputsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 16,
-  },
+  modalTitle: { fontSize: 20, fontWeight: "700", color: "#111827" },
+  modalBody: { marginBottom: 20 },
+  dateInputsRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 16 },
   dateInput: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    flex: 1, backgroundColor: "#F9FAFB",
+    padding: 12, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB",
   },
-  dateInputLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 8,
-    fontWeight: '500',
-  },
-  dateInputValue: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  dateInputText: {
-    fontSize: 14,
-    color: '#111827',
-    fontWeight: '600',
-  },
-  dateArrow: {
-    marginTop: 20,
-  },
-  durationBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#D1FAE5',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    alignSelf: 'center',
-  },
-  durationText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#059669',
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#6B7280',
-  },
-  applyButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#10B981',
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  applyButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-});
+  dateInputLabel: { fontSize: 12, color: "#6B7280", marginBottom: 8, fontWeight: "500" },
+  dateInputValue: { flexDirection: "row", alignItems: "center", gap: 8 },
+  dateInputText: { fontSize: 14, color: "#111827", fontWeight: "600" },
+  dateArrow: { marginTop: 20 },
 
-export default OrderHistoryScreen;
+  modalFooter: { flexDirection: "row", gap: 12 },
+  cancelButton: {
+    flex: 1, backgroundColor: "#F3F4F6",
+    paddingVertical: 12, borderRadius: 12, alignItems: "center",
+  },
+  cancelButtonText: { fontSize: 16, fontWeight: "600", color: "#6B7280" },
+  applyButton: {
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, backgroundColor: "#10B981", paddingVertical: 12, borderRadius: 12,
+  },
+  applyButtonText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
+});
