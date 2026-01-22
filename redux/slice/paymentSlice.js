@@ -1,44 +1,57 @@
 // src/redux/slices/paymentSlice.js
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import axios from 'axios';
-const API_URL = 'https://smfteapi.salesmate.app';
+import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
+import api from "./axiosInstance"; // ✅ AWS-proxy axios instance (Lambda baseURL)
 
-// Post Hubtel callback
+// Real backend routes
+const PAYMENT_PREFIX = "/PaymentSystem";
+const ENDPOINTS = {
+  POST_HUBTEL_CALLBACK: `${PAYMENT_PREFIX}/PostHubtelCallBack`,
+  GET_HUBTEL_CALLBACK_BY_ID: `${PAYMENT_PREFIX}/GetHubtelCallBackById`,
+};
+
+// Post Hubtel callback (via AWS proxy)
 export const postHubtelCallback = createAsyncThunk(
-  'payment/postHubtelCallback',
+  "payment/postHubtelCallback",
   async (responseData, { rejectWithValue }) => {
     try {
-      const response = await axios.post(
-        `${API_URL}/PaymentSystem/PostHubtelCallBack`,
-        { responseData }
-      );
-      return response.data;
-    } catch (error) {
-      return rejectWithValue(error.response?.data || 'Something went wrong');
-    }
-  }
-);
-
-// Get Hubtel callback by Order ID (clientReference)
-export const getHubtelCallbackById = createAsyncThunk(
-  'payment/getHubtelCallbackById',
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const response = await axios.get(
-        `${API_URL}/PaymentSystem/GetHubtelCallBackById`,
+      const { data } = await api.post(
+        "/",
+        { responseData },
         {
-          params: {
-            Orderid: orderId,
-          },
+          params: { endpoint: ENDPOINTS.POST_HUBTEL_CALLBACK },
+          headers: { "Content-Type": "application/json" },
         }
       );
-      return response.data;
+
+      return data;
     } catch (error) {
-      return rejectWithValue(error.response?.data || 'Something went wrong');
+      return rejectWithValue(
+        error.response?.data || error.message || "Something went wrong"
+      );
     }
   }
 );
 
+// Get Hubtel callback by Order ID (clientReference) (via AWS proxy)
+export const getHubtelCallbackById = createAsyncThunk(
+  "payment/getHubtelCallbackById",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: ENDPOINTS.GET_HUBTEL_CALLBACK_BY_ID,
+          Orderid: orderId, // keep param name backend expects
+        },
+      });
+
+      return data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data || error.message || "Something went wrong"
+      );
+    }
+  }
+);
 
 const paymentSlice = createSlice({
   name: 'payment',

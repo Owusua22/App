@@ -401,7 +401,7 @@ const SignupScreen = ({ visible = false, onClose = () => {} }) => {
       // Step 1: Create customer account
       const result = await dispatch(createCustomer(signupData)).unwrap();
       
-      console.log("Signup result:", result);
+   
 
       // Step 2: Check response code
       if (result?.ResponseCode === '2') {
@@ -430,8 +430,7 @@ const SignupScreen = ({ visible = false, onClose = () => {} }) => {
       // Step 3: Success - Fetch complete customer details using getCustomerById
       try {
         const customerDetails = await dispatch(getCustomerById(signupData.contactNumber)).unwrap();
-        
-        console.log("Fetched customer details:", customerDetails);
+ 
 
         // Step 4: Store complete customer details in AsyncStorage
         await AsyncStorage.setItem('customer', JSON.stringify(customerDetails));
@@ -442,7 +441,7 @@ const SignupScreen = ({ visible = false, onClose = () => {} }) => {
           handleClose();
         }, 2000);
       } catch (fetchError) {
-        console.error("Error fetching customer details after signup:", fetchError);
+
         
         // Fallback: Store signup data if fetch fails
         const fallbackCustomerData = {

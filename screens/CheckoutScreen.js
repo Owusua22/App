@@ -14,7 +14,6 @@ import {
 import { useDispatch } from "react-redux";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { encode as base64Encode } from "base-64";
 import { checkOutOrder, updateOrderDelivery } from "../redux/slice/orderSlice";
 import { getHubtelCallbackById } from "../redux/slice/paymentSlice";
 import { clearCart } from "../redux/slice/cartSlice";
@@ -29,6 +28,11 @@ const formatCurrency = (value) => {
   })}`;
 };
 
+// AWS Lambda payment initiation URL (FrankoAPI → /PaymentSystem/InitiateHubtel)
+const PAYMENT_API_URL =
+  process.env.EXPO_PUBLIC_PAYMENT_API_URL ||
+  "https://02yo3gbfxe.execute-api.us-east-1.amazonaws.com/default/FrankoAPI/?endpoint=%2FPaymentSystem%2FInitiateHubtel";
+
 const CheckoutScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const [customer, setCustomer] = useState({});
@@ -36,7 +40,8 @@ const CheckoutScreen = ({ navigation }) => {
   const [paymentMethod, setPaymentMethod] = useState("");
   const [orderNote, setOrderNote] = useState("");
   const [recipientName, setRecipientName] = useState("");
-  const [recipientContactNumber, setRecipientContactNumber] = useState("");
+  const [recipientContactNumber, setRecipientContactNumber] =
+    useState("");
   const [recipientAddress, setRecipientAddress] = useState("");
   const [loading, setLoading] = useState(false);
   const [shippingDetails, setShippingDetails] = useState({
@@ -44,16 +49,20 @@ const CheckoutScreen = ({ navigation }) => {
     isFree: false,
     isNA: false,
   });
-  const [locationModalVisible, setLocationModalVisible] = useState(false);
-  const [manualAddressVisible, setManualAddressVisible] = useState(false);
+  const [locationModalVisible, setLocationModalVisible] =
+    useState(false);
+  const [manualAddressVisible, setManualAddressVisible] =
+    useState(false);
   const [appState, setAppState] = useState(AppState.currentState);
-  const [paymentCheckInterval, setPaymentCheckInterval] = useState(null);
+  const [paymentCheckInterval, setPaymentCheckInterval] =
+    useState(null);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [usedOrderIds, setUsedOrderIds] = useState(new Set());
   const [currentOrderId, setCurrentOrderId] = useState(null);
   const [paymentProcessing, setPaymentProcessing] = useState(false);
 
-  // Helper function to check if delivery is free (string values only)
+  // --- Helpers: delivery fee / method availability ---
+
   const isFreeDelivery = (deliveryFee) => {
     if (typeof deliveryFee !== "string") return false;
     const normalizedFee = deliveryFee.toLowerCase().trim();
@@ -64,7 +73,6 @@ const CheckoutScreen = ({ navigation }) => {
     );
   };
 
-  // Helper function to check if delivery is N/A (charges may apply)
   const isNADelivery = (deliveryFee) => {
     return (
       deliveryFee === "N/A" ||
@@ -76,73 +84,41 @@ const CheckoutScreen = ({ navigation }) => {
     );
   };
 
-  // Helper function to check if Cash on Delivery should be available
   const isCashOnDeliveryAvailable = () => {
-    if (manualAddressVisible || !selectedLocation) {
-      return false;
-    }
-
+    if (manualAddressVisible || !selectedLocation) return false;
     const fee = selectedLocation.town?.delivery_fee;
     return isFreeDelivery(fee);
   };
 
-  // Helper function to get safe delivery fee for calculations
   const getSafeDeliveryFee = () => {
-    if (manualAddressVisible || !selectedLocation) {
-      return 0;
-    }
+    if (manualAddressVisible || !selectedLocation) return 0;
 
     const fee = selectedLocation.town?.delivery_fee;
 
-    if (isFreeDelivery(fee)) {
-      return 0;
-    }
-
-    if (typeof fee === "number" && fee > 0) {
-      return fee;
-    }
-
+    if (isFreeDelivery(fee)) return 0;
+    if (typeof fee === "number" && fee > 0) return fee;
     if (typeof fee === "string") {
       const parsed = parseFloat(fee);
-      if (!isNaN(parsed) && parsed > 0) {
-        return parsed;
-      }
+      if (!isNaN(parsed) && parsed > 0) return parsed;
     }
-
     return 0;
   };
 
-  // Helper function to format delivery fee display
   const formatDeliveryFeeDisplay = () => {
-    if (manualAddressVisible) {
-      return "Delivery charges may apply";
-    }
-
-    if (!selectedLocation) {
-      return "N/A";
-    }
+    if (manualAddressVisible) return "Delivery charges may apply";
+    if (!selectedLocation) return "N/A";
 
     const fee = selectedLocation.town?.delivery_fee;
-
-    if (isFreeDelivery(fee)) {
-      return "FREE";
-    }
-
-    if (typeof fee === "number" && fee > 0) {
-      return formatCurrency(fee);
-    }
-
+    if (isFreeDelivery(fee)) return "FREE";
+    if (typeof fee === "number" && fee > 0) return formatCurrency(fee);
     if (typeof fee === "string") {
       const parsed = parseFloat(fee);
-      if (!isNaN(parsed) && parsed > 0) {
-        return formatCurrency(parsed);
-      }
+      if (!isNaN(parsed) && parsed > 0) return formatCurrency(parsed);
     }
-
     return "Delivery charges may apply";
   };
 
-  // Generate unique 6-7 digit order ID in format APP-XXX-XXX
+  // Generate unique APP order ID
   const generateOrderId = () => {
     let orderId;
     let attempts = 0;
@@ -164,12 +140,12 @@ const CheckoutScreen = ({ navigation }) => {
     return orderId;
   };
 
+  // --- Initial load ---
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const customerData = JSON.parse(
-          await AsyncStorage.getItem("customer")
-        );
+        const customerJson = await AsyncStorage.getItem("customer");
+        const customerData = customerJson ? JSON.parse(customerJson) : null;
         setCustomer(customerData || {});
         setRecipientName(
           customerData
@@ -178,14 +154,16 @@ const CheckoutScreen = ({ navigation }) => {
         );
         setRecipientContactNumber(customerData?.contactNumber || "");
 
-        const cartData = JSON.parse(
-          await AsyncStorage.getItem("cartDetails")
-        );
+        const cartJson = await AsyncStorage.getItem("cartDetails");
+        const cartData = cartJson ? JSON.parse(cartJson) : null;
         setCartItems(cartData?.cartItems || []);
 
-        const savedLocation = JSON.parse(
-          await AsyncStorage.getItem("selectedLocation")
+        const savedLocationJson = await AsyncStorage.getItem(
+          "selectedLocation"
         );
+        const savedLocation = savedLocationJson
+          ? JSON.parse(savedLocationJson)
+          : null;
 
         if (savedLocation) {
           setSelectedLocation(savedLocation);
@@ -220,7 +198,7 @@ const CheckoutScreen = ({ navigation }) => {
     fetchData();
   }, []);
 
-  // Save used order IDs to storage whenever the set changes
+  // Save used order IDs
   useEffect(() => {
     const saveUsedOrderIds = async () => {
       try {
@@ -228,7 +206,7 @@ const CheckoutScreen = ({ navigation }) => {
           "usedOrderIds",
           JSON.stringify([...usedOrderIds])
         );
-      } catch (error) {
+      } catch {
         // Silent fail
       }
     };
@@ -238,7 +216,7 @@ const CheckoutScreen = ({ navigation }) => {
     }
   }, [usedOrderIds]);
 
-  // Enhanced App State change listener for immediate payment callback handling
+  // AppState listener: re-check payment when app resumes
   useEffect(() => {
     const handleAppStateChange = async (nextAppState) => {
       if (nextAppState === "active" && appState === "background") {
@@ -254,7 +232,7 @@ const CheckoutScreen = ({ navigation }) => {
     return () => subscription?.remove();
   }, [appState]);
 
-  // Enhanced payment status monitoring with auto-redirect on failure
+  // Poll backend via AWS callback result
   useEffect(() => {
     let intervalId;
     let hasRedirected = false;
@@ -270,7 +248,6 @@ const CheckoutScreen = ({ navigation }) => {
         const response = action?.payload;
 
         if (response?.responseCode === "0000") {
-          // Payment successful
           hasRedirected = true;
           if (intervalId) {
             clearInterval(intervalId);
@@ -280,12 +257,11 @@ const CheckoutScreen = ({ navigation }) => {
           await AsyncStorage.removeItem("pendingOrderId");
           await processPaymentSuccess(orderId);
           setCurrentOrderId(null);
-          navigation.navigate("OrderPlacedScreen", { orderId: orderId });
+          navigation.navigate("OrderPlacedScreen", { orderId });
         } else if (
           response?.responseCode === "2001" ||
           response?.responseCode === "2002"
         ) {
-          // Payment failed - AUTO REDIRECT WITHOUT MODAL
           hasRedirected = true;
           if (intervalId) {
             clearInterval(intervalId);
@@ -295,19 +271,17 @@ const CheckoutScreen = ({ navigation }) => {
           await AsyncStorage.removeItem("pendingOrderId");
           setCurrentOrderId(null);
 
-          // Direct navigation without Alert modal
           setTimeout(() => {
             navigation.navigate("OrderCancellationScreen");
           }, 500);
         }
-      } catch (error) {
+      } catch {
         // Silent error handling
       } finally {
         setPaymentProcessing(false);
       }
     };
 
-    // Start monitoring for Mobile Money and Credit/Debit Card payments
     if (
       ["Mobile Money", "Credit/Debit Card"].includes(paymentMethod) &&
       currentOrderId
@@ -318,9 +292,7 @@ const CheckoutScreen = ({ navigation }) => {
     }
 
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
+      if (intervalId) clearInterval(intervalId);
     };
   }, [
     paymentMethod,
@@ -330,7 +302,7 @@ const CheckoutScreen = ({ navigation }) => {
     paymentProcessing,
   ]);
 
-  // Cleanup interval on component unmount
+  // Cleanup interval on unmount
   useEffect(() => {
     return () => {
       if (paymentCheckInterval) {
@@ -339,7 +311,7 @@ const CheckoutScreen = ({ navigation }) => {
     };
   }, [paymentCheckInterval]);
 
-  // Immediate payment status check with auto-redirect on failure
+  // Immediate payment status check
   const checkPaymentStatusImmediate = async () => {
     const orderId =
       currentOrderId || (await AsyncStorage.getItem("pendingOrderId"));
@@ -354,43 +326,49 @@ const CheckoutScreen = ({ navigation }) => {
         await AsyncStorage.removeItem("pendingOrderId");
         await processPaymentSuccess(orderId);
         setCurrentOrderId(null);
-        navigation.navigate("OrderPlacedScreen", { orderId: orderId });
+        navigation.navigate("OrderPlacedScreen", { orderId });
       } else if (
         response?.responseCode === "2001" ||
         response?.responseCode === "2002"
       ) {
-        // AUTO REDIRECT WITHOUT MODAL
         await AsyncStorage.removeItem("pendingOrderId");
         setCurrentOrderId(null);
         setTimeout(() => {
           navigation.navigate("OrderCancellationScreen");
         }, 500);
       }
-    } catch (error) {
+    } catch {
       // Silent error handling
     } finally {
       setPaymentProcessing(false);
     }
   };
 
+  // After successful payment (0000): dispatch checkout + address, clear cart + stored details
   const processPaymentSuccess = async (orderId) => {
     try {
-      const checkoutDetails = JSON.parse(
-        (await AsyncStorage.getItem("checkoutDetails")) || "{}"
-      );
-      const addressDetails = JSON.parse(
-        (await AsyncStorage.getItem("orderDeliveryDetails")) || "{}"
-      );
+      const checkoutJson = await AsyncStorage.getItem("checkoutDetails");
+      const addressJson = await AsyncStorage.getItem("orderDeliveryDetails");
+
+      const checkoutDetails = checkoutJson
+        ? JSON.parse(checkoutJson)
+        : null;
+      const addressDetails = addressJson ? JSON.parse(addressJson) : null;
 
       if (checkoutDetails && addressDetails) {
         await dispatchOrderCheckout(orderId, checkoutDetails);
         await dispatchOrderAddress(orderId, addressDetails);
 
+        // Clear cart and stored details
+        dispatch(clearCart());
+        await AsyncStorage.removeItem("cartDetails");
+        await AsyncStorage.removeItem("cartId");
+        await AsyncStorage.removeItem("cart");
         await AsyncStorage.removeItem("checkoutDetails");
         await AsyncStorage.removeItem("orderDeliveryDetails");
       }
     } catch (error) {
-      // Silent error handling
+      console.error("processPaymentSuccess error:", error);
     }
   };
 
@@ -416,16 +394,16 @@ const CheckoutScreen = ({ navigation }) => {
         JSON.stringify(locationData)
       );
       setLocationModalVisible(false);
-    } catch (error) {
+    } catch {
       Alert.alert("Error", "Failed to save location. Please try again.");
     }
   };
 
   const handleManualAddressToggle = () => {
-    const newManualAddressVisible = !manualAddressVisible;
-    setManualAddressVisible(newManualAddressVisible);
+    const newVisible = !manualAddressVisible;
+    setManualAddressVisible(newVisible);
 
-    if (newManualAddressVisible) {
+    if (newVisible) {
       setSelectedLocation(null);
       setShippingDetails({
         locationCharge: 0,
@@ -474,7 +452,7 @@ const CheckoutScreen = ({ navigation }) => {
       Alert.alert(
         "Payment Method Required",
         "Please select a payment method to continue with your order.",
-        [{ text: "Got it", style: "default" }]
+        [{ text: "Got it" }]
       );
       return;
     }
@@ -566,7 +544,7 @@ const CheckoutScreen = ({ navigation }) => {
 
           navigation.navigate("PaymentGatewayScreen", {
             url: paymentUrl,
-            orderId: orderId,
+            orderId,
           });
         } else {
           throw new Error("Invalid payment URL received");
@@ -585,7 +563,6 @@ const CheckoutScreen = ({ navigation }) => {
 
   const isValidUrl = (url) => {
     if (!url || typeof url !== "string") return false;
-
     try {
       const urlObj = new URL(url);
       return (
@@ -593,11 +570,12 @@ const CheckoutScreen = ({ navigation }) => {
         !url.includes("about:") &&
         !url.includes("srcdoc")
       );
-    } catch (error) {
+    } catch {
       return false;
     }
   };
 
+  // Direct checkout (non-Hubtel)
   const processDirectCheckout = async (
     orderId,
     checkoutDetails,
@@ -610,19 +588,20 @@ const CheckoutScreen = ({ navigation }) => {
       await AsyncStorage.removeItem("cartDetails");
       await AsyncStorage.removeItem("cartId");
       await AsyncStorage.removeItem("cart");
-    } catch (error) {
+    } catch {
       throw new Error("An error occurred during direct checkout.");
     }
   };
 
   const dispatchOrderCheckout = async (orderId, checkoutDetails) => {
     try {
+      const cartId = await AsyncStorage.getItem("cartId");
       const checkoutPayload = {
-        Cartid: await AsyncStorage.getItem("cartId"),
+        Cartid: cartId,
         ...checkoutDetails,
       };
       await dispatch(checkOutOrder(checkoutPayload)).unwrap();
-    } catch (error) {
+    } catch {
       throw new Error("An error occurred during order checkout.");
     }
   };
@@ -630,7 +609,7 @@ const CheckoutScreen = ({ navigation }) => {
   const dispatchOrderAddress = async (orderId, addressDetails) => {
     try {
       await dispatch(updateOrderDelivery(addressDetails)).unwrap();
-    } catch (error) {
+    } catch {
       throw new Error("An error occurred while updating the order address.");
     }
   };
@@ -648,81 +627,68 @@ const CheckoutScreen = ({ navigation }) => {
         "orderDeliveryDetails",
         JSON.stringify(addressDetails)
       );
-    } catch (error) {
+    } catch {
       throw new Error("Failed to store checkout details locally.");
     }
   };
 
-  const initiatePayment = async (totalAmount, cartItems, orderId) => {
-    const username = "RMWBWl0";
-    const password = "3c42a596cd044fed81b492e74da4ae30";
-
-    const credentials = `${username}:${password}`;
-    const encodedCredentials = base64Encode(credentials);
-
+  // NEW: initiate payment via AWS Lambda instead of direct Hubtel
+  const initiatePayment = async (totalAmount, items, orderId) => {
     const payload = {
       totalAmount,
-      description: `Payment for ${cartItems
-        .map((item) => item.productName)
-        .join(", ")}`,
-      callbackUrl:
-        "https://smfteapi.salesmate.app/PaymentSystem/PostHubtelCallBack",
-      returnUrl: `https://www.frankotrading.com/order-success/${orderId}`,
-      merchantAccountNumber: "2020892",
-      cancellationUrl: "https://www.frankotrading.com/order-cancelled",
-      clientReference: orderId,
+      cartItems: items,
+      orderId,
     };
 
     try {
-      const response = await fetch(
-        "https://payproxyapi.hubtel.com/items/initiate",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Basic ${encodedCredentials}`,
-          },
-          body: JSON.stringify(payload),
-        }
-      );
+      const response = await fetch(PAYMENT_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Identifier: "Franko", // must match Lambda CUSTOM_HEADER_NAME/VALUE
+        },
+        body: JSON.stringify(payload),
+      });
 
+      const text = await response.text();
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new Error(`HTTP error: ${response.status} - ${text}`);
+      }
+      if (!text) {
+        throw new Error("Empty response from payment API");
       }
 
-      const result = await response.json();
+      const result = JSON.parse(text);
+
+      // Lambda returns { checkoutUrl, raw } or full Hubtel JSON
+      if (result.checkoutUrl && isValidUrl(result.checkoutUrl)) {
+        return result.checkoutUrl;
+      }
 
       if (
         result.status === "Success" &&
         result.data &&
-        result.data.checkoutUrl
+        result.data.checkoutUrl &&
+        isValidUrl(result.data.checkoutUrl)
       ) {
-        const checkoutUrl = result.data.checkoutUrl;
-
-        if (isValidUrl(checkoutUrl)) {
-          return checkoutUrl;
-        } else {
-          throw new Error(
-            "Invalid checkout URL received from payment gateway"
-          );
-        }
+        return result.data.checkoutUrl;
       }
 
       throw new Error(
-        `Payment initiation failed: ${result.message || "Unknown error"}`
+        result.message || "Payment initiation via AWS failed."
       );
     } catch (error) {
-      throw new Error("Payment initiation failed. Please try again.");
+      throw new Error(
+        error.message || "Payment initiation via AWS failed. Please try again."
+      );
     }
   };
 
   const getAvailablePaymentMethods = () => {
     const methods = ["Mobile Money", "Credit/Debit Card"];
-
     if (isCashOnDeliveryAvailable()) {
       methods.unshift("Cash on Delivery");
     }
-
     return methods;
   };
 
@@ -746,6 +712,8 @@ const CheckoutScreen = ({ navigation }) => {
     0
   );
 
+  // --- Render ---
+
   return (
     <View style={styles.container}>
       {loading && (
@@ -767,7 +735,9 @@ const CheckoutScreen = ({ navigation }) => {
         </TouchableOpacity>
         <View style={styles.headerTextContainer}>
           <Text style={styles.headerText}>Checkout</Text>
-          <Text style={styles.headerSubText}>Secure payment & fast delivery</Text>
+          <Text style={styles.headerSubText}>
+            Secure payment & fast delivery
+          </Text>
         </View>
         <Ionicons
           name="lock-closed-outline"
@@ -777,7 +747,7 @@ const CheckoutScreen = ({ navigation }) => {
         />
       </View>
 
-      <ScrollView
+       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
       >
@@ -1132,6 +1102,7 @@ const CheckoutScreen = ({ navigation }) => {
           </View>
         </View>
       </ScrollView>
+
 
       {/* Place Order Button */}
       <View style={styles.bottomSection}>

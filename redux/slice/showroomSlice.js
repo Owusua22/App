@@ -1,33 +1,55 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import api from "./axiosInstance"; // 👈 your axios instance
+import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
+import api from "./axiosInstance"; // ✅ AWS-proxy axios instance
 
-// Async thunk for fetching all showrooms
+const SHOWROOM_PREFIX = "/ShowRoom";
+const ENDPOINTS = {
+  GET_ALL: `${SHOWROOM_PREFIX}/Get-ShowRoom`,
+  GET_HOME: `${SHOWROOM_PREFIX}/Get-HomePageShowRoom`,
+};
+
+// Async thunk for fetching all showrooms (via AWS proxy)
 export const fetchShowrooms = createAsyncThunk(
-  'showrooms/fetchShowrooms',
-  async () => {
+  "showrooms/fetchShowrooms",
+  async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get('/ShowRoom/Get-ShowRoom');
-      return response.data;
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: ENDPOINTS.GET_ALL,
+        },
+      });
+      return data;
     } catch (error) {
-      throw error.response?.data?.message || 'Failed to fetch showrooms';
+      return rejectWithValue(
+        error.response?.data?.message ||
+          error.response?.data ||
+          error.message ||
+          "Failed to fetch showrooms"
+      );
     }
   }
 );
 
-// Async thunk for fetching showrooms displayed on the home page
+// Async thunk for fetching showrooms displayed on the home page (via AWS proxy)
 export const fetchHomePageShowrooms = createAsyncThunk(
-  'showrooms/fetchHomePageShowrooms',
-  async () => {
+  "showrooms/fetchHomePageShowrooms",
+  async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get('/ShowRoom/Get-HomePageShowRoom');
-      return response.data;
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: ENDPOINTS.GET_HOME,
+        },
+      });
+      return data;
     } catch (error) {
-      throw error.response?.data?.message || 'Failed to fetch home page showrooms';
+      return rejectWithValue(
+        error.response?.data?.message ||
+          error.response?.data ||
+          error.message ||
+          "Failed to fetch home page showrooms"
+      );
     }
   }
 );
-
-
 
 // Create the showroom slice
 const showroomSlice = createSlice({

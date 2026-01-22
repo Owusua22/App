@@ -1,21 +1,29 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import api from "./axiosInstance"; // 👈 your axios instance
+import api from "./axiosInstance"; // ✅ AWS-proxy axios instance
 
-// -------------------- FETCH BRANDS --------------------
+// Real backend route
+const BRANDS_ENDPOINT = "/Brand/Get-Brand";
+
+// -------------------- FETCH BRANDS (via AWS proxy) --------------------
 export const fetchBrands = createAsyncThunk(
   "brand/fetchBrands",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get("/Brand/Get-Brand");
-      return response.data;
+      // ✅ Call Lambda root and pass the real endpoint
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: BRANDS_ENDPOINT,
+        },
+      });
+
+      return data;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || "Failed to fetch brands"
+        error.response?.data || error.message || "Failed to fetch brands"
       );
     }
   }
 );
-
 const brandSlice = createSlice({
   name: "brands",
   initialState: {

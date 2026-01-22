@@ -1,16 +1,24 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import api from "./axiosInstance"; // 👈 your axios instance
+import api from "./axiosInstance"; // ✅ AWS-proxy axios instance
 
-// -------------------- FETCH CATEGORIES --------------------
+const CATEGORIES_ENDPOINT = "/Category/Category-Get";
+
+// -------------------- FETCH CATEGORIES (via AWS proxy) --------------------
 export const fetchCategories = createAsyncThunk(
   "categories/fetchCategories",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get("/Category/Category-Get");
-      return response.data;
+      // ✅ Call Lambda root "/" and forward the real backend endpoint
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: CATEGORIES_ENDPOINT,
+        },
+      });
+
+      return data;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || "Failed to fetch categories"
+        error.response?.data || error.message || "Failed to fetch categories"
       );
     }
   }

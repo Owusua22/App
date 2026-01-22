@@ -1,32 +1,47 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import api from "./axiosInstance";
+import api from "./axiosInstance"; // ✅ AWS-proxy axios instance (Lambda baseURL)
 
 // -------------------- Helpers --------------------
 const sliceState = (state) => state.order ?? state.orders ?? {}; // supports reducer key "order" OR "orders"
 
 const getErrorMessage = (action) =>
-  action?.payload ||
-  action?.error?.message ||
-  "Something went wrong";
+  action?.payload || action?.error?.message || "Something went wrong";
 
 const normalizeOrdersResponse = (data) => {
-  // API might return: [] | false | null | {orders:[...]} | object
   if (data === false || data == null) return [];
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.orders)) return data.orders;
   return [];
 };
 
-// -------------------- Thunks --------------------
+// ✅ real backend endpoints
+const ORDER_PREFIX = "/Order";
+const ENDPOINTS = {
+  GET_BY_CUSTOMER: `${ORDER_PREFIX}/GetOrderByCustomer`,
+  CHECKOUT_DB_CART: `${ORDER_PREFIX}/CheckOutDbCart`,
+  CHECKOUT_LOCAL_CART: `${ORDER_PREFIX}/CheckOutLocalStorageCart`,
+  SALES_ORDER_GET: `${ORDER_PREFIX}/SalesOrderGet`, // + /{id}
+  ORDER_ADDRESS: `${ORDER_PREFIX}/OrderAddress`,
+  DELIVERY_UPDATE: `${ORDER_PREFIX}/OrderDeliveryUpdate`, // + /{orderCode}
+  GET_DELIVERY_ADDRESS: `${ORDER_PREFIX}/GetOrderDeliveryAddress`, // + /{OrderCode}
+};
+
+// -------------------- Thunks (ALL via AWS proxy) --------------------
 export const fetchOrdersByCustomer = createAsyncThunk(
   "orders/fetchOrdersByCustomer",
   async ({ from, to, customerId }, { rejectWithValue }) => {
     try {
-      const response = await api.get("/Order/GetOrderByCustomer", {
-        params: { from, to, customerId },
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: ENDPOINTS.GET_BY_CUSTOMER,
+          from,
+          to,
+          customerId,
+        },
       });
-      return normalizeOrdersResponse(response.data);
+
+      return normalizeOrdersResponse(data);
     } catch (error) {
       return rejectWithValue(
         error.response?.data || error.message || "Failed to fetch orders"
@@ -60,8 +75,12 @@ export const checkOutOrder = createAsyncThunk(
         customerAccountType,
       };
 
-      const response = await api.post("/Order/CheckOutDbCart", payload);
-      return response.data;
+      const { data } = await api.post("/", payload, {
+        params: { endpoint: ENDPOINTS.CHECKOUT_DB_CART },
+        headers: { "Content-Type": "application/json" },
+      });
+
+      return data;
     } catch (error) {
       return rejectWithValue(
         error.response?.data || error.message || "Failed to checkout order"
@@ -101,8 +120,12 @@ export const checkOutLocalStorageCart = createAsyncThunk(
         customerAccountType,
       };
 
-      const response = await api.post("/Order/CheckOutLocalStorageCart", payload);
-      return response.data;
+      const { data } = await api.post("/", payload, {
+        params: { endpoint: ENDPOINTS.CHECKOUT_LOCAL_CART },
+        headers: { "Content-Type": "application/json" },
+      });
+
+      return data;
     } catch (error) {
       return rejectWithValue(
         error.response?.data || error.message || "Failed to checkout local cart"
@@ -115,8 +138,13 @@ export const fetchSalesOrderById = createAsyncThunk(
   "orders/fetchSalesOrderById",
   async (orderId, { rejectWithValue }) => {
     try {
-      const response = await api.get(`/Order/SalesOrderGet/${orderId}`);
-      return response.data;
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: `${ENDPOINTS.SALES_ORDER_GET}/${orderId}`,
+        },
+      });
+
+      return data;
     } catch (error) {
       return rejectWithValue(
         error.response?.data || error.message || "Failed to fetch sales order"
@@ -150,8 +178,12 @@ export const createOrderAddress = createAsyncThunk(
         orderNote,
       };
 
-      const response = await api.post("/Order/OrderAddress", requestData);
-      return response.data;
+      const { data } = await api.post("/", requestData, {
+        params: { endpoint: ENDPOINTS.ORDER_ADDRESS },
+        headers: { "Content-Type": "application/json" },
+      });
+
+      return data;
     } catch (error) {
       return rejectWithValue(
         error.response?.data || error.message || "Failed to create order address"
@@ -175,7 +207,7 @@ export const updateOrderDelivery = createAsyncThunk(
     { rejectWithValue }
   ) => {
     try {
-      const response = await api.post(`/Order/OrderDeliveryUpdate/${orderCode}`, {
+      const payload = {
         orderCode,
         Customerid,
         address,
@@ -183,9 +215,16 @@ export const updateOrderDelivery = createAsyncThunk(
         recipientContactNumber,
         orderNote,
         geoLocation,
+      };
+
+      const { data } = await api.post("/", payload, {
+        params: {
+          endpoint: `${ENDPOINTS.DELIVERY_UPDATE}/${orderCode}`,
+        },
+        headers: { "Content-Type": "application/json" },
       });
 
-      return response.data;
+      return data;
     } catch (error) {
       return rejectWithValue(
         error.response?.data || error.message || "Failed to update delivery"
@@ -198,9 +237,14 @@ export const fetchOrderDeliveryAddress = createAsyncThunk(
   "orders/fetchOrderDeliveryAddress",
   async (OrderCode, { rejectWithValue }) => {
     try {
-      const response = await api.get(`/Order/GetOrderDeliveryAddress/${OrderCode}`);
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: `${ENDPOINTS.GET_DELIVERY_ADDRESS}/${OrderCode}`,
+        },
+      });
+
       // API can return false => normalize to null
-      return response.data ? response.data : null;
+      return data ? data : null;
     } catch (error) {
       return rejectWithValue(
         error.response?.data || error.message || "Failed to fetch delivery address"

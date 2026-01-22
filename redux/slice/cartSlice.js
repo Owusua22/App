@@ -1,10 +1,15 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-import UUID from 'react-native-uuid'; // Use this package for generating unique IDs
-import api from './axiosInstance';
+import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import UUID from "react-native-uuid";
+import api from "./axiosInstance";
 
-// Thunks for API calls
+// ✅ Real backend endpoints (SalesMate)
+const CART_ADD = "/Cart/Add-To-Cart";
+const CART_GET_BY_ID = "/Cart/Cart-GetbyID"; // + /{cartId}
+const CART_UPDATE = "/Cart/Cart-Update";     // + /{cartId}/{productId}/{quantity}
+const CART_DELETE = "/Cart/Cart-Delete";     // + /{cartId}/{productId}
+
+// -------------------- ADD TO CART (via AWS proxy) --------------------
 export const addToCart = createAsyncThunk(
   "cart/addToCart",
   async ({ productId, price, quantity }, { rejectWithValue, dispatch }) => {
@@ -13,15 +18,18 @@ export const addToCart = createAsyncThunk(
 
       if (!cartId) {
         cartId = UUID.v4();
-        await AsyncStorage.setItem("cartId", cartId);
+        await AsyncStorage.setItem("cartId", String(cartId));
       }
 
-      await api.post("/Cart/Add-To-Cart", {
-        cartId,
-        productId,
-        price,
-        quantity,
-      });
+      // ✅ call Lambda root "/" and pass actual backend endpoint
+      await api.post(
+        "/",
+        { cartId, productId, price, quantity },
+        {
+          params: { endpoint: CART_ADD },
+          headers: { "Content-Type": "application/json" },
+        }
+      );
 
       const newCartItem = { cartId, productId, price, quantity };
 
@@ -29,7 +37,7 @@ export const addToCart = createAsyncThunk(
       cart.push(newCartItem);
       await AsyncStorage.setItem("cart", JSON.stringify(cart));
 
-      const totalItems = cart.reduce((t, i) => t + i.quantity, 0);
+      const totalItems = cart.reduce((t, i) => t + (Number(i.quantity) || 0), 0);
       dispatch(loadCart({ cart, totalItems }));
 
       return newCartItem;
@@ -39,27 +47,38 @@ export const addToCart = createAsyncThunk(
   }
 );
 
-
+// -------------------- GET CART BY ID (via AWS proxy) --------------------
 export const getCartById = createAsyncThunk(
   "cart/getCartById",
   async (cartId, { rejectWithValue }) => {
     try {
-      const response = await api.get(`/Cart/Cart-GetbyID/${cartId}`);
-      return response.data;
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: `${CART_GET_BY_ID}/${cartId}`,
+        },
+      });
+      return data;
     } catch (error) {
       return rejectWithValue(error.response?.data || error.message);
     }
   }
 );
 
-
-
-
+// -------------------- UPDATE CART ITEM (via AWS proxy) --------------------
 export const updateCartItem = createAsyncThunk(
   "cart/updateCartItem",
   async ({ cartId, productId, quantity }, { rejectWithValue, dispatch }) => {
     try {
-      await api.post(`/Cart/Cart-Update/${cartId}/${productId}/${quantity}`);
+      // your API uses POST with path params
+      await api.post(
+        "/",
+        null,
+        {
+          params: {
+            endpoint: `${CART_UPDATE}/${cartId}/${productId}/${quantity}`,
+          },
+        }
+      );
 
       const cart = JSON.parse(await AsyncStorage.getItem("cart")) || [];
       const updatedCart = cart.map((item) =>
@@ -76,11 +95,20 @@ export const updateCartItem = createAsyncThunk(
   }
 );
 
+// -------------------- DELETE CART ITEM (via AWS proxy) --------------------
 export const deleteCartItem = createAsyncThunk(
   "cart/deleteCartItem",
   async ({ cartId, productId }, { dispatch, rejectWithValue }) => {
     try {
-      await api.post(`/Cart/Cart-Delete/${cartId}/${productId}`);
+      await api.post(
+        "/",
+        null,
+        {
+          params: {
+            endpoint: `${CART_DELETE}/${cartId}/${productId}`,
+          },
+        }
+      );
 
       const cart = JSON.parse(await AsyncStorage.getItem("cart")) || [];
       const updatedCart = cart.filter((i) => i.productId !== productId);
@@ -94,26 +122,33 @@ export const deleteCartItem = createAsyncThunk(
   }
 );
 
-export const clearCart = createAsyncThunk("cart/clearCart", async (_, { rejectWithValue }) => {
-  try {
-    await AsyncStorage.removeItem("cart");
-    await AsyncStorage.removeItem("cartId");
-    return [];
-  } catch (error) {
-    return rejectWithValue(error.message);
+// -------------------- CLEAR CART (local only) --------------------
+export const clearCart = createAsyncThunk(
+  "cart/clearCart",
+  async (_, { rejectWithValue }) => {
+    try {
+      await AsyncStorage.removeItem("cart");
+      await AsyncStorage.removeItem("cartId");
+      return [];
+    } catch (error) {
+      return rejectWithValue(error.message);
+    }
   }
-});
+);
 
-export const loadCart = createAsyncThunk("cart/loadCart", async (_, { rejectWithValue }) => {
-  try {
-    const cart = JSON.parse(await AsyncStorage.getItem("cart")) || [];
-    const totalItems = cart.reduce((t, i) => t + i.quantity, 0);
-    return { cart, totalItems };
-  } catch (error) {
-    return rejectWithValue(error.message);
+// -------------------- LOAD CART (local only) --------------------
+export const loadCart = createAsyncThunk(
+  "cart/loadCart",
+  async (_, { rejectWithValue }) => {
+    try {
+      const cart = JSON.parse(await AsyncStorage.getItem("cart")) || [];
+      const totalItems = cart.reduce((t, i) => t + (Number(i.quantity) || 0), 0);
+      return { cart, totalItems };
+    } catch (error) {
+      return rejectWithValue(error.message);
+    }
   }
-});
-
+);
 
 // Cart slice
 const cartSlice = createSlice({

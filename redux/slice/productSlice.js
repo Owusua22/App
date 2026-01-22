@@ -1,75 +1,84 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import api from './axiosInstance';
+import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import api from "./axiosInstance";
 
+// helpers
+const sortByNewest = (arr = []) =>
+  [...arr].sort((a, b) => new Date(b.dateCreated) - new Date(a.dateCreated));
 
+const activeOnly = (arr = []) => arr.filter((p) => String(p.status) === "1");
+
+/* ===========================
+   ASYNC THUNKS (via AWS proxy)
+=========================== */
+
+// GET: all products (active)
 export const fetchProducts = createAsyncThunk(
   "products/fetchProducts",
-  async () => {
+  async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get("/Product/Product-Get");
-
-      const products = response.data;
-
-      const filteredProducts = products
-        .filter(product => product.status == 1) // Loose equality for type mismatches
-        .sort((a, b) => new Date(b.dateCreated) - new Date(a.dateCreated));
-
-      return filteredProducts;
-    } catch (error) {
-      throw error;
+      const { data } = await api.get("/", {
+        params: { endpoint: "/Product/Product-Get" },
+      });
+      return sortByNewest(activeOnly(data));
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
     }
   }
 );
 
+// GET: top 24 active products
 export const fetchProduct = createAsyncThunk(
   "products/fetchProduct",
-  async () => {
+  async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get("/Product/Product-Get");
-
-      const filteredProducts = response.data
-        .filter(product => product.status == 1)
-        .sort((a, b) => new Date(b.dateCreated) - new Date(a.dateCreated))
-        .slice(0, 24);
-
-      return filteredProducts;
-    } catch (error) {
-      console.error("Error fetching products:", error);
-      throw error;
+      const { data } = await api.get("/", {
+        params: { endpoint: "/Product/Product-Get" },
+      });
+      return sortByNewest(activeOnly(data)).slice(0, 24);
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
     }
   }
 );
-
 
 export const fetchProductsByBrand = createAsyncThunk(
   "products/fetchProductsByBrand",
-  async (brandId) => {
-    const response = await api.get(`/Product/Product-Get-by-Brand/${brandId}`);
-    return response.data.sort(
-      (a, b) => new Date(b.dateCreated) - new Date(a.dateCreated)
-    );
+  async (brandId, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get("/", {
+        params: { endpoint: `/Product/Product-Get-by-Brand/${brandId}` },
+      });
+      return sortByNewest(data);
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
+    }
   }
 );
 
 export const fetchProductsByShowroom = createAsyncThunk(
   "products/fetchProductsByShowroom",
-  async (showRoomID) => {
-    const response = await api.get(`/Product/Product-Get-by-ShowRoom/${showRoomID}`);
-    return {
-      showRoomID,
-      products: response.data.sort((a, b) => new Date(b.dateCreated) - new Date(a.dateCreated)),
-    };
+  async (showRoomID, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get("/", {
+        params: { endpoint: `/Product/Product-Get-by-ShowRoom/${showRoomID}` },
+      });
+      return { showRoomID, products: sortByNewest(data) };
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
+    }
   }
 );
 
 export const fetchProductById = createAsyncThunk(
   "products/fetchProductById",
-  async (productId) => {
+  async (productId, { rejectWithValue }) => {
     try {
-      const response = await api.get(`/Product/Product-Get-by-Product_ID/${productId}`);
-      return response.data;
-    } catch (error) {
-      throw error;
+      const { data } = await api.get("/", {
+        params: { endpoint: `/Product/Product-Get-by-Product_ID/${productId}` },
+      });
+      return data;
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
     }
   }
 );
@@ -78,82 +87,137 @@ export const fetchPaginatedProducts = createAsyncThunk(
   "products/fetchPaginatedProducts",
   async ({ pageNumber, pageSize = 24 }, { rejectWithValue }) => {
     try {
-      const response = await api.get("/Product/Product-Get-Paginated", {
-        params: { PageNumber: pageNumber, PageSize: pageSize },
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: "/Product/Product-Get-Paginated",
+          PageNumber: pageNumber,
+          PageSize: pageSize,
+        },
       });
-
-      const sortedData = response.data.sort(
-        (a, b) => new Date(b.dateCreated) - new Date(a.dateCreated)
-      );
-
-      return sortedData;
-    } catch (error) {
-      console.error("Error fetching paginated products:", error);
-      return rejectWithValue(error.response?.data || error.message);
+      return sortByNewest(data);
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
     }
   }
 );
+
 export const fetchProductsByCategory = createAsyncThunk(
   "products/fetchProductsByCategory",
-  async (categoryId) => {
-    const response = await api.get(`/Product/Product-Get-by-Category/${categoryId}`);
-    return {
-      categoryId,
-      products: response.data.sort((a, b) => new Date(b.dateCreated) - new Date(a.dateCreated)),
-    };
+  async (categoryId, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get("/", {
+        params: { endpoint: `/Product/Product-Get-by-Category/${categoryId}` },
+      });
+      return { categoryId, products: sortByNewest(data) };
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
+    }
   }
 );
+
 export const fetchProductByShowroomAndRecord = createAsyncThunk(
   "products/fetchProductByShowroomAndRecord",
-  async ({ showRoomCode, recordNumber }) => {
+  async ({ showRoomCode, recordNumber }, { rejectWithValue }) => {
     try {
-      const response = await api.get("/Product/Product-Get-by-ShowRoom_RecordNumber", {
+      const { data } = await api.get("/", {
         params: {
-          ShowRommCode: showRoomCode, // keep parameter name as in API
+          endpoint: "/Product/Product-Get-by-ShowRoom_RecordNumber",
+          ShowRommCode: showRoomCode, // keep exact API param name
           RecordNumber: recordNumber,
         },
       });
-
-      const sortedProducts = response.data.sort(
-        (a, b) => new Date(b.dateCreated) - new Date(a.dateCreated)
-      );
-
-      return { showRoomCode, products: sortedProducts };
-    } catch (error) {
-      throw error;
+      return { showRoomCode, products: sortByNewest(data) };
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
     }
   }
 );
+
 export const fetchPaginatedProductsByShowroom = createAsyncThunk(
   "products/fetchPaginatedProductsByShowroom",
   async ({ showRoomCode, pageNumber = 1, pageSize = 4 }, { rejectWithValue }) => {
     try {
-      const response = await api.get(
-        "/Product/Product-Get-by-ShowRoom-Pageinated",
-        {
-          params: {
-            Code: showRoomCode,
-            PageNumber: pageNumber,
-            PageSize: pageSize,
-          },
-        }
-      );
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: "/Product/Product-Get-by-ShowRoom-Pageinated",
+          Code: showRoomCode,
+          PageNumber: pageNumber,
+          PageSize: pageSize,
+        },
+      });
 
-      const sortedProducts = response.data.sort(
-        (a, b) => new Date(b.dateCreated) - new Date(a.dateCreated)
-      );
-
-      return {
-        showRoomCode,
-        pageNumber,
-        products: sortedProducts,
-      };
-    } catch (error) {
-      console.error("Showroom pagination error:", error);
-      return rejectWithValue(error.response?.data || error.message);
+      return { showRoomCode, pageNumber, products: sortByNewest(data) };
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
     }
   }
 );
+
+// POST: add product (via proxy)
+export const addProduct = createAsyncThunk(
+  "products/addProduct",
+  async (productData, { rejectWithValue }) => {
+    try {
+      const isFormData = productData instanceof FormData;
+
+      const { data } = await api.post("/", productData, {
+        params: { endpoint: "/Product/Product-Post" },
+        headers: isFormData
+          ? undefined // IMPORTANT: let axios set multipart boundary
+          : { "Content-Type": "application/json" },
+      });
+
+      return data;
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
+    }
+  }
+);
+
+// POST: update product (via proxy)
+export const updateProduct = createAsyncThunk(
+  "products/updateProduct",
+  async (productData, { rejectWithValue }) => {
+    try {
+      const { Productid, ...rest } = productData;
+
+      const { data } = await api.post("/", rest, {
+        params: { endpoint: `/Product/Product_Put/${Productid}` },
+        headers: { "Content-Type": "application/json" },
+      });
+
+      return data;
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
+    }
+  }
+);
+
+// POST: update product image (via proxy)
+export const updateProductImage = createAsyncThunk(
+  "products/updateProductImage",
+  async ({ productID, imageFile }, { rejectWithValue }) => {
+    try {
+      const formData = new FormData();
+      formData.append("ProductId", productID);
+      formData.append("ImageName", {
+        uri: imageFile.uri,
+        name: imageFile.name || "image.jpg",
+        type: imageFile.type || "image/jpeg",
+      });
+
+      const { data } = await api.post("/", formData, {
+        params: { endpoint: "/Product/Product-Image-Edit" },
+        // DO NOT set Content-Type manually in RN multipart
+      });
+
+      return data;
+    } catch (e) {
+      return rejectWithValue(e.response?.data || e.message);
+    }
+  }
+);
+
 
 
 // Create the product slice

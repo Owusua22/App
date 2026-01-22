@@ -1,67 +1,73 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import api from "./axiosInstance"; // 👈 your axios instance
+import api from "./axiosInstance"; // ✅ AWS-proxy axios instance
 
-// API root inside SalesMate
+// Real backend prefix (SalesMate)
 const API_PREFIX = "/Advertisment";
+const GET_ADS_ENDPOINT = `${API_PREFIX}/GetAdvertisment`;
 
-// -------------------- GET BY NAME --------------------
+// -------------------- GET BY NAME (via AWS proxy) --------------------
 export const getAdvertisment = createAsyncThunk(
   "advertisment/get",
   async (AdsName, { rejectWithValue }) => {
     try {
-      const response = await api.get(
-        `${API_PREFIX}/GetAdvertisment`,
-        {
-          params: { AdsName }, // axios handles encoding
-        }
-      );
+      // ✅ call Lambda root "/" and pass the real endpoint in params.endpoint
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: GET_ADS_ENDPOINT,
+          AdsName, // forwarded as query param to backend
+        },
+      });
 
-      return Array.isArray(response.data) ? response.data.slice(1) : [];
+      return Array.isArray(data) ? data.slice(1) : [];
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || "Failed to fetch advertisements"
+        error.response?.data || error.message || "Failed to fetch advertisements"
       );
     }
   }
 );
 
-// -------------------- HOME PAGE --------------------
+// -------------------- HOME PAGE (via AWS proxy) --------------------
 export const getHomePageAdvertisment = createAsyncThunk(
   "advertisment/getHomePage",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get(
-        `${API_PREFIX}/GetAdvertisment`,
-        {
-          params: { AdsName: "Home Page" },
-        }
-      );
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: GET_ADS_ENDPOINT,
+          AdsName: "Home Page",
+        },
+      });
 
-      return Array.isArray(response.data) ? response.data.slice(1) : [];
+      return Array.isArray(data) ? data.slice(1) : [];
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || "Failed to fetch Home Page advertisements"
+        error.response?.data ||
+          error.message ||
+          "Failed to fetch Home Page advertisements"
       );
     }
   }
 );
 
-// -------------------- BANNER --------------------
+// -------------------- BANNER (via AWS proxy) --------------------
 export const getBannerPageAdvertisment = createAsyncThunk(
   "advertisment/getBannerPage",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get(
-        `${API_PREFIX}/GetAdvertisment`,
-        {
-          params: { AdsName: "Banner" },
-        }
-      );
+      const { data } = await api.get("/", {
+        params: {
+          endpoint: GET_ADS_ENDPOINT,
+          AdsName: "Banner",
+        },
+      });
 
-      return Array.isArray(response.data) ? response.data.slice(1) : [];
+      return Array.isArray(data) ? data.slice(1) : [];
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || "Failed to fetch Banner advertisements"
+        error.response?.data ||
+          error.message ||
+          "Failed to fetch Banner advertisements"
       );
     }
   }
