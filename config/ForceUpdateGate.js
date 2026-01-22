@@ -29,6 +29,9 @@ const isVersionLess = (a, b) => {
 };
 
 export default function ForceUpdateGate({ children }) {
+  // ✅ Do NOT block in development / Expo Go / dev mode
+  if (__DEV__) return children;
+
   const appState = useRef(AppState.currentState);
 
   const [loading, setLoading] = useState(true);
@@ -39,13 +42,15 @@ export default function ForceUpdateGate({ children }) {
   const [requiredVersion, setRequiredVersion] = useState("");
 
   const [openingStore, setOpeningStore] = useState(false);
-  const [checking, setChecking] = useState(false); // prevents double-check spam
+  const [checking, setChecking] = useState(false);
 
   const checkVersion = useCallback(async () => {
+    // avoid overlapping checks
+    if (checking) return;
+
     try {
       setChecking(true);
 
-      // note: nativeApplicationVersion is fixed per installed binary
       const current = String(Application.nativeApplicationVersion || "");
       setCurrentVersion(current);
 
@@ -58,32 +63,31 @@ export default function ForceUpdateGate({ children }) {
       const url = Platform.OS === "ios" ? cfg?.iosUrl : cfg?.androidUrl;
       setStoreUrl(url || "");
 
-      if (current && min && isVersionLess(current, min)) {
-        setBlocked(true);
-      } else {
-        setBlocked(false);
-      }
-    } catch {
-      // fail open (recommended)
-      // If you prefer fail closed, setBlocked(true) here.
+      setBlocked(Boolean(current && min && isVersionLess(current, min)));
+    } catch (e) {
+      // ✅ fail open: allow app if version check fails
+      setBlocked(false);
     } finally {
       setLoading(false);
       setChecking(false);
     }
-  }, []);
+  }, [checking]);
 
+  // initial check on app start
   useEffect(() => {
     checkVersion();
   }, [checkVersion]);
 
-  // ✅ Re-check when returning from background (e.g., coming back from the store)
+  // ✅ re-check when app returns from background (e.g. after store update)
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       const prev = appState.current;
       appState.current = nextState;
 
-      // when app becomes active again, re-check
-      if ((prev === "inactive" || prev === "background") && nextState === "active") {
+      if (
+        (prev === "inactive" || prev === "background") &&
+        nextState === "active"
+      ) {
         checkVersion();
       }
     });
@@ -96,7 +100,7 @@ export default function ForceUpdateGate({ children }) {
     try {
       setOpeningStore(true);
       await Linking.openURL(storeUrl);
-      // When user comes back, AppState listener will trigger checkVersion()
+      // when user returns to the app, AppState listener triggers checkVersion()
     } finally {
       setOpeningStore(false);
     }
@@ -113,10 +117,17 @@ export default function ForceUpdateGate({ children }) {
 
   if (blocked) {
     return (
-      <LinearGradient colors={["#ECFDF5", "#D1FAE5", "#FFFFFF"]} style={styles.screen}>
+      <LinearGradient
+        colors={["#ECFDF5", "#D1FAE5", "#FFFFFF"]}
+        style={styles.screen}
+      >
         <View style={styles.card}>
           <View style={styles.iconWrap}>
-            <Ionicons name="cloud-download-outline" size={26} color="#059669" />
+            <Ionicons
+              name="cloud-download-outline"
+              size={26}
+              color="#059669"
+            />
           </View>
 
           <Text style={styles.title}>Update Required</Text>
@@ -124,13 +135,24 @@ export default function ForceUpdateGate({ children }) {
             Please update the app to continue.
           </Text>
 
-         
+          <View style={styles.versionRow}>
+            <Text style={styles.versionText}>
+              Installed: {currentVersion || "—"}
+            </Text>
+            <Text style={styles.versionDot}>•</Text>
+            <Text style={styles.versionText}>
+              Required: {requiredVersion || "—"}
+            </Text>
+          </View>
 
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={handleUpdatePress}
             disabled={!storeUrl || openingStore || checking}
-            style={[styles.buttonOuter, (!storeUrl || openingStore || checking) && styles.buttonDisabled]}
+            style={[
+              styles.buttonOuter,
+              (!storeUrl || openingStore || checking) && styles.buttonDisabled,
+            ]}
           >
             <LinearGradient
               colors={["#10B981", "#059669"]}
@@ -141,20 +163,24 @@ export default function ForceUpdateGate({ children }) {
               {openingStore || checking ? (
                 <>
                   <ActivityIndicator color="#fff" />
-                  
+                  <Text style={styles.buttonText}>
+                    {openingStore ? "Opening Store..." : "Checking..."}
+                  </Text>
                 </>
               ) : (
                 <>
-                  <Ionicons name="arrow-up-circle-outline" size={20} color="#fff" />
+                  <Ionicons
+                    name="arrow-up-circle-outline"
+                    size={20}
+                    color="#fff"
+                  />
                   <Text style={styles.buttonText}>Update Now</Text>
                 </>
               )}
             </LinearGradient>
           </TouchableOpacity>
 
-          <Text style={styles.hint}>
-            After updating, return to the app and it will re-check automatically.
-          </Text>
+          
         </View>
       </LinearGradient>
     );
@@ -262,3 +288,4 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
+
