@@ -57,7 +57,7 @@ const RecentlyViewedScreen = () => {
     if (!imagePath) {
       return "https://via.placeholder.com/150";
     }
-    return `https://fte002n1.salesmate.app/Media/Products_Images/${imagePath.split("\\").pop()}`;
+    return `https://ct002.frankotrading.com:444/Media/Products_Images/${imagePath.split("\\").pop()}`;
   };
 
   // Share functionality

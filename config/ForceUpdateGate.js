@@ -12,9 +12,14 @@ import {
 import * as Application from "expo-application";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const VERSION_URL =
   "https://franko-app.s3.eu-north-1.amazonaws.com/config/app-version.json";
+
+const LAST_CHECK_KEY = "forceUpdate:lastCheckAt";
+const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const FETCH_TIMEOUT_MS = 8000;
 
 const isVersionLess = (a, b) => {
   const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
@@ -28,33 +33,67 @@ const isVersionLess = (a, b) => {
   return false;
 };
 
+const fetchWithTimeout = async (url, timeoutMs = FETCH_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(t);
+  }
+};
+
 export default function ForceUpdateGate({ children }) {
-  // ✅ Do NOT block in development / Expo Go / dev mode
+  // Do not block in dev / Expo Go
   if (__DEV__) return children;
 
   const appState = useRef(AppState.currentState);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // only for first app boot check UI
   const [blocked, setBlocked] = useState(false);
-  const [storeUrl, setStoreUrl] = useState("");
 
+  const [storeUrl, setStoreUrl] = useState("");
   const [currentVersion, setCurrentVersion] = useState("");
   const [requiredVersion, setRequiredVersion] = useState("");
 
   const [openingStore, setOpeningStore] = useState(false);
-  const [checking, setChecking] = useState(false);
 
-  const checkVersion = useCallback(async () => {
-    // avoid overlapping checks
-    if (checking) return;
+  // internal guard (avoid overlapping calls) - useRef so it doesn't re-render UI
+  const checkingRef = useRef(false);
+
+  const shouldCheckNow = useCallback(async () => {
+    try {
+      const last = await AsyncStorage.getItem(LAST_CHECK_KEY);
+      if (!last) return true;
+
+      const lastMs = Number(last);
+      if (!Number.isFinite(lastMs)) return true;
+
+      return Date.now() - lastMs >= CHECK_INTERVAL_MS;
+    } catch {
+      return true; // fail open
+    }
+  }, []);
+
+  const runCheck = useCallback(async ({ force = false } = {}) => {
+    if (checkingRef.current) return;
+    checkingRef.current = true;
 
     try {
-      setChecking(true);
+      if (!force) {
+        const ok = await shouldCheckNow();
+        if (!ok) return;
+      }
+
+      await AsyncStorage.setItem(LAST_CHECK_KEY, String(Date.now()));
 
       const current = String(Application.nativeApplicationVersion || "");
       setCurrentVersion(current);
 
-      const res = await fetch(`${VERSION_URL}?t=${Date.now()}`);
+      const res = await fetchWithTimeout(`${VERSION_URL}?t=${Date.now()}`);
+      if (!res.ok) throw new Error(`version check failed: ${res.status}`);
+
       const cfg = await res.json();
 
       const min = String(cfg?.minVersion || "");
@@ -65,46 +104,54 @@ export default function ForceUpdateGate({ children }) {
 
       setBlocked(Boolean(current && min && isVersionLess(current, min)));
     } catch (e) {
-      // ✅ fail open: allow app if version check fails
+      // fail open (if you want to keep previous state instead, remove next line)
       setBlocked(false);
     } finally {
+      checkingRef.current = false;
       setLoading(false);
-      setChecking(false);
     }
-  }, [checking]);
+  }, [shouldCheckNow]);
 
-  // initial check on app start
+  // Initial check on app start (throttled to 24h)
   useEffect(() => {
-    checkVersion();
-  }, [checkVersion]);
+    runCheck({ force: false });
+  }, [runCheck]);
 
-  // ✅ re-check when app returns from background (e.g. after store update)
+  /**
+   * IMPORTANT:
+   * If the app is blocked, do NOT keep re-checking on AppState changes.
+   * That was causing your button to stay in "Checking..." state.
+   */
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (nextState) => {
+    const sub = AppState.addEventListener("change", (nextState) => {
       const prev = appState.current;
       appState.current = nextState;
 
       if (
+        !blocked &&
         (prev === "inactive" || prev === "background") &&
         nextState === "active"
       ) {
-        checkVersion();
+        runCheck({ force: false }); // only if 24h passed
       }
     });
 
-    return () => subscription.remove();
-  }, [checkVersion]);
+    return () => sub.remove();
+  }, [runCheck, blocked]);
 
-  const handleUpdatePress = async () => {
+  const handleUpdatePress = useCallback(async () => {
     if (!storeUrl) return;
+
     try {
       setOpeningStore(true);
       await Linking.openURL(storeUrl);
-      // when user returns to the app, AppState listener triggers checkVersion()
+      // optional: when user returns, you can force a re-check
+      // (but not required; stores may not update instantly)
+      // runCheck({ force: true });
     } finally {
       setOpeningStore(false);
     }
-  };
+  }, [storeUrl]);
 
   if (loading) {
     return (
@@ -123,35 +170,21 @@ export default function ForceUpdateGate({ children }) {
       >
         <View style={styles.card}>
           <View style={styles.iconWrap}>
-            <Ionicons
-              name="cloud-download-outline"
-              size={26}
-              color="#059669"
-            />
+            <Ionicons name="cloud-download-outline" size={26} color="#059669" />
           </View>
 
           <Text style={styles.title}>Update Required</Text>
-          <Text style={styles.subtitle}>
-            Please update the app to continue.
-          </Text>
+          <Text style={styles.subtitle}>Please update the app to continue.</Text>
 
-          <View style={styles.versionRow}>
-            <Text style={styles.versionText}>
-              Installed: {currentVersion || "—"}
-            </Text>
-            <Text style={styles.versionDot}>•</Text>
-            <Text style={styles.versionText}>
-              Required: {requiredVersion || "—"}
-            </Text>
-          </View>
+         
 
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={handleUpdatePress}
-            disabled={!storeUrl || openingStore || checking}
+            disabled={!storeUrl || openingStore}
             style={[
               styles.buttonOuter,
-              (!storeUrl || openingStore || checking) && styles.buttonDisabled,
+              (!storeUrl || openingStore) && styles.buttonDisabled,
             ]}
           >
             <LinearGradient
@@ -160,12 +193,10 @@ export default function ForceUpdateGate({ children }) {
               end={{ x: 1, y: 0 }}
               style={styles.buttonInner}
             >
-              {openingStore || checking ? (
+              {openingStore ? (
                 <>
                   <ActivityIndicator color="#fff" />
-                  <Text style={styles.buttonText}>
-                    {openingStore ? "Opening Store..." : "Checking..."}
-                  </Text>
+                  <Text style={styles.buttonText}>Opening Store...</Text>
                 </>
               ) : (
                 <>
@@ -180,7 +211,11 @@ export default function ForceUpdateGate({ children }) {
             </LinearGradient>
           </TouchableOpacity>
 
-          
+          {!storeUrl ? (
+            <Text style={styles.hint}>
+              Store link not available. Please try again later.
+            </Text>
+          ) : null}
         </View>
       </LinearGradient>
     );
@@ -203,11 +238,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
-  screen: {
-    flex: 1,
-    justifyContent: "center",
-    padding: 18,
-  },
+  screen: { flex: 1, justifyContent: "center", padding: 18 },
   card: {
     backgroundColor: "#FFFFFF",
     borderRadius: 18,
@@ -232,12 +263,7 @@ const styles = StyleSheet.create({
     borderColor: "#A7F3D0",
     marginBottom: 10,
   },
-  title: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111827",
-    marginBottom: 6,
-  },
+  title: { fontSize: 18, fontWeight: "800", color: "#111827", marginBottom: 6 },
   subtitle: {
     textAlign: "center",
     color: "#4B5563",
@@ -245,26 +271,11 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginBottom: 12,
   },
-  versionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  versionText: {
-    color: "#6B7280",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  versionDot: {
-    marginHorizontal: 8,
-    color: "#9CA3AF",
-    fontSize: 12,
-  },
-  buttonOuter: {
-    width: "100%",
-    borderRadius: 14,
-    overflow: "hidden",
-  },
+  versionRow: { flexDirection: "row", alignItems: "center", marginBottom: 14 },
+  versionText: { color: "#6B7280", fontSize: 12, fontWeight: "600" },
+  versionDot: { marginHorizontal: 8, color: "#9CA3AF", fontSize: 12 },
+
+  buttonOuter: { width: "100%", borderRadius: 14, overflow: "hidden" },
   buttonInner: {
     paddingVertical: 14,
     borderRadius: 14,
@@ -273,14 +284,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "800",
-  },
+  buttonDisabled: { opacity: 0.6 },
+  buttonText: { color: "#fff", fontSize: 15, fontWeight: "800" },
+
   hint: {
     marginTop: 12,
     fontSize: 12,
@@ -288,4 +294,3 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
-

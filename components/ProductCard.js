@@ -66,7 +66,7 @@ const ProductCard = memo(({
     
     const isHotDeal = showHotDeal && index < 3;
     
-    const imageUri = `https://fte002n1.salesmate.app/Media/Products_Images/${
+    const imageUri = `https://ct002.frankotrading.com:444/Media/Products_Images/${
       product.productImage.split("\\").pop()
     }`;
     

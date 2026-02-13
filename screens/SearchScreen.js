@@ -19,7 +19,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { debounce } from "lodash";
 import { fetchProducts } from "../redux/slice/productSlice";
 
-const backendBaseURL = "https://fte002n1.salesmate.app";
+const backendBaseURL = "https://ct002.frankotrading.com:444";
 const RECENT_SEARCH_LIMIT = 8;
 
 const TRENDING = [

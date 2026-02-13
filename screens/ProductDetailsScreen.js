@@ -73,7 +73,7 @@ const getValidImageUrl = (imagePath) => {
     : imagePath.includes("/")
       ? imagePath.split("/").pop()
       : imagePath;
-  return `https://fte002n1.salesmate.app/Media/Products_Images/${file}`;
+  return `https://ct002.frankotrading.com:444/Media/Products_Images/${file}`;
 };
 
 const normalizeCategoryName = (name) =>

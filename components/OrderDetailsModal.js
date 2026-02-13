@@ -17,7 +17,7 @@ import { fetchSalesOrderById, fetchOrderDeliveryAddress } from '../redux/slice/o
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 const { width } = Dimensions.get('window');
-const backendBaseURL = 'https://fte002n1.salesmate.app';
+const backendBaseURL = 'https://ct002.frankotrading.com:444';
 
 const OrderModal = ({ orderCode, isModalVisible, onClose }) => {
   const dispatch = useDispatch();

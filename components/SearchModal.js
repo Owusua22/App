@@ -6,7 +6,7 @@ import { useNavigation } from '@react-navigation/native'; // For navigation
 import { Ionicons } from '@expo/vector-icons';
 import { debounce } from 'lodash'; // For debouncing the search
 
-const backendBaseURL = 'https://fte002n1.salesmate.app/';
+const backendBaseURL = 'https://ct002.frankotrading.com:444';
 
 const SearchModal = ({ visible, onClose }) => {
   const dispatch = useDispatch();

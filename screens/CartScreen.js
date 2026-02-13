@@ -28,7 +28,7 @@ import SignupScreen from "./SignupScreen";
 
 /* ---------- helpers ---------- */
 
-const backendBaseURL = "https://fte002n1.salesmate.app";
+const backendBaseURL = "https://ct002.frankotrading.com:444";
 
 const formatCurrency = (amount) => {
   const n = Number(amount) || 0;

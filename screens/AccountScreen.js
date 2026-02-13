@@ -113,14 +113,7 @@ const AccountScreen = () => {
       screen: "Wishlist",
       description: "Your saved items",
     },
-    {
-      name: "Recently Viewed",
-      icon: "history",
-      color: "#7C3AED",
-      bgColor: "#EDE9FE",
-      screen: "RecentlyViewed",
-      description: "Browse history",
-    },
+
     {
       name: "Help Center",
       icon: "help-circle",

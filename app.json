@@ -2,7 +2,7 @@
   "expo": {
     "name": "FrankoTrading",
     "slug": "Franko",
-    "version": "58.0.9",
+    "version": "59.0.4",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",

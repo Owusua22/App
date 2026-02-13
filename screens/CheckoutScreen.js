@@ -9,20 +9,14 @@ import {
   Image,
   Alert,
   StyleSheet,
-  AppState,
 } from "react-native";
 import { useDispatch } from "react-redux";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 
 import { checkOutOrder, updateOrderDelivery } from "../redux/slice/orderSlice";
-import { getHubtelCallbackById } from "../redux/slice/paymentSlice";
 import { clearCart } from "../redux/slice/cartSlice";
 import LocationsModal from "../components/Locations";
-
-const PAYMENT_API_URL =
-  process.env.EXPO_PUBLIC_PAYMENT_API_URL ||
-  "https://02yo3gbfxe.execute-api.us-east-1.amazonaws.com/default/FrankoAPI/?endpoint=%2FPaymentSystem%2FInitiateHubtel";
 
 const CART_KEYS_TO_CLEAR = [
   "cart",
@@ -42,36 +36,26 @@ const formatCurrency = (value) => {
   })}`;
 };
 
-// RN-safe URL check
-const isValidUrl = (url) =>
-  typeof url === "string" &&
-  (url.startsWith("https://") || url.startsWith("http://"));
-
 const CheckoutScreen = ({ navigation }) => {
   const dispatch = useDispatch();
 
   const hasFinalizedRef = useRef(false);
-  const intervalRef = useRef(null);
-  const appStateRef = useRef(AppState.currentState);
 
   const [customer, setCustomer] = useState({});
   const [cartItems, setCartItems] = useState([]);
 
-  const [paymentMethod, setPaymentMethod] = useState("");
   const [orderNote, setOrderNote] = useState("");
   const [recipientName, setRecipientName] = useState("");
   const [recipientContactNumber, setRecipientContactNumber] = useState("");
   const [recipientAddress, setRecipientAddress] = useState("");
 
   const [loading, setLoading] = useState(false);
-  const [paymentProcessing, setPaymentProcessing] = useState(false);
 
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [manualAddressVisible, setManualAddressVisible] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
 
   const [usedOrderIds, setUsedOrderIds] = useState(new Set());
-  const [currentOrderId, setCurrentOrderId] = useState(null);
 
   // -----------------------------
   // Delivery helpers
@@ -122,30 +106,6 @@ const CheckoutScreen = ({ navigation }) => {
     }
 
     return "Delivery charges may apply";
-  };
-
-  const isCashOnDeliveryAvailable = () => {
-    if (manualAddressVisible || !selectedLocation) return false;
-    return isFreeDelivery(selectedLocation.town?.delivery_fee);
-  };
-
-  const getAvailablePaymentMethods = () => {
-    const methods = ["Mobile Money", "Credit/Debit Card"];
-    if (isCashOnDeliveryAvailable()) methods.unshift("Cash on Delivery");
-    return methods;
-  };
-
-  const getPaymentIcon = (method) => {
-    switch (method) {
-      case "Mobile Money":
-        return "phone-portrait-outline";
-      case "Credit/Debit Card":
-        return "card-outline";
-      case "Cash on Delivery":
-        return "cash-outline";
-      default:
-        return "wallet-outline";
-    }
   };
 
   // -----------------------------
@@ -231,17 +191,9 @@ const CheckoutScreen = ({ navigation }) => {
   // -----------------------------
   // Storage helpers
   // -----------------------------
-  const storeCheckoutDetailsLocally = async (checkoutDetails, addressDetails) => {
-    await AsyncStorage.setItem("checkoutDetails", JSON.stringify(checkoutDetails));
-    await AsyncStorage.setItem("orderDeliveryDetails", JSON.stringify(addressDetails));
-  };
-
   const clearAllCartStorage = async () => {
     // ✅ remove everything cart/checkout/payment related
     await AsyncStorage.multiRemove(CART_KEYS_TO_CLEAR);
-
-    // (Optional) if you store anything else cart-like, add here:
-    // await AsyncStorage.removeItem("someOtherKey");
   };
 
   // -----------------------------
@@ -263,47 +215,26 @@ const CheckoutScreen = ({ navigation }) => {
     await dispatch(updateOrderDelivery(addressDetails)).unwrap();
   };
 
-  // ✅ Finalize order after payment success or direct checkout
+  // ✅ Finalize order - simplified for Cash on Delivery only
   const finalizeOrderSuccess = useCallback(
-    async (orderId, { checkoutDetails, addressDetails } = {}) => {
+    async (orderId, checkoutDetails, addressDetails) => {
       if (!orderId || hasFinalizedRef.current) return;
       hasFinalizedRef.current = true;
 
       try {
         setLoading(true);
 
-        // If not passed, load from storage (Hubtel flow)
-        let checkout = checkoutDetails;
-        let address = addressDetails;
-
-        if (!checkout || !address) {
-          const checkoutJson = await AsyncStorage.getItem("checkoutDetails");
-          const addressJson = await AsyncStorage.getItem("orderDeliveryDetails");
-          checkout = checkoutJson ? JSON.parse(checkoutJson) : null;
-          address = addressJson ? JSON.parse(addressJson) : null;
-        }
-
-        if (!checkout || !address) {
-          throw new Error("Missing checkout/address details");
-        }
-
         // 1) backend checkout
-        await dispatchOrderCheckout(checkout);
+        await dispatchOrderCheckout(checkoutDetails);
 
         // 2) backend address update
-        await dispatchOrderAddress(address);
+        await dispatchOrderAddress(addressDetails);
 
         // 3) clear redux + storage
         dispatch(clearCart());
         await clearAllCartStorage();
 
-        // 4) stop polling if any
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
-
-        // 5) navigate
+        // 4) navigate
         navigation.reset({
           index: 0,
           routes: [{ name: "OrderPlacedScreen", params: { orderId } }],
@@ -312,113 +243,14 @@ const CheckoutScreen = ({ navigation }) => {
         hasFinalizedRef.current = false; // allow retry
         Alert.alert(
           "Order Processing Error",
-          e?.message || "Payment succeeded but we couldn't finalize your order."
+          e?.message || "We couldn't finalize your order. Please try again."
         );
       } finally {
         setLoading(false);
-        setCurrentOrderId(null);
       }
     },
     [dispatch, navigation]
   );
-
-  // -----------------------------
-  // Hubtel: polling callback status
-  // -----------------------------
-  const checkPaymentStatusOnce = useCallback(async () => {
-    const orderId = currentOrderId || (await AsyncStorage.getItem("pendingOrderId"));
-    if (!orderId || paymentProcessing) return;
-
-    try {
-      setPaymentProcessing(true);
-
-      const action = await dispatch(getHubtelCallbackById(orderId));
-      const response = action?.payload;
-
-      if (response?.responseCode === "0000") {
-        await AsyncStorage.removeItem("pendingOrderId");
-        await finalizeOrderSuccess(orderId);
-      }
-
-      if (response?.responseCode === "2001" || response?.responseCode === "2002") {
-        await AsyncStorage.removeItem("pendingOrderId");
-        setCurrentOrderId(null);
-
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
-
-        navigation.reset({
-          index: 0,
-          routes: [{ name: "OrderCancellationScreen" }],
-        });
-      }
-    } catch {
-      // ignore polling errors
-    } finally {
-      setPaymentProcessing(false);
-    }
-  }, [currentOrderId, paymentProcessing, dispatch, navigation, finalizeOrderSuccess]);
-
-  // Start polling when payment method is hubtel + we have an order id
-  useEffect(() => {
-    if (!["Mobile Money", "Credit/Debit Card"].includes(paymentMethod)) return;
-    if (!currentOrderId) return;
-
-    // start interval
-    intervalRef.current = setInterval(checkPaymentStatusOnce, 2500);
-    // immediate check
-    checkPaymentStatusOnce();
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [paymentMethod, currentOrderId, checkPaymentStatusOnce]);
-
-  // Re-check when returning from payment webview
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      const prev = appStateRef.current;
-      appStateRef.current = nextState;
-
-      if ((prev === "inactive" || prev === "background") && nextState === "active") {
-        checkPaymentStatusOnce();
-      }
-    });
-
-    return () => subscription.remove();
-  }, [checkPaymentStatusOnce]);
-
-  // -----------------------------
-  // Payment initiation
-  // -----------------------------
-  const initiatePayment = async (totalAmount, items, orderId) => {
-    const payload = { totalAmount, cartItems: items, orderId };
-
-    const response = await fetch(PAYMENT_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Identifier: "Franko",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const text = await response.text();
-    if (!response.ok) throw new Error(`HTTP error: ${response.status} - ${text}`);
-    if (!text) throw new Error("Empty response from payment API");
-
-    const result = JSON.parse(text);
-
-    if (result.checkoutUrl && isValidUrl(result.checkoutUrl)) return result.checkoutUrl;
-    if (result?.data?.checkoutUrl && isValidUrl(result.data.checkoutUrl)) return result.data.checkoutUrl;
-
-    throw new Error(result.message || "Payment initiation failed.");
-  };
 
   // -----------------------------
   // Location handlers
@@ -427,7 +259,6 @@ const CheckoutScreen = ({ navigation }) => {
     setSelectedLocation(locationData);
     setRecipientAddress(`${locationData.town?.name}, ${locationData.region}`);
     setManualAddressVisible(false);
-    setPaymentMethod("");
     await AsyncStorage.setItem("selectedLocation", JSON.stringify(locationData));
     setLocationModalVisible(false);
   };
@@ -439,13 +270,12 @@ const CheckoutScreen = ({ navigation }) => {
     if (newVisible) {
       setSelectedLocation(null);
       setRecipientAddress("");
-      setPaymentMethod("");
       await AsyncStorage.removeItem("selectedLocation");
     }
   };
 
   // -----------------------------
-  // Checkout click
+  // Checkout click - simplified for Cash on Delivery
   // -----------------------------
   const handleCheckout = async () => {
     // validation
@@ -456,10 +286,6 @@ const CheckoutScreen = ({ navigation }) => {
 
     if (isGuestName) {
       Alert.alert("Please Enter Your Actual Name", "Please enter your real name.");
-      return;
-    }
-    if (!paymentMethod) {
-      Alert.alert("Payment Method Required", "Please select a payment method.");
       return;
     }
     if (!recipientAddress.trim()) {
@@ -476,8 +302,6 @@ const CheckoutScreen = ({ navigation }) => {
     }
 
     const orderId = generateOrderId();
-    setCurrentOrderId(orderId);
-
     const orderDate = new Date().toISOString();
     const cartId = await AsyncStorage.getItem("cartId");
 
@@ -485,10 +309,10 @@ const CheckoutScreen = ({ navigation }) => {
       Cartid: cartId,
       customerId: customer.customerAccountNumber,
       orderCode: orderId,
-      PaymentMode: paymentMethod,
+      PaymentMode: "Cash on Delivery",
       PaymentAccountNumber: customer.contactNumber,
       customerAccountType: customer.accountType || "Customer",
-      paymentService: paymentMethod === "Mobile Money" ? "Mtn" : "Visa",
+      paymentService: "Cash",
       totalAmount: calculateTotalAmount(),
       recipientName,
       recipientContactNumber,
@@ -506,34 +330,9 @@ const CheckoutScreen = ({ navigation }) => {
       geoLocation: "N/A",
     };
 
-    try {
-      setLoading(true);
-
-      // Direct (non-hubtel)
-      if (!["Mobile Money", "Credit/Debit Card"].includes(paymentMethod)) {
-        await finalizeOrderSuccess(orderId, { checkoutDetails, addressDetails });
-        return;
-      }
-
-      // Hubtel flow: store details, open payment screen, then poll for 0000
-      await storeCheckoutDetailsLocally(checkoutDetails, addressDetails);
-
-      const paymentUrl = await initiatePayment(checkoutDetails.totalAmount, cartItems, orderId);
-      if (!paymentUrl) throw new Error("Invalid payment URL received");
-
-      await AsyncStorage.setItem("pendingOrderId", orderId);
-
-      navigation.navigate("PaymentGatewayScreen", { url: paymentUrl, orderId });
-    } catch (e) {
-      hasFinalizedRef.current = false;
-      setCurrentOrderId(null);
-      Alert.alert("Checkout Error", e?.message || "Checkout failed.");
-    } finally {
-      setLoading(false);
-    }
+    // Direct checkout for Cash on Delivery
+    await finalizeOrderSuccess(orderId, checkoutDetails, addressDetails);
   };
-
-  const availablePaymentMethods = getAvailablePaymentMethods();
 
   // -----------------------------
   // UI
@@ -556,7 +355,7 @@ const CheckoutScreen = ({ navigation }) => {
 
         <View style={styles.headerTextContainer}>
           <Text style={styles.headerText}>Checkout</Text>
-          <Text style={styles.headerSubText}>Secure payment & fast delivery</Text>
+          <Text style={styles.headerSubText}>Cash on Delivery</Text>
         </View>
 
         <Ionicons
@@ -630,46 +429,22 @@ const CheckoutScreen = ({ navigation }) => {
             value={orderNote}
             onChangeText={setOrderNote}
             multiline
-            placeholder="Any instructions?"
+            placeholder="Any note about the order?"
           />
         </View>
 
-        {/* Payment Methods */}
+        {/* Payment Method - Cash on Delivery only */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Payment Method *</Text>
-
-          {availablePaymentMethods.map((method) => (
-            <TouchableOpacity
-              key={method}
-              style={[
-                styles.paymentOption,
-                paymentMethod === method && styles.paymentOptionSelected,
-              ]}
-              onPress={() => setPaymentMethod(method)}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <Ionicons
-                  name={getPaymentIcon(method)}
-                  size={20}
-                  color={paymentMethod === method ? "#059669" : "#6B7280"}
-                />
-                <Text
-                  style={[
-                    styles.paymentText,
-                    paymentMethod === method && styles.paymentTextSelected,
-                  ]}
-                >
-                  {method}
-                </Text>
-              </View>
-
-              {paymentMethod === method ? (
-                <Ionicons name="checkmark-circle" size={20} color="#059669" />
-              ) : (
-                <Ionicons name="ellipse-outline" size={20} color="#9CA3AF" />
-              )}
-            </TouchableOpacity>
-          ))}
+          <Text style={styles.sectionTitle}>Payment Method</Text>
+          
+          <View style={styles.paymentInfo}>
+            <Ionicons name="cash-outline" size={24} color="#059669" />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.paymentTitle}>Cash on Delivery</Text>
+             
+            </View>
+            <Ionicons name="checkmark-circle" size={24} color="#059669" />
+          </View>
         </View>
 
         {/* Summary */}
@@ -677,7 +452,7 @@ const CheckoutScreen = ({ navigation }) => {
           <Text style={styles.sectionTitle}>Order Summary</Text>
 
           {cartItems.map((item, idx) => {
-            const backendBaseURL = "https://fte002n1.salesmate.app";
+            const backendBaseURL = "https://ct002.frankotrading.com:444/";
             const imageUrl = item.imagePath
               ? `${backendBaseURL}/Media/Products_Images/${item.imagePath.split("\\").pop()}`
               : null;
@@ -796,20 +571,17 @@ const styles = StyleSheet.create({
   toggle: { marginTop: 10 },
   toggleText: { color: "#059669", fontWeight: "700" },
 
-  paymentOption: {
-    borderWidth: 1.2,
-    borderColor: "#E5E7EB",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    backgroundColor: "#F9FAFB",
+  paymentInfo: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    padding: 14,
+    backgroundColor: "#ECFDF5",
+    borderRadius: 12,
+    borderWidth: 1.2,
+    borderColor: "#059669",
   },
-  paymentOptionSelected: { borderColor: "#059669", backgroundColor: "#ECFDF5" },
-  paymentText: { fontSize: 14, color: "#6B7280", fontWeight: "700" },
-  paymentTextSelected: { color: "#059669" },
+  paymentTitle: { fontSize: 15, fontWeight: "800", color: "#059669" },
+  paymentDescription: { fontSize: 12, color: "#6B7280", marginTop: 2 },
 
   itemRow: {
     flexDirection: "row",

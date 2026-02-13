@@ -48,7 +48,7 @@ const WishlistScreen = () => {
     if (!imagePath) {
       return "https://via.placeholder.com/150";
     }
-    return `https://smfteapi.salesmate.app/Media/Products_Images/${imagePath.split("\\").pop()}`;
+    return `https://ct002.frankotrading.com:444/Media/Products_Images/${imagePath.split("\\").pop()}`;
   };
 
 

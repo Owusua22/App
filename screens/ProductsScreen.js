@@ -190,12 +190,12 @@ const ProductsScreen = () => {
     const fileName = imagePath.split(/[\\/]/).pop();
 
     if (imagePath.includes("\\") || imagePath.includes("F:") || imagePath.includes("D:")) {
-      return `https://smfteapi.salesmate.app/Media/Products_Images/${fileName}`;
+      return `https://ct002.frankotrading.com:444/Media/Products_Images/${fileName}`;
     }
 
     if (imagePath.startsWith("http")) return imagePath;
 
-    return `https://smfteapi.salesmate.app/${imagePath}`;
+    return `https://ct002.frankotrading.com:444/${imagePath}`;
   };
 
   const handleAddToCart = (product) => {

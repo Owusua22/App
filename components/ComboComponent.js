@@ -255,7 +255,7 @@ const ComboComponent = () => {
       return <LoadingCard />;
     }
 
-    const imageUri = `https://fte002n1.salesmate.app/Media/Products_Images/${product.productImage?.split("\\").pop()}`;
+    const imageUri = `https://ct002.frankotrading.com:444/Media/Products_Images/${product.productImage?.split("\\").pop()}`;
     const discount = product.oldPrice > 0 
       ? Math.round(((product.oldPrice - product.price) / product.oldPrice) * 100)
       : 0;
