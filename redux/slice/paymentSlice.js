@@ -1,106 +1,201 @@
-// src/redux/slices/paymentSlice.js
-import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
-import api from "./axiosInstance"; // ✅ AWS-proxy axios instance (Lambda baseURL)
+// src/redux/slice/paymentSlice.js
+import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import axios from "axios";
 
-// Real backend routes
-const PAYMENT_PREFIX = "/PaymentSystem";
-const ENDPOINTS = {
-  POST_HUBTEL_CALLBACK: `${PAYMENT_PREFIX}/PostHubtelCallBack`,
-  GET_HUBTEL_CALLBACK_BY_ID: `${PAYMENT_PREFIX}/GetHubtelCallBackById`,
-};
+const BASE_URL = "https://smpayapi.salesmate.app/";
+const PSP = "fte"; // constant PSP query parameter
 
-// Post Hubtel callback (via AWS proxy)
-export const postHubtelCallback = createAsyncThunk(
-  "payment/postHubtelCallback",
-  async (responseData, { rejectWithValue }) => {
+// ------------------------
+// Async Thunks with PSP query
+// ------------------------
+
+// 1️⃣ Debit Customer
+export const debitCustomer = createAsyncThunk(
+  "payment/debitCustomer",
+  async ({ refNo, msisdn, amount, network, narration }, { rejectWithValue }) => {
     try {
-      const { data } = await api.post(
-        "/",
-        { responseData },
+      const response = await axios.post(
+        `${BASE_URL}PaymentPrompt/DebitCustomer?PSP=${PSP}`,
         {
-          params: { endpoint: ENDPOINTS.POST_HUBTEL_CALLBACK },
-          headers: { "Content-Type": "application/json" },
+          refNo,
+          msisdn,
+          amount,
+          network,
+          narration,
         }
       );
-
-      return data;
+      return response.data;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data || error.message || "Something went wrong"
-      );
+      return rejectWithValue(error.response?.data || error.message);
     }
   }
 );
 
-// Get Hubtel callback by Order ID (clientReference) (via AWS proxy)
-export const getHubtelCallbackById = createAsyncThunk(
-  "payment/getHubtelCallbackById",
-  async (orderId, { rejectWithValue }) => {
+// 2️⃣ Validate Account
+export const validateAccount = createAsyncThunk(
+  "payment/validateAccount",
+  async ({ msisdn, network }, { rejectWithValue }) => {
     try {
-      const { data } = await api.get("/", {
-        params: {
-          endpoint: ENDPOINTS.GET_HUBTEL_CALLBACK_BY_ID,
-          Orderid: orderId, // keep param name backend expects
-        },
-      });
-
-      return data;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data || error.message || "Something went wrong"
+      const response = await axios.post(
+        `${BASE_URL}PaymentPrompt/ValidateAccount?PSP=${PSP}`,
+        { msisdn, network }
       );
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || error.message);
     }
   }
 );
+
+// 3️⃣ Check Transaction Status
+export const checkTransactionStatus = createAsyncThunk(
+  "payment/checkTransactionStatus",
+  async ({ refNo }, { rejectWithValue }) => {
+    try {
+      const response = await axios.post(
+        `${BASE_URL}PaymentPrompt/CheckTransactionStatus?PSP=${PSP}`,
+        { refNo }
+      );
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || error.message);
+    }
+  }
+);
+
+// 4️⃣ Debit by Customer Network Provider ID
+export const debitByCustomerNetworkProviderId = createAsyncThunk(
+  "payment/debitByCustomerNetworkProviderId",
+  async ({ transactionNumber, contactNumber, customerNetworkProviderId, amount }, { rejectWithValue }) => {
+    try {
+      const response = await axios.post(
+        `${BASE_URL}PaymentPrompt/DebitbyCustomerNetworkProviderId?PSP=${PSP}`,
+        {
+          transactionNumber,
+          contactNumber,
+          customerNetworkProviderId,
+          amountPaid: amount,
+        }
+      );
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || error.message);
+    }
+  }
+);
+
+// 5️⃣ Get Account Hold Name
+export const getAccountHoldName = createAsyncThunk(
+  "payment/getAccountHoldName",
+  async ({ msisdn, network }, { rejectWithValue }) => {
+    try {
+      const response = await axios.post(
+        `${BASE_URL}PaymentPrompt/AccountHoldName?PSP=${PSP}`,
+        { msisdn, network }
+      );
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || error.message);
+    }
+  }
+);
+
+// ------------------------
+// Slice (unchanged)
+// ------------------------
+const initialState = {
+  debitCustomerData: null,
+  validateAccountData: null,
+  transactionStatus: null,
+  debitNetworkData: null,
+  accountHoldName: null,
+  loading: false,
+  error: null,
+};
 
 const paymentSlice = createSlice({
-  name: 'payment',
-  initialState: {
-    callbackData: null,
-    loading: false,
-    error: null,
-  },
+  name: "payment",
+  initialState,
   reducers: {
-    clearPaymentState: (state) => {
-      state.callbackData = null;
+    resetPaymentState: (state) => {
+      state.debitCustomerData = null;
+      state.validateAccountData = null;
+      state.transactionStatus = null;
+      state.debitNetworkData = null;
+      state.accountHoldName = null;
       state.loading = false;
       state.error = null;
     },
   },
   extraReducers: (builder) => {
     builder
-      // postHubtelCallback
-      .addCase(postHubtelCallback.pending, (state) => {
+      // Debit Customer
+      .addCase(debitCustomer.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(postHubtelCallback.fulfilled, (state, action) => {
+      .addCase(debitCustomer.fulfilled, (state, action) => {
         state.loading = false;
-        state.callbackData = action.payload;
+        state.debitCustomerData = action.payload;
       })
-      .addCase(postHubtelCallback.rejected, (state, action) => {
+      .addCase(debitCustomer.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       })
-
-      // getHubtelCallbackById
-      .addCase(getHubtelCallbackById.pending, (state) => {
+      // Validate Account
+      .addCase(validateAccount.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(getHubtelCallbackById.fulfilled, (state, action) => {
+      .addCase(validateAccount.fulfilled, (state, action) => {
         state.loading = false;
-        state.callbackData = action.payload;
+        state.validateAccountData = action.payload;
       })
-      .addCase(getHubtelCallbackById.rejected, (state, action) => {
+      .addCase(validateAccount.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       })
-
-      
+      // Check Transaction Status
+      .addCase(checkTransactionStatus.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(checkTransactionStatus.fulfilled, (state, action) => {
+        state.loading = false;
+        state.transactionStatus = action.payload;
+      })
+      .addCase(checkTransactionStatus.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      })
+      // Debit by Customer Network Provider ID
+      .addCase(debitByCustomerNetworkProviderId.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(debitByCustomerNetworkProviderId.fulfilled, (state, action) => {
+        state.loading = false;
+        state.debitNetworkData = action.payload;
+      })
+      .addCase(debitByCustomerNetworkProviderId.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      })
+      // Account Hold Name
+      .addCase(getAccountHoldName.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(getAccountHoldName.fulfilled, (state, action) => {
+        state.loading = false;
+        state.accountHoldName = action.payload;
+      })
+      .addCase(getAccountHoldName.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      });
   },
 });
 
-export const { clearPaymentState } = paymentSlice.actions;
-
+export const { resetPaymentState } = paymentSlice.actions;
 export default paymentSlice.reducer;

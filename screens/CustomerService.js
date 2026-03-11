@@ -35,7 +35,7 @@ const CustomerServiceScreen = () => {
     const message = encodeURIComponent(
       "Hello! I need customer support assistance."
     );
-    Linking.openURL(`https://wa.me/233555939311?text=${message}`);
+    Linking.openURL(`https://wa.me/233503607980?text=${message}`);
   };
 
   const handleSocialMedia = (url) => {
@@ -73,7 +73,7 @@ const CustomerServiceScreen = () => {
       subtitle: "Quick messaging support",
       description: "Chat with us in real time on WhatsApp.",
       icon: "whatsapp",
-      value: "+233 246 422 338",
+      value: "+233 503 607 9808",
       action: handleWhatsApp,
       color: "#22C55E",
       bgColor: "#F0FDF4",
@@ -267,7 +267,7 @@ const CustomerServiceScreen = () => {
                   size={14}
                   color="#0369A1"
                 />
-                <Text style={styles.socialBadgeText}>Join the community</Text>
+             
               </View>
             </View>
 

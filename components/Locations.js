@@ -38,7 +38,7 @@ const locations = [
     { name: "Nungua", delivery_fee: "Free delivery" },
     { name: "Teshie", delivery_fee: "Free delivery" },
     { name: "Nsakina", delivery_fee: "Free delivery" },
-    { name: "Sowtoum", delivery_fee: "Free delivery" },
+    { name: "Sowutoum", delivery_fee: "Free delivery" },
     { name: "Amasaman", delivery_fee: "Free delivery" },
     { name: "Ofankor", delivery_fee: "Free delivery" },
     { name: "Kwabenya", delivery_fee: "Free delivery" },

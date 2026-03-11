@@ -13,7 +13,7 @@ import {
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 
-const WHATSAPP_NUMBER = '+233555939311';
+const WHATSAPP_NUMBER = '+233503607980';
 const PHONE_NUMBER = '+233302225651';
 
 const RED = '#EF4444';
