@@ -9,7 +9,7 @@ import {
   Dimensions,
   Platform,
   SafeAreaView,
-  StatusBar,
+
 } from "react-native";
 import FontAwesome from "react-native-vector-icons/FontAwesome";
 import Ionicons from "react-native-vector-icons/Ionicons";
@@ -141,7 +141,7 @@ Join thousands of happy customers! 🌟`;
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#16A34A" />
+
       <LinearGradient
         colors={["#22C55E", "#16A34A", "#15803D"]}
         start={{ x: 0, y: 0 }}

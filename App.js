@@ -9,6 +9,7 @@ import {
   StatusBar as RNStatusBar,
   Animated,
   Dimensions,
+  Platform,
 } from "react-native";
 
 import { Provider, useDispatch } from "react-redux";
@@ -25,10 +26,7 @@ import {
 } from "react-native-safe-area-context";
 
 import { LinearGradient } from "expo-linear-gradient";
-
 import { loadWishlistFromStorage } from "./redux/wishlistSlice";
-
-// ✅ Force update gate (wraps the whole app)
 import ForceUpdateGate from "./config/ForceUpdateGate";
 
 // Screens
@@ -74,18 +72,33 @@ import WishlistScreen from "./screens/WishlistScreen";
 import Header from "./components/Header";
 import Footer from "./components/Footer";
 import FloatingTawkChat from "./components/FloatingTawkChat";
+import PaymentHelpScreen from "./screens/PaymentHelpScreen";
 
 const Stack = createStackNavigator();
 const { width, height } = Dimensions.get("window");
 
-/* ---------------- WelcomeScreen ---------------- */
+/* ────────────────────────────────────────────────────────
+ *  iOS STATUS BAR FIX:
+ *
+ *  Problem:
+ *    • iOS ignores StatusBar's `translucent={false}` and `backgroundColor`
+ *    • Content always renders BEHIND the status bar on iOS
+ *    • edges={["bottom"]} left the top unprotected
+ *    • Status bar indicators (time, battery) were hidden behind app content
+ *
+ *  Solution:
+ *    • Welcome screen → light-content bar + manual insets (gradient behind bar)
+ *    • Main app → SafeAreaView edges={["top","bottom"]} handles the top
+ *    • Removed manual paddingTop from MainAppContainer (SafeAreaView does it)
+ *    • StatusBar barStyle changes dynamically based on current screen
+ * ──────────────────────────────────────────────────────── */
+
+/* ═══════════════ WelcomeScreen ═══════════════ */
 const WelcomeScreen = ({ onReady }) => {
   const [loading, setLoading] = useState(true);
-  const [dateTime, setDateTime] = useState(new Date());
   const dispatch = useDispatch();
   const insets = useSafeAreaInsets();
 
-  // Animation values
   const fadeAnim = useState(new Animated.Value(0))[0];
   const scaleAnim = useState(new Animated.Value(0.3))[0];
   const slideAnim = useState(new Animated.Value(50))[0];
@@ -96,43 +109,28 @@ const WelcomeScreen = ({ onReady }) => {
   }, [dispatch]);
 
   useEffect(() => {
-    const interval = setInterval(() => setDateTime(new Date()), 1000);
-
     Animated.parallel([
       Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 1000,
-        useNativeDriver: true,
+        toValue: 1, duration: 1000, useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
-        toValue: 1,
-        tension: 50,
-        friction: 7,
-        useNativeDriver: true,
+        toValue: 1, tension: 50, friction: 7, useNativeDriver: true,
       }),
       Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 800,
-        delay: 300,
-        useNativeDriver: true,
+        toValue: 0, duration: 800, delay: 300, useNativeDriver: true,
       }),
     ]).start();
 
     const pulseLoop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
-          toValue: 1.1,
-          duration: 1500,
-          useNativeDriver: true,
+          toValue: 1.1, duration: 1500, useNativeDriver: true,
         }),
         Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1500,
-          useNativeDriver: true,
+          toValue: 1, duration: 1500, useNativeDriver: true,
         }),
       ])
     );
-
     pulseLoop.start();
 
     const fetchData = async () => {
@@ -140,29 +138,28 @@ const WelcomeScreen = ({ onReady }) => {
       setLoading(false);
       onReady();
     };
-
     fetchData();
 
-    return () => {
-      pulseLoop.stop();
-      clearInterval(interval);
-    };
+    return () => pulseLoop.stop();
   }, [onReady, fadeAnim, scaleAnim, slideAnim, pulseAnim]);
-
-  const formattedDate = dateTime.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 
   return (
     <View style={styles.welcomeWrapper}>
+      {/*
+        ✅ Welcome screen gets its own StatusBar config:
+        light-content = white text/icons visible on green gradient
+      */}
+      <RNStatusBar
+        barStyle="light-content"
+        translucent={true}
+        backgroundColor="transparent"
+      />
+
       <LinearGradient
         colors={["#BBF7D0", "#10B981", "#059669"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={[styles.welcomeContainer, { paddingTop: insets.top }]}
+        style={styles.welcomeContainer}
       >
         {/* Background Pattern */}
         <View style={styles.backgroundPattern}>
@@ -181,16 +178,20 @@ const WelcomeScreen = ({ onReady }) => {
           ))}
         </View>
 
+        {/*
+          ✅ Content starts below the status bar via paddingTop.
+          The gradient still extends behind the bar (looks good).
+        */}
         <Animated.View
           style={[
             styles.contentWrapper,
             {
+              paddingTop: insets.top + 20,
               opacity: fadeAnim,
               transform: [{ scale: scaleAnim }],
             },
           ]}
         >
-          {/* Logo */}
           <Animated.View
             style={[styles.logoContainer, { transform: [{ scale: pulseAnim }] }]}
           >
@@ -203,21 +204,14 @@ const WelcomeScreen = ({ onReady }) => {
             </View>
           </Animated.View>
 
-          {/* Welcome Text */}
           <Animated.View
-            style={[
-              styles.textContainer,
-              { transform: [{ translateY: slideAnim }] },
-            ]}
+            style={[styles.textContainer, { transform: [{ translateY: slideAnim }] }]}
           >
             <Text style={styles.welcomeTitle}>Welcome to</Text>
             <Text style={styles.companyName}>Franko Trading Ent</Text>
             <Text style={styles.tagline}>Your trusted electronics partner</Text>
-            {/* optional */}
-            {/* <Text style={styles.dateText}>{formattedDate}</Text> */}
           </Animated.View>
 
-          {/* Loading Indicator */}
           {loading && (
             <Animated.View
               style={[
@@ -239,7 +233,7 @@ const WelcomeScreen = ({ onReady }) => {
   );
 };
 
-/* ---------------- Screen Wrappers with Footer ---------------- */
+/* ═══════════════ Screen Wrappers ═══════════════ */
 const ScreenWithFooter = ({ children }) => (
   <View style={{ flex: 1 }}>
     {children}
@@ -248,60 +242,34 @@ const ScreenWithFooter = ({ children }) => (
 );
 
 const HomeScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <HomeScreen />
-  </ScreenWithFooter>
+  <ScreenWithFooter><HomeScreen /></ScreenWithFooter>
 );
-
 const CategoryScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <CategoryScreen />
-  </ScreenWithFooter>
+  <ScreenWithFooter><CategoryScreen /></ScreenWithFooter>
 );
-
 const AccountScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <AccountScreen />
-  </ScreenWithFooter>
+  <ScreenWithFooter><AccountScreen /></ScreenWithFooter>
 );
-
 const ProductsScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <ProductsScreen />
-  </ScreenWithFooter>
+  <ScreenWithFooter><ProductsScreen /></ScreenWithFooter>
 );
-
 const ShopScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <ShopScreen />
-  </ScreenWithFooter>
+  <ScreenWithFooter><ShopScreen /></ScreenWithFooter>
 );
-
 const RecentlyViewedScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <RecentlyViewedScreen />
-  </ScreenWithFooter>
+  <ScreenWithFooter><RecentlyViewedScreen /></ScreenWithFooter>
 );
-
 const CustomerServiceScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <CustomerServiceScreen />
-  </ScreenWithFooter>
+  <ScreenWithFooter><CustomerServiceScreen /></ScreenWithFooter>
 );
-
 const InviteScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <InviteScreen />
-  </ScreenWithFooter>
+  <ScreenWithFooter><InviteScreen /></ScreenWithFooter>
 );
-
 const AddressManagementScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <AddressManagementScreen />
-  </ScreenWithFooter>
+  <ScreenWithFooter><AddressManagementScreen /></ScreenWithFooter>
 );
 
-/* ---------------- App Stack ---------------- */
+/* ═══════════════ App Stack ═══════════════ */
 const AppStack = () => (
   <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false }}>
     <Stack.Screen name="Home" component={HomeScreenWithFooter} />
@@ -321,6 +289,7 @@ const AppStack = () => (
     <Stack.Screen name="OrderPlacedScreen" component={OrderPlacedScreen} />
     <Stack.Screen name="AboutUs" component={AboutScreen} />
     <Stack.Screen name="showroom" component={ShowroomScreen} />
+    <Stack.Screen name="PaymentHelpScreen" component={PaymentHelpScreen} />
     <Stack.Screen name="Phones" component={PhoneScreen} />
     <Stack.Screen name="WashingMachine" component={MachineScreen} />
     <Stack.Screen name="Speakers" component={SpeakerScreen} />
@@ -344,16 +313,27 @@ const AppStack = () => (
   </Stack.Navigator>
 );
 
-/* ------------- Main App Container ------------- */
+/* ═══════════════ Main App Container ═══════════════ */
 const MainAppContainer = () => {
-  const insets = useSafeAreaInsets();
-
+  /*
+    ✅ FIX: Removed manual paddingTop: insets.top
+    SafeAreaView with edges={["top","bottom"]} now handles the top inset.
+    This prevents the double-padding bug and ensures the status bar area
+    is always clear on every iOS device (notch, Dynamic Island, etc.)
+  */
   return (
     <View style={styles.mainContainer}>
-      {/* App header sits below the system status bar area */}
-      <View style={{ paddingTop: insets.top, backgroundColor: "#fff" }}>
-        <Header />
-      </View>
+      {/*
+        ✅ Main app StatusBar: dark text on white background.
+        translucent={true} is the iOS reality — we embrace it.
+      */}
+      <RNStatusBar
+        barStyle="dark-content"
+        translucent={true}
+        backgroundColor="#FFFFFF"
+      />
+
+      <Header />
 
       <View style={styles.contentContainer}>
         <AppStack />
@@ -363,38 +343,49 @@ const MainAppContainer = () => {
   );
 };
 
-/* ---------------- App Content ---------------- */
+/* ═══════════════ App Content ═══════════════ */
 const AppContent = () => {
   const [showWelcome, setShowWelcome] = useState(true);
   const handleReady = () => setShowWelcome(false);
 
-  return (
-    <>
-      <RNStatusBar
-        barStyle="dark-content"
-        backgroundColor="#F9FAFB"
-        translucent={false}
-      />
-
+  if (showWelcome) {
+    /*
+      ✅ Welcome screen renders OUTSIDE SafeAreaView
+      so the gradient can extend behind the status bar.
+      It handles its own top padding via useSafeAreaInsets().
+    */
+    return (
       <NavigationContainer>
-        <SafeAreaView style={styles.container} edges={["bottom"]}>
-          {showWelcome ? (
-            <WelcomeScreen onReady={handleReady} />
-          ) : (
-            <MainAppContainer />
-          )}
-        </SafeAreaView>
+        <WelcomeScreen onReady={handleReady} />
       </NavigationContainer>
-    </>
+    );
+  }
+
+  return (
+    <NavigationContainer>
+      {/*
+        ✅ KEY FIX: edges now includes "top"
+        This tells SafeAreaView to add padding equal to the status bar
+        height (+ notch/Dynamic Island) at the top.
+
+        Before: edges={["bottom"]} → top was unprotected → content behind status bar
+        After:  edges={["top","bottom"]} → status bar area is always clear
+      */}
+      <SafeAreaView
+        style={styles.container}
+        edges={["top", "bottom"]}
+      >
+        <MainAppContainer />
+      </SafeAreaView>
+    </NavigationContainer>
   );
 };
 
-/* ---------------- App Root (WITH FORCE UPDATE) ---------------- */
+/* ═══════════════ App Root ═══════════════ */
 const App = () => (
   <Provider store={store}>
     <PersistGate loading={null} persistor={persistor}>
       <SafeAreaProvider>
-        {/* ✅ Force update gate blocks the whole app if minVersion is higher */}
         <ForceUpdateGate>
           <AppContent />
         </ForceUpdateGate>
@@ -405,11 +396,16 @@ const App = () => (
 
 export default App;
 
-/* ---------------- Styles ---------------- */
+/* ═══════════════ Styles ═══════════════ */
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: "#FFFFFF",
+    /*
+      ✅ White background ensures the status bar area
+      (the space SafeAreaView reserves at the top)
+      has a clean white background behind the dark status bar text.
+    */
   },
   mainContainer: {
     flex: 1,
@@ -427,6 +423,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     position: "relative",
     overflow: "hidden",
+    /*
+      ✅ Removed paddingTop from here.
+      It's now on contentWrapper so the gradient
+      fills the entire screen including behind the status bar.
+    */
   },
   backgroundPattern: {
     position: "absolute",
@@ -445,6 +446,10 @@ const styles = StyleSheet.create({
   contentWrapper: {
     alignItems: "center",
     zIndex: 1,
+    /*
+      ✅ paddingTop is set dynamically via insets.top + 20
+      in the component's style prop.
+    */
   },
   logoContainer: {
     marginBottom: 30,
@@ -490,12 +495,6 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.8)",
     textAlign: "center",
     fontStyle: "italic",
-  },
-  dateText: {
-    marginTop: 10,
-    fontSize: 15,
-    color: "#fff",
-    fontWeight: "600",
   },
   loadingContainer: {
     alignItems: "center",

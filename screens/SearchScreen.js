@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-  SafeAreaView,
   View,
   Text,
   TextInput,
@@ -10,13 +9,13 @@ import {
   Image,
   ActivityIndicator,
   ScrollView,
-  StatusBar,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Icon from "react-native-vector-icons/MaterialIcons";
 import { useNavigation } from "@react-navigation/native";
 import { useDispatch, useSelector } from "react-redux";
 import { debounce } from "lodash";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fetchProducts } from "../redux/slice/productSlice";
 
 const backendBaseURL = "https://ct002.frankotrading.com:444";
@@ -33,7 +32,7 @@ const TRENDING = [
 ];
 
 function formatPrice(price) {
-  return `₵${price?.toLocaleString?.()|| "N/A"}.00`;
+  return `₵${price?.toLocaleString?.() || "N/A"}.00`;
 }
 
 function getImageURL(productImage) {
@@ -71,8 +70,8 @@ function HighlightedText({ text = "", query = "", style, highlightStyle }) {
 export default function SearchScreen() {
   const navigation = useNavigation();
   const dispatch = useDispatch();
+  const insets = useSafeAreaInsets();
 
-  // Be defensive about redux shape
   const products = useSelector((state) => state?.products?.products ?? []);
   const loading = useSelector((state) => state?.products?.loading ?? false);
 
@@ -83,7 +82,6 @@ export default function SearchScreen() {
   const debounceRef = useRef(null);
 
   useEffect(() => {
-    // init debounce once
     debounceRef.current = debounce((value) => setSearchQuery(value), 250);
     return () => debounceRef.current?.cancel?.();
   }, []);
@@ -101,7 +99,7 @@ export default function SearchScreen() {
 
   useEffect(() => {
     if (!products || products.length === 0) dispatch(fetchProducts());
-  }, [dispatch]); // fetch once
+  }, [dispatch]);
 
   const hasQuery = searchQuery.trim().length > 0;
 
@@ -145,7 +143,7 @@ export default function SearchScreen() {
     const term = searchText.trim();
     if (!term) return;
     await saveSearch(term);
-    setSearchQuery(term); // commit immediately
+    setSearchQuery(term);
   };
 
   const handleClearInput = () => {
@@ -262,7 +260,10 @@ export default function SearchScreen() {
   const renderDiscover = () => (
     <ScrollView
       style={styles.discover}
-      contentContainerStyle={styles.discoverContent}
+      contentContainerStyle={[
+        styles.discoverContent,
+        { paddingBottom: insets.bottom + 24 },
+      ]}
       showsVerticalScrollIndicator={false}
     >
       {/* Recent searches */}
@@ -271,7 +272,9 @@ export default function SearchScreen() {
           <View style={styles.sectionHeader}>
             <View>
               <Text style={styles.sectionTitle}>Recent searches</Text>
-              <Text style={styles.sectionSubTitle}>Pick up where you left off</Text>
+              <Text style={styles.sectionSubTitle}>
+                Pick up where you left off
+              </Text>
             </View>
 
             <TouchableOpacity
@@ -292,7 +295,7 @@ export default function SearchScreen() {
         </View>
       )}
 
-      {/* Popular right now - compact pills (NOT grid) */}
+      {/* Popular right now */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <View>
@@ -307,8 +310,6 @@ export default function SearchScreen() {
           ))}
         </View>
       </View>
-
-    
     </ScrollView>
   );
 
@@ -337,7 +338,7 @@ export default function SearchScreen() {
         <EmptyState
           icon="search-off"
           title="No results"
-          subtitle={`We couldn’t find anything for “${searchText.trim()}”.`}
+          subtitle={`We couldn't find anything for "${searchText.trim()}".`}
         />
       );
     }
@@ -347,7 +348,8 @@ export default function SearchScreen() {
         <View style={styles.resultsHeader}>
           <Text style={styles.resultsTitle}>Results</Text>
           <Text style={styles.resultsCount}>
-            {filteredProducts.length} item{filteredProducts.length !== 1 ? "s" : ""}
+            {filteredProducts.length} item
+            {filteredProducts.length !== 1 ? "s" : ""}
           </Text>
         </View>
 
@@ -356,7 +358,10 @@ export default function SearchScreen() {
           renderItem={renderResultItem}
           keyExtractor={(item, idx) => String(item?.productID ?? idx)}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.resultsListContent}
+          contentContainerStyle={[
+            styles.resultsListContent,
+            { paddingBottom: insets.bottom + 18 },
+          ]}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       </View>
@@ -364,11 +369,14 @@ export default function SearchScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
-
+    <View style={styles.safe}>
       {/* Header */}
-      <View style={styles.header}>
+      <View
+        style={[
+          styles.header,
+    
+        ]}
+      >
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
@@ -381,7 +389,7 @@ export default function SearchScreen() {
           <Icon name="search" size={20} color="#9CA3AF" />
           <TextInput
             style={styles.input}
-            placeholder="Search products, brands, categories"
+            placeholder="I am looking for...."
             placeholderTextColor="#9CA3AF"
             value={searchText}
             onChangeText={handleSearchChange}
@@ -404,19 +412,18 @@ export default function SearchScreen() {
 
       {/* Content */}
       {hasQuery ? renderResults() : renderDiscover()}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F8FAFC" },
 
-  // Header
+  // Header — paddingTop is now set dynamically via insets
   header: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 14,
-    paddingTop: 6,
     paddingBottom: 12,
     backgroundColor: "#F8FAFC",
     borderBottomWidth: 1,
@@ -437,7 +444,7 @@ const styles = StyleSheet.create({
     gap: 10,
     backgroundColor: "#FFFFFF",
     borderRadius: 999,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     height: 44,
     borderWidth: 1,
     borderColor: "#E5E7EB",
@@ -462,12 +469,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#F3F4F6",
   },
 
-  // Discover
+  // Discover — paddingBottom is now set dynamically via insets
   discover: { flex: 1 },
   discoverContent: {
     paddingHorizontal: 16,
     paddingTop: 14,
-    paddingBottom: 24,
   },
   section: { marginBottom: 18 },
   sectionHeader: {
@@ -476,8 +482,16 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     marginBottom: 10,
   },
-  sectionTitle: { fontSize: 17, fontWeight: "800", color: "#111827" },
-  sectionSubTitle: { marginTop: 2, fontSize: 12, color: "#6B7280" },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  sectionSubTitle: {
+    marginTop: 2,
+    fontSize: 12,
+    color: "#6B7280",
+  },
 
   clearRecentBtn: {
     flexDirection: "row",
@@ -488,7 +502,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: "#F3F4F6",
   },
-  clearRecentText: { fontSize: 12, fontWeight: "700", color: "#374151" },
+  clearRecentText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#374151",
+  },
 
   wrapRow: { flexDirection: "row", flexWrap: "wrap" },
 
@@ -506,9 +524,14 @@ const styles = StyleSheet.create({
     marginRight: 10,
     marginBottom: 10,
   },
-  recentChipText: { fontSize: 13, fontWeight: "600", color: "#111827", maxWidth: 220 },
+  recentChipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#111827",
+    maxWidth: 220,
+  },
 
-  // Trending pills (Popular right now) — compact rounded buttons
+  // Trending pills
   trendingPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -529,21 +552,6 @@ const styles = StyleSheet.create({
     maxWidth: 220,
   },
 
-  // Tip card
-  tipCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginTop: 6,
-  },
-  tipText: { flex: 1, fontSize: 12.5, color: "#374151", lineHeight: 18 },
-
   // Results
   results: { flex: 1, paddingHorizontal: 16, paddingTop: 12 },
   resultsHeader: {
@@ -552,10 +560,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 10,
   },
-  resultsTitle: { fontSize: 17, fontWeight: "800", color: "#111827" },
-  resultsCount: { fontSize: 12, color: "#6B7280", fontWeight: "600" },
+  resultsTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  resultsCount: {
+    fontSize: 12,
+    color: "#6B7280",
+    fontWeight: "600",
+  },
   resultsListContent: {
-    paddingBottom: 18,
     backgroundColor: "#FFFFFF",
     borderRadius: 16,
     borderWidth: 1,
@@ -572,8 +587,19 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     backgroundColor: "#FFFFFF",
   },
-  resultLeft: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1, paddingRight: 10 },
-  resultImage: { width: 54, height: 54, borderRadius: 12, backgroundColor: "#F3F4F6" },
+  resultLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+    paddingRight: 10,
+  },
+  resultImage: {
+    width: 54,
+    height: 54,
+    borderRadius: 12,
+    backgroundColor: "#F3F4F6",
+  },
   resultImageFallback: {
     width: 54,
     height: 54,
@@ -583,14 +609,50 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   resultMeta: { flex: 1 },
-  resultName: { fontSize: 13.5, fontWeight: "700", color: "#111827" },
-  resultNameHighlight: { color: "#10B981", fontWeight: "900" },
-  resultPrice: { marginTop: 4, fontSize: 13, fontWeight: "800", color: "#10B981" },
+  resultName: {
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  resultNameHighlight: {
+    color: "#10B981",
+    fontWeight: "900",
+  },
+  resultPrice: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#10B981",
+  },
 
   // Loading/Empty
-  loadingWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
-  loadingText: { marginTop: 10, fontSize: 13, color: "#6B7280" },
-  emptyState: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
-  emptyTitle: { marginTop: 10, fontSize: 18, fontWeight: "800", color: "#111827" },
-  emptySubtitle: { marginTop: 6, fontSize: 13, color: "#6B7280", textAlign: "center", lineHeight: 18 },
+  loadingWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 13,
+    color: "#6B7280",
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+  },
+  emptyTitle: {
+    marginTop: 10,
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  emptySubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    color: "#6B7280",
+    textAlign: "center",
+    lineHeight: 18,
+  },
 });

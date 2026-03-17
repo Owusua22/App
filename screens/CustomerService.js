@@ -6,19 +6,19 @@ import {
   StyleSheet,
   Linking,
   ScrollView,
-  StatusBar,
   Dimensions,
   Platform,
-  SafeAreaView,
 } from "react-native";
 import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 import { useNavigation } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const { width } = Dimensions.get("window");
 
 const CustomerServiceScreen = () => {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
 
   const handleCall = () => {
     Linking.openURL("tel:+233302225651");
@@ -26,7 +26,9 @@ const CustomerServiceScreen = () => {
 
   const handleEmail = () => {
     const subject = encodeURIComponent("Customer Support Inquiry");
-    const body = encodeURIComponent("Hello,\n\nI need assistance with:\n\n");
+    const body = encodeURIComponent(
+      "Hello,\n\nI need assistance with:\n\n"
+    );
     const mailtoUrl = `mailto:it@frankotrading.com?subject=${subject}&body=${body}`;
     Linking.openURL(mailtoUrl);
   };
@@ -121,15 +123,17 @@ const CustomerServiceScreen = () => {
   ];
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#16A34A" />
+    <View style={styles.safeArea}>
       <View style={styles.container}>
         {/* HEADER */}
         <LinearGradient
           colors={["#22C55E", "#16A34A", "#15803D"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.header}
+          style={[
+            styles.header,
+            { paddingTop: insets.top + 8 },
+          ]}
         >
           <View style={styles.headerDecor1} />
           <View style={styles.headerDecor2} />
@@ -151,7 +155,7 @@ const CustomerServiceScreen = () => {
             <View style={styles.headerTextBlock}>
               <Text style={styles.headerTitle}>Customer support</Text>
               <Text style={styles.headerSubtitle}>
-                Need help with an order, delivery or product? We’re here for
+                Need help with an order, delivery or product? We're here for
                 you.
               </Text>
 
@@ -166,7 +170,9 @@ const CustomerServiceScreen = () => {
                     size={14}
                     color="rgba(226, 252, 240, 0.9)"
                   />
-                  <Text style={styles.badgeMutedText}>8:00 AM – 6:00 PM</Text>
+                  <Text style={styles.badgeMutedText}>
+                    8:00 AM – 6:00 PM
+                  </Text>
                 </View>
               </View>
             </View>
@@ -191,7 +197,10 @@ const CustomerServiceScreen = () => {
         {/* CONTENT */}
         <ScrollView
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: insets.bottom + 24 },
+          ]}
           showsVerticalScrollIndicator={false}
         >
           {/* CONTACT METHODS */}
@@ -220,17 +229,28 @@ const CustomerServiceScreen = () => {
                     { backgroundColor: method.iconBg },
                   ]}
                 >
-                  <Icon name={method.icon} size={26} color={method.color} />
+                  <Icon
+                    name={method.icon}
+                    size={26}
+                    color={method.color}
+                  />
                 </View>
 
                 <View style={styles.contactInfo}>
-                  <Text style={styles.contactTitle}>{method.title}</Text>
-                  <Text style={styles.contactSubtitle}>{method.subtitle}</Text>
+                  <Text style={styles.contactTitle}>
+                    {method.title}
+                  </Text>
+                  <Text style={styles.contactSubtitle}>
+                    {method.subtitle}
+                  </Text>
                   <Text style={styles.contactDescription}>
                     {method.description}
                   </Text>
                   <Text
-                    style={[styles.contactValue, { color: method.color }]}
+                    style={[
+                      styles.contactValue,
+                      { color: method.color },
+                    ]}
                   >
                     {method.value}
                   </Text>
@@ -256,7 +276,9 @@ const CustomerServiceScreen = () => {
           <View style={styles.sectionContainer}>
             <View style={styles.sectionHeaderRow}>
               <View>
-                <Text style={styles.sectionTitle}>Connect with us</Text>
+                <Text style={styles.sectionTitle}>
+                  Connect with us
+                </Text>
                 <Text style={styles.sectionSubtitle}>
                   Follow Franko Trading for deals, news & tips.
                 </Text>
@@ -267,7 +289,6 @@ const CustomerServiceScreen = () => {
                   size={14}
                   color="#0369A1"
                 />
-             
               </View>
             </View>
 
@@ -288,9 +309,15 @@ const CustomerServiceScreen = () => {
                       { backgroundColor: social.color },
                     ]}
                   >
-                    <Icon name={social.icon} size={22} color="#FFFFFF" />
+                    <Icon
+                      name={social.icon}
+                      size={22}
+                      color="#FFFFFF"
+                    />
                   </View>
-                  <Text style={styles.socialMediaName}>{social.name}</Text>
+                  <Text style={styles.socialMediaName}>
+                    {social.name}
+                  </Text>
                   <Text style={styles.socialMediaUsername}>
                     {social.username}
                   </Text>
@@ -303,10 +330,16 @@ const CustomerServiceScreen = () => {
           <View style={styles.supportHoursCard}>
             <View style={styles.supportHoursHeader}>
               <View style={styles.clockIconContainer}>
-                <Icon name="clock-outline" size={22} color="#16A34A" />
+                <Icon
+                  name="clock-outline"
+                  size={22}
+                  color="#16A34A"
+                />
               </View>
               <View>
-                <Text style={styles.supportHoursTitle}>Business hours</Text>
+                <Text style={styles.supportHoursTitle}>
+                  Business hours
+                </Text>
                 <Text style={styles.supportHoursSubtitle}>
                   Ghana Standard Time (GMT)
                 </Text>
@@ -316,20 +349,40 @@ const CustomerServiceScreen = () => {
             <View style={styles.supportHoursList}>
               <View style={styles.supportHoursItem}>
                 <View style={styles.dayContainer}>
-                  <Text style={styles.dayText}>Monday – Saturday</Text>
+                  <Text style={styles.dayText}>
+                    Monday – Saturday
+                  </Text>
                   <View style={styles.statusDot} />
                   <Text style={styles.statusLabel}>Open</Text>
                 </View>
-                <Text style={styles.timeText}>8:00 AM – 6:00 PM</Text>
+                <Text style={styles.timeText}>
+                  8:00 AM – 6:00 PM
+                </Text>
               </View>
 
-              <View style={[styles.supportHoursItem, styles.lastHoursItem]}>
+              <View
+                style={[
+                  styles.supportHoursItem,
+                  styles.lastHoursItem,
+                ]}
+              >
                 <View style={styles.dayContainer}>
-                  <Text style={styles.dayText}>Public holidays</Text>
-                  <View style={[styles.statusDot, styles.limitedDot]} />
-                  <Text style={styles.statusLabelLimited}>Limited</Text>
+                  <Text style={styles.dayText}>
+                    Public holidays
+                  </Text>
+                  <View
+                    style={[
+                      styles.statusDot,
+                      styles.limitedDot,
+                    ]}
+                  />
+                  <Text style={styles.statusLabelLimited}>
+                    Limited
+                  </Text>
                 </View>
-                <Text style={styles.timeText}>8:00 AM – 5:00 PM</Text>
+                <Text style={styles.timeText}>
+                  8:00 AM – 5:00 PM
+                </Text>
               </View>
             </View>
 
@@ -340,8 +393,9 @@ const CustomerServiceScreen = () => {
                 color="#6B7280"
               />
               <Text style={styles.responseTimeText}>
-                Average response time is 2–4 hours during business hours. For
-                urgent issues, please call us directly.
+                Average response time is 2–4 hours during
+                business hours. For urgent issues, please call
+                us directly.
               </Text>
             </View>
           </View>
@@ -349,7 +403,7 @@ const CustomerServiceScreen = () => {
           <View style={styles.footerSpacer} />
         </ScrollView>
       </View>
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -365,10 +419,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#F3F4F6",
   },
 
-  // Header
+  // Header — paddingTop is now set dynamically via insets
   header: {
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === "ios" ? 8 : StatusBar.currentHeight || 8,
     paddingBottom: 18,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
@@ -509,14 +562,13 @@ const styles = StyleSheet.create({
     borderColor: "#ECFDF5",
   },
 
-  // Scroll content
+  // Scroll content — paddingBottom is now set dynamically via insets
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 18,
-    paddingBottom: 24,
   },
 
   // Sections

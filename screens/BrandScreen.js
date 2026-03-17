@@ -29,7 +29,6 @@ import { FontAwesome } from '@expo/vector-icons';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-// Consistent spacing constants
 const SPACING = {
   xs: 4,
   sm: 8,
@@ -39,7 +38,6 @@ const SPACING = {
   xxl: 24,
 };
 
-// Calculate card width based on screen size for consistency
 const CARD_MARGIN = SPACING.sm;
 const CONTAINER_PADDING = SPACING.md;
 const CARD_WIDTH = (screenWidth - (CONTAINER_PADDING * 2) - (CARD_MARGIN * 3)) / 2;
@@ -49,13 +47,25 @@ const BrandScreen = () => {
   const dispatch = useDispatch();
   const navigation = useNavigation();
 
-  const brandId = route.params?.brandId || null;
+  // ─── FIX: Capture brandId in a stable ref so it never goes undefined on re-render ───
+  const brandId = useRef(route.params?.brandId || null);
+  // Always keep the ref up-to-date if the route param legitimately changes (e.g. brand switch)
+  useEffect(() => {
+    if (route.params?.brandId) {
+      brandId.current = route.params.brandId;
+    }
+  }, [route.params?.brandId]);
+
   const productsState = useSelector((state) => state.products || { products: [], loading: false });
   const brandsState = useSelector((state) => state.brands || { brands: [], loading: false });
   const cartId = useSelector((state) => state.cart.cartId);
   const wishlistItems = useSelector((state) => state.wishlist.items);
 
-  const [selectedBrandId, setSelectedBrandId] = useState(brandId);
+  // ─── FIX: Track whether we have already loaded products for this brand ───
+  const loadedForBrandId = useRef(null);
+  const isFirstLoad = useRef(true);
+
+  const [selectedBrandId, setSelectedBrandId] = useState(brandId.current);
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -68,61 +78,55 @@ const BrandScreen = () => {
   const [selectedSeller, setSelectedSeller] = useState('');
   const [addingToCart, setAddingToCart] = useState({});
   const [currentScrollOffset, setCurrentScrollOffset] = useState(0);
-  const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false);
   const flatListRef = useRef(null);
 
+  // ─── FIX: Only fetch when the screen mounts OR the brandId genuinely changes.
+  //         Do NOT clear + re-fetch every time focus returns (e.g. back from ProductDetails).
   useFocusEffect(
     useCallback(() => {
-      const checkScrollRestore = async () => {
-        try {
-          const savedScrollPosition = await AsyncStorage.getItem(`brandScreenScrollPosition_${brandId}`);
-          if (savedScrollPosition) {
-            setCurrentScrollOffset(parseFloat(savedScrollPosition));
-            setShouldRestoreScroll(true);
-          }
-        } catch (error) {
-          console.log("Error checking scroll position:", error);
-        }
-      };
+      const currentBrandId = brandId.current;
 
-      dispatch(clearProducts());
-      dispatch(fetchProductsByBrand(brandId)).then(() => {
-        checkScrollRestore();
-      });
+      const shouldFetch =
+        isFirstLoad.current || loadedForBrandId.current !== currentBrandId;
 
-      return () => {
-        setShouldRestoreScroll(false);
-      };
-    }, [brandId, dispatch])
+      if (shouldFetch) {
+        isFirstLoad.current = false;
+        loadedForBrandId.current = currentBrandId;
+
+        // Only clear when actually switching to a different brand
+        dispatch(clearProducts());
+        dispatch(fetchProductsByBrand(currentBrandId)).then(() => {
+          restoreScrollPositionIfNeeded(currentBrandId);
+        });
+      } else {
+        // Returning from ProductDetails — just restore scroll, don't re-fetch
+        restoreScrollPositionIfNeeded(currentBrandId);
+      }
+    }, [dispatch]) // no brandId dep — we read from the stable ref
   );
 
-  useEffect(() => {
-    if (shouldRestoreScroll && filteredProducts.length > 0) {
-      setTimeout(() => {
-        restoreScrollPosition();
-      }, 300);
-    }
-  }, [filteredProducts, shouldRestoreScroll]);
-
-  const restoreScrollPosition = async () => {
+  const restoreScrollPositionIfNeeded = async (id) => {
     try {
-      if (currentScrollOffset > 0 && flatListRef.current && filteredProducts.length > 0) {
-        flatListRef.current.scrollToOffset({ 
-          offset: currentScrollOffset, 
-          animated: false 
-        });
-        setShouldRestoreScroll(false);
+      const saved = await AsyncStorage.getItem(`brandScreenScrollPosition_${id}`);
+      if (saved && flatListRef.current) {
+        const offset = parseFloat(saved);
+        if (offset > 0) {
+          // Small timeout lets the FlatList finish laying out
+          setTimeout(() => {
+            flatListRef.current?.scrollToOffset({ offset, animated: false });
+          }, 150);
+        }
       }
     } catch (error) {
-      console.log("Error restoring scroll position:", error);
+      console.log('Error restoring scroll position:', error);
     }
   };
 
-  const handleScroll = (event) => {
-    const offset = event.nativeEvent.contentOffset.y;
-    setCurrentScrollOffset(offset);
-  };
+  const handleScroll = useCallback((event) => {
+    setCurrentScrollOffset(event.nativeEvent.contentOffset.y);
+  }, []);
 
+  // ─── Derived data ───────────────────────────────────────────────────────────
   const { categories, sellers } = useMemo(() => {
     const cats = [...new Set(productsState.products.map(p => p.category).filter(Boolean))];
     const sels = [...new Set(productsState.products.map(p => p.seller).filter(Boolean))];
@@ -142,13 +146,13 @@ const BrandScreen = () => {
     }
 
     if (selectedCategory !== '') {
-      filtered = filtered.filter(product => 
+      filtered = filtered.filter(product =>
         product.category && product.category.toLowerCase().includes(selectedCategory.toLowerCase())
       );
     }
 
     if (selectedSeller !== '') {
-      filtered = filtered.filter(product => 
+      filtered = filtered.filter(product =>
         product.seller && product.seller.toLowerCase().includes(selectedSeller.toLowerCase())
       );
     }
@@ -159,10 +163,11 @@ const BrandScreen = () => {
           return (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0);
         case 'price_high':
           return (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0);
-        case 'discount':
+        case 'discount': {
           const discountA = a.oldPrice > a.price ? ((a.oldPrice - a.price) / a.oldPrice) * 100 : 0;
           const discountB = b.oldPrice > b.price ? ((b.oldPrice - b.price) / b.oldPrice) * 100 : 0;
           return discountB - discountA;
+        }
         case 'newest':
           return new Date(b.createdDate || 0) - new Date(a.createdDate || 0);
         default:
@@ -173,11 +178,12 @@ const BrandScreen = () => {
     setFilteredProducts(filtered);
   }, [productsState.products, minPrice, maxPrice, sortBy, selectedCategory, selectedSeller]);
 
-  const selectedBrand = brandsState.brands?.find((brand) => brand.brandId === brandId) || {};
+  const selectedBrand = brandsState.brands?.find((brand) => brand.brandId === brandId.current) || {};
   const relatedBrands = selectedBrand?.categoryId
     ? brandsState.brands.filter((brand) => brand.categoryId === selectedBrand.categoryId)
     : [];
 
+  // ─── Helpers ────────────────────────────────────────────────────────────────
   const formatPrice = (price) => {
     const numPrice = parseFloat(price) || 0;
     return numPrice.toLocaleString(undefined, {
@@ -187,58 +193,43 @@ const BrandScreen = () => {
   };
 
   const getImageUrl = (imagePath) => {
-    if (!imagePath) return "https://via.placeholder.com/300x300/f0f0f0/cccccc?text=No+Image";
-
+    if (!imagePath) return 'https://via.placeholder.com/300x300/f0f0f0/cccccc?text=No+Image';
     const fileName = imagePath.split(/[\\/]/).pop();
-
-    if (imagePath.includes("\\") || imagePath.includes("F:") || imagePath.includes("D:")) {
+    if (imagePath.includes('\\') || imagePath.includes('F:') || imagePath.includes('D:')) {
       return `https://ct002.frankotrading.com:444/Media/Products_Images/${fileName}`;
     }
-
-    if (imagePath.startsWith("http")) return imagePath;
-
+    if (imagePath.startsWith('http')) return imagePath;
     return `https://ct002.frankotrading.com:444/${imagePath}`;
   };
 
-  const handleAddToCart = (product) => {
-    const cartData = {
-      cartId,
-      productId: product.productID,
-      price: product.price,
-      quantity: 1,
-    };
-
+  const handleAddToCart = useCallback((product) => {
+    const cartData = { cartId, productId: product.productID, price: product.price, quantity: 1 };
     setAddingToCart(prev => ({ ...prev, [product.productID]: true }));
-
     dispatch(addToCart(cartData))
-      .then(() => {
-        Alert.alert("Success", `${product.productName} added to cart successfully!`);
-      })
-      .catch((error) => {
-        Alert.alert("Error", `Failed to add product to cart: ${error.message}`);
-      })
+      .then(() => Alert.alert('Success', `${product.productName} added to cart successfully!`))
+      .catch((error) => Alert.alert('Error', `Failed to add product to cart: ${error.message}`))
       .finally(() => {
         setAddingToCart(prev => {
-          const newState = { ...prev };
-          delete newState[product.productID];
-          return newState;
+          const next = { ...prev };
+          delete next[product.productID];
+          return next;
         });
       });
-  };
+  }, [cartId, dispatch]);
 
-  const handleNavigateProduct = async (productId) => {
+  const handleNavigateProduct = useCallback(async (productId) => {
     try {
-      if (flatListRef.current) {
-        await AsyncStorage.setItem(`brandScreenScrollPosition_${brandId}`, currentScrollOffset.toString());
-      }
+      await AsyncStorage.setItem(
+        `brandScreenScrollPosition_${brandId.current}`,
+        currentScrollOffset.toString()
+      );
     } catch (error) {
-      console.log("Error saving scroll position:", error);
+      console.log('Error saving scroll position:', error);
     }
-    
-    navigation.navigate('ProductDetails', { productId, brandId });
-  };
+    navigation.navigate('ProductDetails', { productId, brandId: brandId.current });
+  }, [currentScrollOffset, navigation]);
 
-  const handleBackPress = () => {
+  const handleBackPress = useCallback(() => {
     try {
       if (navigation.canGoBack()) {
         navigation.goBack();
@@ -246,65 +237,71 @@ const BrandScreen = () => {
         navigation.navigate('Home');
       }
     } catch (error) {
-      console.log('Navigation error:', error);
       navigation.navigate('Home');
     }
-  };
+  }, [navigation]);
 
-  const handleShare = async () => {
+  const handleShare = useCallback(async () => {
     try {
       const brandName = selectedBrand.brandName || 'Brand';
-      const result = await Share.share({
+      await Share.share({
         message: `Check out ${brandName} on Franko Trading! Amazing products available. Download the app to explore more!`,
         title: `${brandName} - Products on Franko Trading`,
       });
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Unable to share at the moment. Please try again.');
     }
-  };
+  }, [selectedBrand.brandName]);
 
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     setMinPrice('');
     setMaxPrice('');
     setSelectedCategory('');
     setSelectedSeller('');
     setSortBy('name');
     setShowFilterModal(false);
-  };
+  }, []);
 
-  const applyFilters = () => {
-    setShowFilterModal(false);
-  };
-
-  const closeAllDropdowns = () => {
+  const closeAllDropdowns = useCallback(() => {
     setShowSortDropdown(false);
     setShowBrandsDropdown(false);
     setShowSellersDropdown(false);
-  };
+  }, []);
 
-  const handleSortSelect = (sortOption) => {
-    setSortBy(sortOption);
+  const handleSortSelect = useCallback((sortOption) => {
+    setSortBy(sortOption.key);
     setShowSortDropdown(false);
-  };
+  }, []);
 
-  const handleBrandSelect = (brand) => {
+  const handleBrandSelect = useCallback((brand) => {
     setSelectedBrandId(brand.brandId);
     setShowBrandsDropdown(false);
+    // Reset load tracking so the new brand fetches fresh data
+    loadedForBrandId.current = null;
     navigation.navigate('Brands', { brandId: brand.brandId });
-  };
+  }, [navigation]);
+
+  const handleToggleWishlist = useCallback((product) => {
+    const isInWishlist = wishlistItems.some((w) => w.productID === product.productID);
+    if (isInWishlist) {
+      dispatch(removeFromWishlist(product.productID));
+      Alert.alert('Removed', `${product.productName} removed from wishlist.`);
+    } else {
+      dispatch(addToWishlist(product));
+      Alert.alert('Added', `${product.productName} added to wishlist ❤️`);
+    }
+  }, [dispatch, wishlistItems]);
 
   const sortOptions = [
     { key: 'name', label: 'Sort' },
     { key: 'price_low', label: 'Price (Low to High)' },
     { key: 'price_high', label: 'Price (High to Low)' },
     { key: 'discount', label: 'Highest Discount' },
-    { key: 'newest', label: 'Newest First' }
+    { key: 'newest', label: 'Newest First' },
   ];
 
-  const getCurrentSortLabel = () => {
-    const currentSort = sortOptions.find(option => option.key === sortBy);
-    return currentSort ? currentSort.label : 'Sort';
-  };
+  const getCurrentSortLabel = () =>
+    sortOptions.find(o => o.key === sortBy)?.label || 'Sort';
 
   const getActiveFiltersCount = () => {
     let count = 0;
@@ -313,33 +310,19 @@ const BrandScreen = () => {
     if (selectedSeller !== '') count++;
     return count;
   };
-  
-  const handleToggleWishlist = (product) => {
-    const isInWishlist = wishlistItems.some(
-      (w) => w.productID === product.productID
-    );
 
-    if (isInWishlist) {
-      dispatch(removeFromWishlist(product.productID));
-      Alert.alert("Removed", `${product.productName} removed from wishlist.`);
-    } else {
-      dispatch(addToWishlist(product));
-      Alert.alert("Added", `${product.productName} added to wishlist ❤️`);
-    }
-  };
-
-  const renderProduct = ({ item, index }) => {
+  // ─── Render helpers ─────────────────────────────────────────────────────────
+  const renderProduct = useCallback(({ item, index }) => {
     const discount =
       item.oldPrice > item.price
         ? Math.round(((item.oldPrice - item.price) / item.oldPrice) * 100)
         : 0;
-
     const isNew = index < 3;
     const isAddingThisItem = addingToCart[item.productID];
 
     return (
-      <TouchableOpacity 
-        style={styles.productCard} 
+      <TouchableOpacity
+        style={styles.productCard}
         onPress={() => handleNavigateProduct(item.productID)}
         activeOpacity={0.9}
       >
@@ -349,47 +332,30 @@ const BrandScreen = () => {
             style={styles.productImage}
             resizeMode="contain"
           />
-
           {isNew && (
             <View style={styles.newBadge}>
               <Text style={styles.newBadgeText}>NEW</Text>
             </View>
           )}
-          
           {discount > 0 && (
             <View style={styles.discountBadge}>
               <Text style={styles.discountText}>SALE</Text>
             </View>
           )}
-
           <TouchableOpacity
             style={styles.wishlistButton}
-            onPress={(e) => {
-              e.stopPropagation();
-              handleToggleWishlist(item);
-            }} 
+            onPress={(e) => { e.stopPropagation(); handleToggleWishlist(item); }}
           >
             <FontAwesome
-              name={
-                wishlistItems.some((w) => w.productID === item.productID)
-                  ? "heart"
-                  : "heart-o"
-              }
+              name={wishlistItems.some((w) => w.productID === item.productID) ? 'heart' : 'heart-o'}
               size={16}
-              color={
-                wishlistItems.some((w) => w.productID === item.productID)
-                  ? "red"
-                  : "#666"
-              }
+              color={wishlistItems.some((w) => w.productID === item.productID) ? 'red' : '#666'}
             />
           </TouchableOpacity>
         </View>
 
         <View style={styles.productInfo}>
-          <Text style={styles.productName} numberOfLines={2}>
-            {item.productName}
-          </Text>
-
+          <Text style={styles.productName} numberOfLines={2}>{item.productName}</Text>
           <View style={styles.priceContainer}>
             <Text style={styles.productPrice}>₵{formatPrice(item.price)}</Text>
             {item.oldPrice > 0 && (
@@ -398,28 +364,20 @@ const BrandScreen = () => {
           </View>
         </View>
 
-        <TouchableOpacity 
-          style={[
-            styles.addToCartButton,
-            isAddingThisItem && styles.addToCartButtonDisabled
-          ]}
-          onPress={(e) => {
-            e.stopPropagation();
-            handleAddToCart(item);
-          }}
+        <TouchableOpacity
+          style={[styles.addToCartButton, isAddingThisItem && styles.addToCartButtonDisabled]}
+          onPress={(e) => { e.stopPropagation(); handleAddToCart(item); }}
           disabled={isAddingThisItem}
         >
-          {isAddingThisItem ? (
-            <ActivityIndicator size={14} color="white" />
-          ) : (
-            <AntDesign name="shopping-cart" size={14} color="white" />
-          )}
+          {isAddingThisItem
+            ? <ActivityIndicator size={14} color="white" />
+            : <AntDesign name="shopping-cart" size={14} color="white" />}
         </TouchableOpacity>
       </TouchableOpacity>
     );
-  };
+  }, [addingToCart, wishlistItems, handleNavigateProduct, handleToggleWishlist, handleAddToCart]);
 
-  const renderDropdown = (items, onSelect, selectedValue, placeholder) => (
+  const renderDropdown = (items, onSelect, selectedValue) => (
     <View style={styles.dropdown}>
       {items.map((item, index) => (
         <TouchableOpacity
@@ -497,9 +455,7 @@ const BrandScreen = () => {
                     style={[styles.filterChip, selectedCategory === '' && styles.filterChipSelected]}
                     onPress={() => setSelectedCategory('')}
                   >
-                    <Text style={[styles.filterChipText, selectedCategory === '' && styles.filterChipTextSelected]}>
-                      All
-                    </Text>
+                    <Text style={[styles.filterChipText, selectedCategory === '' && styles.filterChipTextSelected]}>All</Text>
                   </TouchableOpacity>
                   {categories.map((category, index) => (
                     <TouchableOpacity
@@ -524,9 +480,7 @@ const BrandScreen = () => {
                     style={[styles.filterChip, selectedSeller === '' && styles.filterChipSelected]}
                     onPress={() => setSelectedSeller('')}
                   >
-                    <Text style={[styles.filterChipText, selectedSeller === '' && styles.filterChipTextSelected]}>
-                      All
-                    </Text>
+                    <Text style={[styles.filterChipText, selectedSeller === '' && styles.filterChipTextSelected]}>All</Text>
                   </TouchableOpacity>
                   {sellers.map((seller, index) => (
                     <TouchableOpacity
@@ -548,7 +502,7 @@ const BrandScreen = () => {
             <TouchableOpacity style={styles.clearButton} onPress={clearFilters}>
               <Text style={styles.clearButtonText}>Clear All</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.applyButton} onPress={applyFilters}>
+            <TouchableOpacity style={styles.applyButton} onPress={() => setShowFilterModal(false)}>
               <LinearGradient
                 colors={['#FF6347', '#FF4500']}
                 style={styles.applyButtonGradient}
@@ -564,13 +518,13 @@ const BrandScreen = () => {
     </Modal>
   );
 
+  // ─── Main render ─────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <View style={styles.brandheader}>
         <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#333" />
         </TouchableOpacity>
-        
         <View style={styles.logoContainer}>
           <Text style={styles.logoText} numberOfLines={1}>
             {selectedBrand.brandName || 'Franko Trading'}
@@ -581,7 +535,6 @@ const BrandScreen = () => {
             </Text>
           )}
         </View>
-
         <View style={styles.headerActions}>
           <TouchableOpacity style={styles.headerActionButton} onPress={handleShare}>
             <Octicons name="share" size={20} color="#333" />
@@ -590,31 +543,25 @@ const BrandScreen = () => {
       </View>
 
       <View style={styles.filterBar}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.filterButton}
-          onPress={() => {
-            closeAllDropdowns();
-            setShowSortDropdown(!showSortDropdown);
-          }}
+          onPress={() => { closeAllDropdowns(); setShowSortDropdown(v => !v); }}
         >
           <Text style={styles.filterButtonText}>{getCurrentSortLabel()}</Text>
           <Entypo name="chevron-down" size={16} color="#333" />
         </TouchableOpacity>
 
         {relatedBrands.length > 1 && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.filterButton}
-            onPress={() => {
-              closeAllDropdowns();
-              setShowBrandsDropdown(!showBrandsDropdown);
-            }}
+            onPress={() => { closeAllDropdowns(); setShowBrandsDropdown(v => !v); }}
           >
             <Text style={styles.filterButtonText}>Brands</Text>
             <Entypo name="chevron-down" size={16} color="#333" />
           </TouchableOpacity>
         )}
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.filterIconContainer}
           onPress={() => setShowFilterModal(true)}
         >
@@ -628,7 +575,7 @@ const BrandScreen = () => {
         </TouchableOpacity>
       </View>
 
-      {showSortDropdown && renderDropdown(sortOptions, handleSortSelect, sortBy, 'Sort by')}
+      {showSortDropdown && renderDropdown(sortOptions, handleSortSelect, sortBy)}
       {showBrandsDropdown && renderBrandsDropdown()}
 
       {productsState.loading ? (
@@ -641,7 +588,9 @@ const BrandScreen = () => {
           <MaterialIcons name="search-off" size={80} color="#ccc" />
           <Text style={styles.emptyTitle}>No products found</Text>
           <Text style={styles.emptySubtitle}>
-            {getActiveFiltersCount() > 0 ? 'Try adjusting your filters' : 'No products available for this brand'}
+            {getActiveFiltersCount() > 0
+              ? 'Try adjusting your filters'
+              : 'No products available for this brand'}
           </Text>
           {getActiveFiltersCount() > 0 && (
             <TouchableOpacity style={styles.clearFiltersButton} onPress={clearFilters}>
@@ -794,15 +743,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: SPACING.md,
   },
-   productCard: {
-    backgroundColor: "#fff",
+  productCard: {
+    backgroundColor: '#fff',
     padding: 6,
     borderRadius: 12,
     width: CARD_WIDTH,
     marginRight: 8,
     marginLeft: 10,
-    // overflow hidden only on Android
-    ...(Platform.OS === "android" && { overflow: "hidden" }),
+    ...(Platform.OS === 'android' && { overflow: 'hidden' }),
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.9,
     shadowRadius: 2,

@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  StatusBar,
+
   Dimensions,
 } from "react-native";
 import { useDispatch } from "react-redux";
@@ -304,7 +304,7 @@ const AccountScreen = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#059669" />
+
       <View style={styles.container}>
         <ScrollView
           showsVerticalScrollIndicator={false}

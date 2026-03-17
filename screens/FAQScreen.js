@@ -7,7 +7,7 @@ import {
   StyleSheet, 
   Platform, 
   SafeAreaView,
-  StatusBar,
+
   Animated,
   Dimensions,
   TextInput
