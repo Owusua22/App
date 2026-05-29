@@ -5,7 +5,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { Image } from "expo-image";
 import { getBannerPageAdvertisment } from "../redux/slice/advertismentSlice";
 
-const backendBaseURL = "https://ct002.frankotrading.com:444";
+const backendBaseURL = "https://testing.frankotrading.com";
 const PLACEHOLDER = require("../assets/kumasi.jpg");
 
 function buildAdUri(fileName) {

@@ -18,7 +18,7 @@ import { debounce } from "lodash";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fetchProducts } from "../redux/slice/productSlice";
 
-const backendBaseURL = "https://ct002.frankotrading.com:444";
+const backendBaseURL = "https://testing.frankotrading.com";
 const RECENT_SEARCH_LIMIT = 8;
 
 const TRENDING = [

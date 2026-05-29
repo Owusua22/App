@@ -49,7 +49,7 @@ export default function ProductsComponent() {
       return "https://via.placeholder.com/150";
     }
     if (imagePath.startsWith("F:\\") || imagePath.startsWith("D:\\")) {
-      return `https://fte002n1.salesmate.app/Media/Products_Images/${imagePath.split("\\").pop()}`;
+      return `https://testing.frankotrading.com/Media/Products_Images/${imagePath.split("\\").pop()}`;
     }
     return imagePath;
   };

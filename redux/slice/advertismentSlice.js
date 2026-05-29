@@ -2,7 +2,7 @@ import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import api from "./axiosInstance"; // ✅ AWS-proxy axios instance
 
 // Real backend prefix (SalesMate)
-const API_PREFIX = "/Advertisment";
+const API_PREFIX = "/Advertisement";
 const GET_ADS_ENDPOINT = `${API_PREFIX}/GetAdvertisment`;
 
 // -------------------- GET BY NAME (via AWS proxy) --------------------

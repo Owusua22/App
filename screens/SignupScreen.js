@@ -1,967 +1,721 @@
+// screens/SignupScreen.js
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Modal,
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Image,
-  ScrollView,
-  ActivityIndicator,
-  Animated,
-  Dimensions,
-  KeyboardAvoidingView,
-  Platform,
+  Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, Image,
+  ScrollView, ActivityIndicator, Animated, Dimensions, KeyboardAvoidingView, Platform,
 } from 'react-native';
-import { useDispatch } from 'react-redux';
-import { createCustomer, loginCustomer, getCustomerById } from '../redux/slice/customerSlice';
+import { useDispatch, useSelector } from 'react-redux';
+import {
+  createCustomer, loginCustomer, setCurrentCustomer, getCustomerById,
+  updateCustomerPassword, updateAccountStatus, selectCurrentCustomer,
+} from '../redux/slice/customerSlice';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
 const { width, height } = Dimensions.get('window');
 
-// Email validation regex
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_RULES = [
+  { id: 'length', label: '8+ characters', test: (p) => p.length >= 8 },
+  { id: 'upper', label: 'Uppercase letter', test: (p) => /[A-Z]/.test(p) },
+  { id: 'lower', label: 'Lowercase letter', test: (p) => /[a-z]/.test(p) },
+  { id: 'number', label: 'Number', test: (p) => /\d/.test(p) },
+  { id: 'symbol', label: 'Special character', test: (p) => /[^A-Za-z0-9]/.test(p) },
+];
 
-// Custom Notification Component
-const Notification = ({ message, type, isVisible, onClose = () => {} }) => {
+const getStrength = (password) => {
+  const passed = PASSWORD_RULES.filter((r) => r.test(password)).length;
+  if (passed <= 1) return { score: passed, label: 'Very weak', color: '#ef4444' };
+  if (passed === 2) return { score: passed, label: 'Weak', color: '#f97316' };
+  if (passed === 3) return { score: passed, label: 'Fair', color: '#eab308' };
+  if (passed === 4) return { score: passed, label: 'Strong', color: '#22c55e' };
+  return { score: passed, label: 'Very strong', color: '#15803d' };
+};
+
+const isStrongPassword = (p) => PASSWORD_RULES.every((r) => r.test(p));
+const normalizePhone = (v = '') => v.replace(/\D/g, '');
+
+/* ─── Notification ─── */
+const Notification = ({ message, type, isVisible, onClose }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(-100)).current;
-  const timeoutRef = useRef(null);
+  const timerRef = useRef(null);
 
   useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-    };
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, []);
 
   useEffect(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-
+    if (timerRef.current) clearTimeout(timerRef.current);
     if (isVisible && message) {
-      // Animate in
       Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
       ]).start();
-
-      // Auto hide after 4 seconds
-      timeoutRef.current = setTimeout(() => {
+      timerRef.current = setTimeout(() => {
         Animated.parallel([
-          Animated.timing(fadeAnim, {
-            toValue: 0,
-            duration: 300,
-            useNativeDriver: true,
-          }),
-          Animated.timing(slideAnim, {
-            toValue: -100,
-            duration: 300,
-            useNativeDriver: true,
-          }),
-        ]).start(() => {
-          onClose();
-        });
-      }, 4000);
+          Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+          Animated.timing(slideAnim, { toValue: -100, duration: 300, useNativeDriver: true }),
+        ]).start(() => onClose());
+      }, 4500);
     } else if (!isVisible) {
-      // Animate out
       Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(slideAnim, {
-          toValue: -100,
-          duration: 300,
-          useNativeDriver: true,
-        }),
+        Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: -100, duration: 300, useNativeDriver: true }),
       ]).start();
     }
   }, [isVisible, message, onClose, fadeAnim, slideAnim]);
 
   if (!isVisible || !message) return null;
 
-  const backgroundColor = type === 'success' ? '#10B981' : '#EF4444';
-
   return (
-    <Animated.View
-      style={[
-        styles.notificationContainer,
-        {
-          backgroundColor,
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-        },
-      ]}
-    >
-      <Text style={styles.notificationText}>{message}</Text>
-      <TouchableOpacity onPress={onClose} style={styles.notificationClose}>
-        <Text style={styles.notificationCloseText}>×</Text>
+    <Animated.View style={[styles.notifWrap, {
+      backgroundColor: type === 'success' ? '#10B981' : '#EF4444',
+      opacity: fadeAnim, transform: [{ translateY: slideAnim }],
+    }]}>
+      <View style={styles.notifIcon}>
+        <Text style={styles.notifIconText}>{type === 'success' ? '✓' : '!'}</Text>
+      </View>
+      <Text style={styles.notifText}>{message}</Text>
+      <TouchableOpacity onPress={onClose} style={styles.notifClose}>
+        <Text style={styles.notifCloseText}>×</Text>
       </TouchableOpacity>
     </Animated.View>
   );
 };
 
-// Enhanced Input Field Component
-const InputField = ({ 
-  label, 
-  value, 
-  onChangeText, 
-  placeholder, 
-  keyboardType = 'default',
-  autoCapitalize = 'none',
-  secureTextEntry = false,
-  showPasswordToggle = false,
-  onTogglePassword,
-  showPassword,
-  required = false,
-  style,
-  error = false
+/* ─── Field ─── */
+const Field = ({
+  icon, label, placeholder, name, value, onChangeText,
+  isPassword, keyboardType = 'default', autoCapitalize = 'none', style,
 }) => {
+  const [show, setShow] = useState(false);
+  const [focused, setFocused] = useState(false);
+
   return (
-    <View style={[styles.inputContainer, style]}>
-      <Text style={styles.inputLabel}>
-        {label}
-        {required && <Text style={styles.requiredAsterisk}> *</Text>}
-      </Text>
-      <View style={styles.inputWrapper}>
+    <View style={[styles.field, style]}>
+      <Text style={styles.fieldLabel}>{label || placeholder}</Text>
+      <View style={[styles.fieldInner, focused && { borderColor: '#22C55E' }]}>
+        {icon ? <Text style={styles.fieldIcon}>{icon}</Text> : null}
         <TextInput
-          style={[
-            styles.input,
-            showPasswordToggle && styles.passwordInput,
-            error && styles.inputError
-          ]}
+          style={styles.fieldInput}
           placeholder={placeholder}
           value={value}
-          onChangeText={onChangeText}
+          onChangeText={(t) => onChangeText(name, t)}
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
-          secureTextEntry={secureTextEntry}
+          secureTextEntry={isPassword ? !show : false}
           placeholderTextColor="#9CA3AF"
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
         />
-        {showPasswordToggle && (
-          <TouchableOpacity
-            style={styles.eyeIcon}
-            onPress={onTogglePassword}
-          >
-            <Text style={styles.eyeIconText}>{showPassword ? '👁️' : '👁️‍🗨️'}</Text>
+        {isPassword ? (
+          <TouchableOpacity style={styles.fieldToggle} onPress={() => setShow((s) => !s)}>
+            <Text style={styles.eyeText}>{show ? '👁️' : '👁️‍🗨️'}</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
     </View>
   );
 };
 
-const SignupScreen = ({ visible = false, onClose = () => {} }) => {
-  const dispatch = useDispatch();
+/* ─── Strength Meter ─── */
+const StrengthMeter = ({ password }) => {
+  if (!password) return null;
+  const { score, label, color } = getStrength(password);
 
-  const [authMode, setAuthMode] = useState('signup'); // 'login', 'signup', 'guest'
+  return (
+    <View style={styles.meterWrap}>
+      <View style={styles.meterHeader}>
+        <View style={styles.meterBars}>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <View key={i} style={[styles.meterBar, { backgroundColor: i < score ? color : '#e5e7eb' }]} />
+          ))}
+        </View>
+        <Text style={[styles.meterLabel, { color }]}>{label}</Text>
+      </View>
+      <View style={styles.meterRules}>
+        {PASSWORD_RULES.map((rule) => {
+          const ok = rule.test(password);
+          return (
+            <View key={rule.id} style={styles.meterRule}>
+              <View style={[styles.meterCheck, { borderColor: ok ? color : '#d1d5db', backgroundColor: ok ? color : 'transparent' }]}>
+                {ok ? <Text style={styles.meterCheckIcon}>✓</Text> : null}
+              </View>
+              <Text style={[styles.meterRuleText, ok && { color: '#374151' }]}>{rule.label}</Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+};
+
+/* ─── Success Banner ─── */
+const SuccessBanner = ({ title, message, isVisible }) => {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(fadeAnim, { toValue: isVisible ? 1 : 0, duration: 300, useNativeDriver: true }).start();
+  }, [isVisible, fadeAnim]);
+  if (!isVisible) return null;
+
+  return (
+    <Animated.View style={[styles.banner, { opacity: fadeAnim }]}>
+      <Text style={styles.bannerIcon}>✓</Text>
+      <View style={styles.bannerBody}>
+        <Text style={styles.bannerTitle}>{title}</Text>
+        <Text style={styles.bannerSub}>{message}</Text>
+      </View>
+      <ActivityIndicator size="small" color="#14532D" />
+    </Animated.View>
+  );
+};
+
+/* ─── Update Password Modal ─── */
+const UpdatePasswordModal = ({ customer, onSuccess, onClose }) => {
+  const dispatch = useDispatch();
+  const [form, setForm] = useState({ newPassword: '', confirmPassword: '' });
   const [loading, setLoading] = useState(false);
-  const [notification, setNotification] = useState({
-    message: '',
-    type: 'success',
-    isVisible: false
-  });
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+
+  const handle = (name, value) => setForm((p) => ({ ...p, [name]: value }));
+
+  const submit = async () => {
+    setError('');
+    if (!form.newPassword) return setError('Please enter a new password.');
+    if (!isStrongPassword(form.newPassword)) return setError('Password does not meet strength requirements.');
+    if (form.newPassword !== form.confirmPassword) return setError('Passwords do not match.');
+
+    setLoading(true);
+    try {
+      const updatedCustomer = await dispatch(
+        updateCustomerPassword({
+          contactNumber: customer.contactNumber,
+          newPassword: form.newPassword,
+          customerData: {
+            customerAccountNumber: customer.customerAccountNumber,
+            firstName: customer.firstName,
+            lastName: customer.lastName,
+            contactNumber: customer.contactNumber,
+            email: customer.email || '',
+            address: customer.address || '',
+            imagePath: customer.imagePath || '',
+            accountType: customer.accountType || 'customer',
+          },
+        })
+      ).unwrap();
+
+      const completeCustomer = {
+        ...updatedCustomer,
+        accessToken: customer.accessToken || updatedCustomer.accessToken,
+        refreshToken: customer.refreshToken || updatedCustomer.refreshToken,
+        loginStatus: true,
+      };
+
+      await AsyncStorage.setItem('customer', JSON.stringify(completeCustomer));
+      dispatch(setCurrentCustomer(completeCustomer));
+
+      setDone(true);
+      setTimeout(() => onSuccess(completeCustomer), 1800);
+    } catch (err) {
+      setError(typeof err === 'object' ? err?.message || 'Password update failed.' : err || 'Password update failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal visible transparent animationType="fade">
+      <View style={styles.pwOverlay}>
+        <View style={styles.pwCard}>
+          <View style={styles.pwStrip} />
+          <ScrollView contentContainerStyle={styles.pwScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            <View style={styles.pwHeader}>
+              <View style={styles.pwShield}>
+                <Text style={styles.pwShieldIcon}>🔐</Text>
+              </View>
+              <Text style={styles.pwTitle}>Password Update Required</Text>
+              <Text style={styles.pwDesc}>
+                Your account has been flagged for a password reset. Please create a new password to continue.
+              </Text>
+            </View>
+
+            {done ? (
+              <View style={styles.pwDone}>
+                <View style={styles.pwDoneIconWrap}>
+                  <Text style={styles.pwDoneIcon}>✓</Text>
+                </View>
+                <Text style={styles.pwDoneText}>Password updated successfully!</Text>
+                <Text style={styles.pwDoneSub}>Logging you in...</Text>
+              </View>
+            ) : (
+              <View style={styles.pwBody}>
+                <View style={styles.pwCustomerCard}>
+                  <Text style={styles.pwCustomerIcon}>👤</Text>
+                  <View style={styles.pwCustomerInfo}>
+                    <Text style={styles.pwCustomerName}>{customer?.firstName} {customer?.lastName}</Text>
+                    <Text style={styles.pwCustomerPhone}>{customer?.contactNumber}</Text>
+                  </View>
+                </View>
+
+                {error ? (
+                  <View style={styles.pwError}>
+                    <Text style={styles.pwErrorIcon}>⚠️</Text>
+                    <Text style={styles.pwErrorText}>{error}</Text>
+                  </View>
+                ) : null}
+
+                <Field icon="🔒" label="New Password" placeholder="Enter new password" name="newPassword" value={form.newPassword} onChangeText={handle} isPassword />
+                <StrengthMeter password={form.newPassword} />
+                <Field icon="🔒" label="Confirm Password" placeholder="Confirm new password" name="confirmPassword" value={form.confirmPassword} onChangeText={handle} isPassword />
+
+                <TouchableOpacity style={[styles.btn, loading && styles.btnOff]} onPress={submit} disabled={loading}>
+                  {loading ? <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} /> : null}
+                  <Text style={styles.btnText}>{loading ? 'Updating Password...' : 'Update Password →'}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+/* ─── Main SignupScreen ─── */
+const SignupScreen = ({ visible = false, onClose = () => {}, onSuccess = () => {} }) => {
+  const dispatch = useDispatch();
+  const currentCustomer = useSelector(selectCurrentCustomer);
+
+  const [authMode, setAuthMode] = useState('login');
+  const [loading, setLoading] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
+  const [successRedirect, setSuccessRedirect] = useState({ show: false, title: '', message: '' });
+  const [notification, setNotification] = useState({ message: '', type: 'success', isVisible: false });
+  const [showPasswordUpdate, setShowPasswordUpdate] = useState(false);
+  const [pendingCustomer, setPendingCustomer] = useState(null);
 
   const [signupData, setSignupData] = useState({
-    customerAccountNumber: "",
-    firstName: "",
-    lastName: "",
-    contactNumber: "",
-    address: "",
-    password: "",
-    accountType: "customer",
-    email: "",
-    accountStatus: "1",
+    customerAccountNumber: '', firstName: '', lastName: '', password: '',
+    contactNumber: '', email: '', address: '', imagePath: '', accountType: 'customer',
   });
+  const [loginData, setLoginData] = useState({ contactNumber: '', password: '' });
+  const [guestData, setGuestData] = useState({ contactNumber: '' });
 
-  const [loginData, setLoginData] = useState({
-    contactNumber: "",
-    password: "",
-  });
-
-  const [guestData, setGuestData] = useState({
-    contactNumber: "",
-  });
-
-  const [showPassword, setShowPassword] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState({});
-
-  // Generate customer account number for signup and guest
-  const generateCustomerAccountNumber = () => {
-    return uuidv4();
-  };
-
-  // Email validation function
-  const isValidEmail = (email) => {
-    if (!email || email.trim() === '') return true; // Optional field
-    return EMAIL_REGEX.test(email.trim());
-  };
-
-  // Contact number validation function
-  const isValidContactNumber = (contactNumber) => {
-    const cleanedNumber = contactNumber.replace(/\D/g, '');
-    return cleanedNumber.length >= 10;
-  };
-
-  // Notification handlers
-  const hideNotification = useCallback(() => {
-    setNotification(prev => ({ 
-      ...prev, 
-      isVisible: false 
-    }));
+  const hideNotif = useCallback(() => setNotification((p) => ({ ...p, isVisible: false })), []);
+  const showNotif = useCallback((msg, type = 'success') => {
+    setNotification({ message: '', type, isVisible: false });
+    setTimeout(() => setNotification({ message: msg, type, isVisible: true }), 50);
   }, []);
 
-  const showNotification = useCallback((message, type = 'success') => {
-    // First hide any existing notification
-    setNotification({ message: '', type: 'success', isVisible: false });
-    
-    // Then show new notification after a brief delay
-    setTimeout(() => {
-      setNotification({
-        message,
-        type,
-        isVisible: true
-      });
-    }, 50);
-  }, []);
-
-  // Safe onClose handler
-  const handleClose = useCallback(() => {
-    if (typeof onClose === 'function') {
-      onClose();
-    } else {
-      console.warn('onClose prop is not a function');
+  const persistSession = async (data) => {
+    try {
+      const raw = await AsyncStorage.getItem('customer');
+      const existing = raw ? JSON.parse(raw) : {};
+      const token = data?.accessToken || existing?.accessToken || null;
+      const merged = { ...existing, ...data, accessToken: token, loginStatus: true };
+      await AsyncStorage.setItem('customer', JSON.stringify(merged));
+      return merged;
+    } catch (e) {
+      return data;
     }
+  };
+
+  const handleClose = useCallback(() => {
+    if (typeof onClose === 'function') onClose();
   }, [onClose]);
 
+  // Reset on mode change
+  useEffect(() => {
+    hideNotif();
+    setRedirecting(false);
+    setSuccessRedirect({ show: false, title: '', message: '' });
+  }, [authMode, hideNotif]);
+
+  // Reset on modal close
+  useEffect(() => {
+    if (!visible) {
+      hideNotif();
+      setAuthMode('login');
+      setRedirecting(false);
+      setShowPasswordUpdate(false);
+      setPendingCustomer(null);
+      setSuccessRedirect({ show: false, title: '', message: '' });
+      setSignupData({
+        customerAccountNumber: '', firstName: '', lastName: '', password: '',
+        contactNumber: '', email: '', address: '', imagePath: '', accountType: 'customer',
+      });
+      setLoginData({ contactNumber: '', password: '' });
+      setGuestData({ contactNumber: '' });
+    }
+  }, [visible, hideNotif]);
+
+  // Generate account number
   useEffect(() => {
     if (visible && authMode === 'signup') {
-      setSignupData((prev) => ({
-        ...prev,
-        customerAccountNumber: generateCustomerAccountNumber(),
-      }));
+      setSignupData((p) => ({ ...p, customerAccountNumber: uuidv4() }));
     }
   }, [visible, authMode]);
 
-  const handleSignupChange = (name, value) => {
-    setSignupData((prev) => ({ ...prev, [name]: value }));
-    // Clear field error when user starts typing
-    if (fieldErrors[name]) {
-      setFieldErrors(prev => ({ ...prev, [name]: false }));
-    }
-  };
-
-  const handleLoginChange = (name, value) => {
-    setLoginData((prev) => ({ ...prev, [name]: value }));
-    // Clear field error when user starts typing
-    if (fieldErrors[name]) {
-      setFieldErrors(prev => ({ ...prev, [name]: false }));
-    }
-  };
-
-  const handleGuestChange = (name, value) => {
-    setGuestData((prev) => ({ ...prev, [name]: value }));
-    // Clear field error when user starts typing
-    if (fieldErrors[name]) {
-      setFieldErrors(prev => ({ ...prev, [name]: false }));
-    }
-  };
-
-  const validateSignupForm = () => {
-    const { firstName, lastName, contactNumber, password, email } = signupData;
-    const errors = {};
-    
-    if (!firstName.trim()) {
-      errors.firstName = true;
-      showNotification("First name is required", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    if (!lastName.trim()) {
-      errors.lastName = true;
-      showNotification("Last name is required", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    if (!contactNumber.trim()) {
-      errors.contactNumber = true;
-      showNotification("Contact number is required", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    if (!isValidContactNumber(contactNumber)) {
-      errors.contactNumber = true;
-      showNotification("Contact number must be at least 10 digits", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    // Validate email if provided
-    if (email.trim() !== '' && !isValidEmail(email)) {
-      errors.email = true;
-      showNotification("Please enter a valid email address", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    if (!password.trim()) {
-      errors.password = true;
-      showNotification("Password is required", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    if (password.length < 6) {
-      errors.password = true;
-      showNotification("Password must be at least 6 characters long", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    setFieldErrors({});
+  // Validation
+  const validateSignup = () => {
+    const { firstName, lastName, contactNumber, password } = signupData;
+    const phone = normalizePhone(contactNumber);
+    if (!firstName.trim()) { showNotif('First name is required.', 'error'); return false; }
+    if (!lastName.trim()) { showNotif('Last name is required.', 'error'); return false; }
+    if (!phone) { showNotif('Contact number is required.', 'error'); return false; }
+    if (phone.length !== 10) { showNotif('Contact number must be 10 digits.', 'error'); return false; }
+    if (!isStrongPassword(password)) { showNotif("Password doesn't meet requirements.", 'error'); return false; }
     return true;
   };
 
-  const validateLoginForm = () => {
-    const { contactNumber, password } = loginData;
-    const errors = {};
-    
-    if (!contactNumber.trim()) {
-      errors.contactNumber = true;
-      showNotification("Contact number is required", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    if (!isValidContactNumber(contactNumber)) {
-      errors.contactNumber = true;
-      showNotification("Contact number must be at least 10 digits", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    if (!password.trim()) {
-      errors.password = true;
-      showNotification("Password is required", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    setFieldErrors({});
+  const validateLogin = () => {
+    const phone = normalizePhone(loginData.contactNumber);
+    if (!phone) { showNotif('Contact number is required.', 'error'); return false; }
+    if (phone.length !== 10) { showNotif('Contact number must be 10 digits.', 'error'); return false; }
+    if (!loginData.password) { showNotif('Password is required.', 'error'); return false; }
     return true;
   };
 
-  const validateGuestForm = () => {
-    const { contactNumber } = guestData;
-    const errors = {};
-    
-    if (!contactNumber.trim()) {
-      errors.contactNumber = true;
-      showNotification("Contact number is required", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    if (!isValidContactNumber(contactNumber)) {
-      errors.contactNumber = true;
-      showNotification("Contact number must be at least 10 digits", "error");
-      setFieldErrors(errors);
-      return false;
-    }
-    
-    setFieldErrors({});
+  const validateGuest = () => {
+    const phone = normalizePhone(guestData.contactNumber);
+    if (!phone) { showNotif('Contact number is required.', 'error'); return false; }
+    if (phone.length !== 10) { showNotif('Contact number must be 10 digits.', 'error'); return false; }
     return true;
   };
 
+  // ─── Signup ───
   const handleSignup = async () => {
-    if (!validateSignupForm()) return;
-    
+    if (!validateSignup()) return;
     setLoading(true);
     try {
-      // Step 1: Create customer account
-      const result = await dispatch(createCustomer(signupData)).unwrap();
-      
-   
-
-      // Step 2: Check response code
-      if (result?.ResponseCode === '2') {
-        // Account already exists
-        const message = result.ResponseMessage || 'An account with this contact number already exists';
-        showNotification(message, "error");
-        
-        setTimeout(() => {
-          setAuthMode('login');
-          setLoginData(prev => ({
-            ...prev,
-            contactNumber: signupData.contactNumber
-          }));
-        }, 2500);
-        
-        return;
-      }
-
-      if (result?.ResponseCode !== '1' && result?.ResponseCode !== '0') {
-        // Other error response codes
-        const errorMessage = result.ResponseMessage || 'Registration failed';
-        showNotification(errorMessage, "error");
-        return;
-      }
-
-      // Step 3: Success - Fetch complete customer details using getCustomerById
-      try {
-        const customerDetails = await dispatch(getCustomerById(signupData.contactNumber)).unwrap();
- 
-
-        // Step 4: Store complete customer details in AsyncStorage
-        await AsyncStorage.setItem('customer', JSON.stringify(customerDetails));
-        
-        showNotification("Registration successful! Welcome aboard!", "success");
-        
-        setTimeout(() => {
-          handleClose();
-        }, 2000);
-      } catch (fetchError) {
-
-        
-        // Fallback: Store signup data if fetch fails
-        const fallbackCustomerData = {
-          ...signupData,
-          ...(result && typeof result === 'object' ? result : {}),
-          isGuest: false,
-          createdAt: new Date().toISOString(),
-          registeredAt: new Date().toISOString(),
-        };
-        
-        await AsyncStorage.setItem('customer', JSON.stringify(fallbackCustomerData));
-        
-        showNotification("Registration successful! Welcome aboard!", "success");
-        
-        setTimeout(() => {
-          handleClose();
-        }, 2000);
-      }
-      
-    } catch (error) {
-      console.log("Registration error:", error);
-      
-      let errorMessage = "Registration failed. Please try again.";
-      
-      if (typeof error === 'string') {
-        errorMessage = error;
-      } else if (error?.ResponseMessage) {
-        errorMessage = error.ResponseMessage;
-        
-        // Check if error is about existing account
-        if (errorMessage.toLowerCase().includes('already exists') || 
-            errorMessage.toLowerCase().includes('user already exists')) {
-          setTimeout(() => {
-            setAuthMode('login');
-            setLoginData(prev => ({
-              ...prev,
-              contactNumber: signupData.contactNumber
-            }));
-          }, 2500);
-        }
-      } else if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.response?.data?.message) {
-        errorMessage = error.response.data.message;
-      } else if (error?.response?.data?.ResponseMessage) {
-        errorMessage = error.response.data.ResponseMessage;
-      }
-      
-      showNotification(errorMessage, "error");
-      
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLogin = async () => {
-    if (!validateLoginForm()) return;
-    
-    setLoading(true);
-    try {
-      // loginCustomer already uses getCustomerById internally
-      const result = await dispatch(loginCustomer(loginData)).unwrap();
-      
-      console.log("Login result:", result);
-      
-      showNotification("Login successful! Welcome back!", "success");
-      
-      setTimeout(() => {
-        handleClose();
-      }, 1500);
-    } catch (error) {
-      console.error("Login error:", error);
-      
-      let errorMessage = "Login failed. Please check your credentials.";
-      
-      if (typeof error === 'string') {
-        errorMessage = error;
-      } else if (error?.ResponseMessage) {
-        errorMessage = error.ResponseMessage;
-      } else if (error?.message) {
-        errorMessage = error.message;
-      }
-      
-      showNotification(errorMessage, "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGuestContinue = async () => {
-    if (!validateGuestForm()) return;
-    
-    setLoading(true);
-    try {
-      // Create guest customer account with generated data
-      const guestCustomerData = {
-        customerAccountNumber: generateCustomerAccountNumber(),
-        firstName: "Guest",
-        lastName: guestData.contactNumber.slice(-4),
-        contactNumber: guestData.contactNumber,
-        address: "Guest Address",
-        password: guestData.contactNumber,
-        accountType: "customer",
-        email: `guest${guestData.contactNumber}@franko.com`,
-        accountStatus: "1",
-        isGuest: true,
-        createdAt: new Date().toISOString(),
-        guestCreatedAt: new Date().toISOString(),
+      const payload = {
+        customerAccountNumber: signupData.customerAccountNumber,
+        firstName: signupData.firstName.trim(),
+        lastName: signupData.lastName.trim(),
+        password: signupData.password,
+        contactNumber: normalizePhone(signupData.contactNumber),
+        email: signupData.email.trim(),
+        address: signupData.address.trim(),
+        imagePath: '',
+        accountType: 'customer',
       };
 
-      // Step 1: Save to database via Redux action
-      const dbResult = await dispatch(createCustomer(guestCustomerData)).unwrap();
-      
-      console.log('Guest customer saved to database:', dbResult);
+      const result = await dispatch(createCustomer(payload)).unwrap();
 
-      // Step 2: Check response code
-      if (dbResult?.ResponseCode === '2') {
-        // Account already exists
-        const message = dbResult.ResponseMessage || 'An account with this contact number already exists';
-        showNotification(message, "error");
-        
+      if (result?.ResponseCode === '2') {
+        showNotif((result.ResponseMessage || 'Account already exists.') + ' Please login.', 'error');
         setTimeout(() => {
+          setLoginData((p) => ({ ...p, contactNumber: signupData.contactNumber }));
           setAuthMode('login');
-          setLoginData(prev => ({
-            ...prev,
-            contactNumber: guestData.contactNumber
-          }));
         }, 2500);
-        
         return;
       }
 
-      if (dbResult?.ResponseCode !== '1' && dbResult?.ResponseCode !== '0') {
-        // Other error response codes
-        const errorMessage = dbResult.ResponseMessage || 'Failed to create guest account';
-        showNotification(errorMessage, "error");
+      if (result?.ResponseCode && result.ResponseCode !== '1' && result.ResponseCode !== '0') {
+        showNotif(result.ResponseMessage || 'Registration failed.', 'error');
         return;
       }
 
-      // Step 3: Success - Fetch complete guest customer details
-      try {
-        const guestDetails = await dispatch(getCustomerById(guestData.contactNumber)).unwrap();
-        
-        console.log("Fetched guest details:", guestDetails);
+      // Success - show banner then redirect to login
+      setSuccessRedirect({ show: true, title: 'Account created!', message: 'Redirecting to sign in...' });
+      setLoginData({
+        contactNumber: normalizePhone(signupData.contactNumber),
+        password: signupData.password,
+      });
+      setSignupData({
+        customerAccountNumber: uuidv4(), firstName: '', lastName: '', password: '',
+        contactNumber: '', email: '', address: '', imagePath: '', accountType: 'customer',
+      });
 
-        // Mark as guest account
-        const guestDetailsWithFlag = {
-          ...guestDetails,
-          isGuest: true,
-          guestCreatedAt: new Date().toISOString(),
-        };
-
-        // Step 4: Store complete guest details in AsyncStorage
-        await AsyncStorage.setItem('customer', JSON.stringify(guestDetailsWithFlag));
-        
-        showNotification("Guest account created successfully! Welcome!", "success");
-        
-        setTimeout(() => {
-          handleClose();
-        }, 2000);
-      } catch (fetchError) {
-        console.error("Error fetching guest details after creation:", fetchError);
-        
-        // Fallback: Store guest data if fetch fails
-        const fallbackGuestData = {
-          ...guestCustomerData,
-          ...(dbResult && typeof dbResult === 'object' ? dbResult : {}),
-          isGuest: true,
-        };
-        
-        await AsyncStorage.setItem('customer', JSON.stringify(fallbackGuestData));
-        
-        showNotification("Guest account created successfully! Welcome!", "success");
-        
-        setTimeout(() => {
-          handleClose();
-        }, 2000);
-      }
-      
-    } catch (error) {
-      console.error("Guest registration error:", error);
-      
-      let errorMessage = "Failed to create guest account. Please try again.";
-      
-      if (typeof error === 'string') {
-        errorMessage = error;
-      } else if (error?.ResponseMessage) {
-        errorMessage = error.ResponseMessage;
-        
-        // Check if error is about existing account
-        if (errorMessage.toLowerCase().includes('already exists') || 
-            errorMessage.toLowerCase().includes('user already exists')) {
-          setTimeout(() => {
-            setAuthMode('login');
-            setLoginData(prev => ({
-              ...prev,
-              contactNumber: guestData.contactNumber
-            }));
-          }, 2500);
-        }
-      } else if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.response?.data?.message) {
-        errorMessage = error.response.data.message;
-      } else if (error?.response?.data?.ResponseMessage) {
-        errorMessage = error.response.data.ResponseMessage;
-      }
-      
-      showNotification(errorMessage, "error");
-      
+      setTimeout(() => {
+        setSuccessRedirect({ show: false, title: '', message: '' });
+        setAuthMode('login');
+        showNotif('Registration complete! Please sign in.', 'success');
+      }, 2500);
+    } catch (err) {
+      showNotif(typeof err === 'object' ? err?.message || 'Registration failed.' : err || 'Registration failed.', 'error');
     } finally {
       setLoading(false);
     }
   };
 
-  // Reset notification when switching between modes
-  useEffect(() => {
-    hideNotification();
-    setFieldErrors({});
-  }, [authMode, hideNotification]);
+  // ─── Login ───
+  const handleLogin = async () => {
+    if (!validateLogin()) return;
+    setLoading(true);
+    const normalizedPhone = normalizePhone(loginData.contactNumber);
 
-  // Reset notification when modal closes
-  useEffect(() => {
-    if (!visible) {
-      hideNotification();
-      setAuthMode('signup');
-      setFieldErrors({});
+    try {
+      const result = await dispatch(
+        loginCustomer({ contactNumber: normalizedPhone, password: loginData.password })
+      ).unwrap();
+
+      // Account status "0" = needs password update
+      if (String(result?.accountStatus) === '0') {
+        setPendingCustomer(result);
+        setShowPasswordUpdate(true);
+        setLoading(false);
+        return;
+      }
+
+      if (!result?.contactNumber) {
+        showNotif('Login failed. Could not retrieve account details.', 'error');
+        return;
+      }
+
+      const completeCustomer = await persistSession(result);
+      dispatch(setCurrentCustomer(completeCustomer));
+      showNotif('Welcome back!', 'success');
+
+      // Auto close modal after successful login
+      setTimeout(() => {
+        handleClose();
+      }, 1200);
+    } catch (err) {
+      let message = 'Login failed.';
+      if (typeof err === 'string') message = err;
+      else if (err?.ResponseMessage) message = err.ResponseMessage;
+      else if (err?.message) message = err.message;
+
+      const notFound =
+        message.toLowerCase().includes('not found') ||
+        message.toLowerCase().includes('no account') ||
+        message.toLowerCase().includes('no customer');
+
+      if (notFound) {
+        setRedirecting(true);
+        showNotif('No account found. Redirecting to register...', 'error');
+        setSignupData((prev) => ({
+          ...prev, contactNumber: loginData.contactNumber, customerAccountNumber: uuidv4(),
+        }));
+        setTimeout(() => { setRedirecting(false); setAuthMode('signup'); }, 2200);
+        return;
+      }
+
+      showNotif(message, 'error');
+    } finally {
+      setLoading(false);
     }
-  }, [visible, hideNotification]);
+  };
 
-  const renderAuthContent = () => {
+  // ─── Guest ───
+  const handleGuest = async () => {
+    if (!validateGuest()) return;
+    setLoading(true);
+    const phone = normalizePhone(guestData.contactNumber);
+
+    try {
+      const guestPayload = {
+        customerAccountNumber: uuidv4(), firstName: 'Guest', lastName: phone.slice(-4),
+        password: phone, contactNumber: phone, email: `guest${phone}@franko.com`,
+        address: 'Guest Address', imagePath: '', accountType: 'customer',
+      };
+
+      const result = await dispatch(createCustomer(guestPayload)).unwrap();
+
+      if (result?.ResponseCode === '2') {
+        showNotif((result.ResponseMessage || 'Number already registered.') + ' Please login.', 'error');
+        setTimeout(() => { setLoginData({ contactNumber: phone, password: phone }); setAuthMode('login'); }, 2500);
+        return;
+      }
+
+      if (result?.ResponseCode && result.ResponseCode !== '1' && result.ResponseCode !== '0') {
+        showNotif(result.ResponseMessage || 'Failed to create guest account.', 'error');
+        return;
+      }
+
+      // Success - show banner then redirect to login
+      setSuccessRedirect({ show: true, title: 'Guest account ready!', message: 'Redirecting to sign in...' });
+      setLoginData({ contactNumber: phone, password: phone });
+      setGuestData({ contactNumber: '' });
+
+      setTimeout(() => {
+        setSuccessRedirect({ show: false, title: '', message: '' });
+        setAuthMode('login');
+        showNotif('Guest account created! Please sign in.', 'success');
+      }, 2500);
+    } catch (err) {
+      showNotif(typeof err === 'object' ? err?.message || 'Failed to create guest session.' : err || 'Failed to create guest session.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Password update success ───
+  const handlePasswordUpdateSuccess = async (updatedCustomer) => {
+    setShowPasswordUpdate(false);
+    setPendingCustomer(null);
+
+    const completeCustomer = await persistSession(updatedCustomer);
+    dispatch(setCurrentCustomer(completeCustomer));
+    showNotif("Password updated! You're now logged in.", 'success');
+
+    // Auto close modal
+    setTimeout(() => { handleClose(); }, 1500);
+  };
+
+  // Input handlers
+  const onLogin = (n, v) => setLoginData((p) => ({ ...p, [n]: v }));
+  const onSignup = (n, v) => setSignupData((p) => ({ ...p, [n]: v }));
+  const onGuest = (n, v) => setGuestData((p) => ({ ...p, [n]: v }));
+
+  const tabs = [
+    { key: 'login', label: 'Sign In', icon: '👤' },
+    { key: 'signup', label: 'Register', icon: '➕' },
+    { key: 'guest', label: 'Guest', icon: '🤝' },
+  ];
+
+  const headings = {
+    login: { title: 'Welcome back', sub: 'Sign in to continue shopping' },
+    signup: { title: 'Create account', sub: 'Join Franko Trading today' },
+    guest: { title: 'Quick checkout', sub: 'Continue as a guest' },
+  };
+
+  // ─── Render Content ───
+  const renderContent = () => {
     switch (authMode) {
       case 'login':
         return (
-          <View style={styles.formContainer}>
-            <InputField
-              label="Contact Number"
-              placeholder="Enter your contact number"
-              value={loginData.contactNumber}
-              onChangeText={(value) => handleLoginChange('contactNumber', value)}
-              keyboardType="phone-pad"
-              required
-              error={fieldErrors.contactNumber}
-            />
-            
-            <InputField
-              label="Password"
-              placeholder="Enter your password"
-              value={loginData.password}
-              onChangeText={(value) => handleLoginChange('password', value)}
-              secureTextEntry={!showPassword}
-              showPasswordToggle
-              showPassword={showPassword}
-              onTogglePassword={() => setShowPassword(!showPassword)}
-              required
-              error={fieldErrors.password}
-            />
+          <View style={styles.form}>
+            <SuccessBanner title={successRedirect.title} message={successRedirect.message} isVisible={successRedirect.show} />
+
+            {redirecting ? (
+              <View style={styles.warnBanner}>
+                <Text style={styles.warnIcon}>⚠️</Text>
+                <View style={styles.warnBody}>
+                  <Text style={styles.warnTitle}>Account not found</Text>
+                  <Text style={styles.warnSub}>Redirecting to register...</Text>
+                </View>
+                <ActivityIndicator size="small" color="#D97706" />
+              </View>
+            ) : null}
+
+            <Field icon="📱" label="Phone Number" placeholder="Enter 10-digit number" name="contactNumber" value={loginData.contactNumber} onChangeText={onLogin} keyboardType="phone-pad" />
+            <Field icon="🔒" label="Password" placeholder="Enter your password" name="password" value={loginData.password} onChangeText={onLogin} isPassword />
+
+            <TouchableOpacity style={[styles.btn, (loading || redirecting) && styles.btnOff]} onPress={handleLogin} disabled={loading || redirecting}>
+              {loading ? <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} /> : null}
+              <Text style={styles.btnText}>{loading ? 'Signing in...' : 'Sign In →'}</Text>
+            </TouchableOpacity>
+
+            <View style={styles.links}>
+              <Text style={styles.linkGray}>{"Don't have an account? "}</Text>
+              <TouchableOpacity onPress={() => setAuthMode('signup')}><Text style={styles.linkBlue}>Register</Text></TouchableOpacity>
+              <Text style={styles.linkDot}> · </Text>
+              <TouchableOpacity onPress={() => setAuthMode('guest')}><Text style={styles.linkBlue}>Guest</Text></TouchableOpacity>
+            </View>
           </View>
         );
-      
+
       case 'signup':
         return (
-          <View style={styles.formContainer}>
+          <View style={styles.form}>
+            <SuccessBanner title={successRedirect.title} message={successRedirect.message} isVisible={successRedirect.show} />
+
             <View style={styles.row}>
-              <InputField
-                label="First Name"
-                placeholder="Enter first name"
-                value={signupData.firstName}
-                onChangeText={(value) => handleSignupChange('firstName', value)}
-                autoCapitalize="words"
-                style={styles.halfWidth}
-                required
-                error={fieldErrors.firstName}
-              />
-              
-              <InputField
-                label="Last Name"
-                placeholder="Enter last name"
-                value={signupData.lastName}
-                onChangeText={(value) => handleSignupChange('lastName', value)}
-                autoCapitalize="words"
-                style={[styles.halfWidth, styles.marginLeft]}
-                required
-                error={fieldErrors.lastName}
-              />
+              <Field icon="👤" label="First Name" placeholder="First name" name="firstName" value={signupData.firstName} onChangeText={onSignup} style={styles.half} />
+              <Field icon="👤" label="Last Name" placeholder="Last name" name="lastName" value={signupData.lastName} onChangeText={onSignup} style={styles.half} />
             </View>
-            
-            <InputField
-              label="Email Address"
-              placeholder="Enter your email address"
-              value={signupData.email}
-              onChangeText={(value) => handleSignupChange('email', value)}
-              keyboardType="email-address"
-              error={fieldErrors.email}
-            />
-            
-            <InputField
-              label="Contact Number"
-              placeholder="Enter your contact number"
-              value={signupData.contactNumber}
-              onChangeText={(value) => handleSignupChange('contactNumber', value)}
-              keyboardType="phone-pad"
-              required
-              error={fieldErrors.contactNumber}
-            />
-            
-            <InputField
-              label="Address"
-              placeholder="Enter your address"
-              value={signupData.address}
-              onChangeText={(value) => handleSignupChange('address', value)}
-              autoCapitalize="words"
-              error={fieldErrors.address}
-            />
-            
-            <InputField
-              label="Password"
-              placeholder="Create a secure password"
-              value={signupData.password}
-              onChangeText={(value) => handleSignupChange('password', value)}
-              secureTextEntry={!showPassword}
-              showPasswordToggle
-              showPassword={showPassword}
-              onTogglePassword={() => setShowPassword(!showPassword)}
-              required
-              error={fieldErrors.password}
-            />
+            <Field icon="📱" label="Phone Number" placeholder="10-digit number" name="contactNumber" value={signupData.contactNumber} onChangeText={onSignup} keyboardType="phone-pad" />
+            <Field icon="📧" label="Email (optional)" placeholder="your@email.com" name="email" value={signupData.email} onChangeText={onSignup} keyboardType="email-address" />
+            <Field icon="🏠" label="Address" placeholder="Your address" name="address" value={signupData.address} onChangeText={onSignup} />
+            <Field icon="🔒" label="Password" placeholder="Create a strong password" name="password" value={signupData.password} onChangeText={onSignup} isPassword />
+            <StrengthMeter password={signupData.password} />
+
+            <TouchableOpacity style={[styles.btn, (loading || successRedirect.show) && styles.btnOff]} onPress={handleSignup} disabled={loading || successRedirect.show}>
+              {loading ? <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} /> : null}
+              <Text style={styles.btnText}>{loading ? 'Creating...' : 'Create Account →'}</Text>
+            </TouchableOpacity>
+
+            <View style={styles.links}>
+              <Text style={styles.linkGray}>Already have an account? </Text>
+              <TouchableOpacity onPress={() => setAuthMode('login')}><Text style={styles.linkBlue}>Sign in</Text></TouchableOpacity>
+            </View>
           </View>
         );
-      
+
       case 'guest':
         return (
-          <View style={styles.formContainer}>
-            <InputField
-              label="Contact Number"
-              placeholder="Enter your contact number"
-              value={guestData.contactNumber}
-              onChangeText={(value) => handleGuestChange('contactNumber', value)}
-              keyboardType="phone-pad"
-              style={styles.guestInputField}
-              required
-              error={fieldErrors.contactNumber}
-            />
+          <View style={styles.form}>
+            <SuccessBanner title={successRedirect.title} message={successRedirect.message} isVisible={successRedirect.show} />
+
+            <View style={styles.guestBox}>
+              <Text style={styles.guestBoxIcon}>🤝</Text>
+              <View style={styles.guestBoxBody}>
+                <Text style={styles.guestBoxTitle}>Quick Guest Access</Text>
+                <Text style={styles.guestBoxDesc}>
+                  {"Enter your phone number to create a temporary account. You'll sign in afterward to continue."}
+                </Text>
+              </View>
+            </View>
+
+            <Field icon="📱" label="Phone Number" placeholder="Enter 10-digit number" name="contactNumber" value={guestData.contactNumber} onChangeText={onGuest} keyboardType="phone-pad" />
+
+            <TouchableOpacity style={[styles.btn, (loading || successRedirect.show) && styles.btnOff]} onPress={handleGuest} disabled={loading || successRedirect.show}>
+              {loading ? <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} /> : null}
+              <Text style={styles.btnText}>{loading ? 'Setting up...' : 'Create Guest Account →'}</Text>
+            </TouchableOpacity>
+
+            <View style={styles.links}>
+              <TouchableOpacity onPress={() => setAuthMode('signup')}><Text style={styles.linkBlue}>Register instead</Text></TouchableOpacity>
+              <Text style={styles.linkDot}> · </Text>
+              <TouchableOpacity onPress={() => setAuthMode('login')}><Text style={styles.linkBlue}>Sign in</Text></TouchableOpacity>
+            </View>
           </View>
         );
-      
+
       default:
         return null;
     }
   };
 
-  const getButtonText = () => {
-    if (loading) return "Processing...";
-    switch (authMode) {
-      case 'login':
-        return "Sign In";
-      case 'signup':
-        return "Create Account";
-      case 'guest':
-        return "Continue as Guest";
-      default:
-        return "Continue";
-    }
-  };
-
-  const handleMainAction = () => {
-    switch (authMode) {
-      case 'login':
-        return handleLogin();
-      case 'signup':
-        return handleSignup();
-      case 'guest':
-        return handleGuestContinue();
-      default:
-        return;
-    }
-  };
-
-  const getModalTitle = () => {
-    switch (authMode) {
-      case 'login':
-        return "Welcome Back";
-      case 'signup':
-        return "Create Your Account";
-      case 'guest':
-        return "Continue as Guest";
-      default:
-        return "Welcome";
-    }
-  };
-
-  const getModalSubtitle = () => {
-    switch (authMode) {
-      case 'login':
-        return "Sign in to your account";
-      case 'guest':
-        return "Quick access without creating an account";
-      default:
-        return "";
-    }
-  };
-
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={handleClose}
-    >
-      <KeyboardAvoidingView 
-        style={styles.modalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        {/* Notification - positioned absolutely within the modal */}
-        <Notification
-          message={notification.message}
-          type={notification.type}
-          isVisible={notification.isVisible}
-          onClose={hideNotification}
-        />
-        
-        <View style={styles.modalContainer}>
-          <ScrollView 
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            <View style={styles.modalContent}>
-              {/* Header */}
-              <View style={styles.header}>
-                <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
-                  <Text style={styles.closeButtonText}>×</Text>
-                </TouchableOpacity>
-                
-                <Image
-                  source={require('../assets/frankoIcon.png')}
-                  style={styles.logo}
-                  resizeMode="contain"
-                />
-                
-                <Text style={styles.title}>{getModalTitle()}</Text>
-                <Text style={styles.subtitle}>{getModalSubtitle()}</Text>
-              </View>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
+      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <Notification message={notification.message} type={notification.type} isVisible={notification.isVisible} onClose={hideNotif} />
 
-              {/* Form Content */}
-              {renderAuthContent()}
+        {showPasswordUpdate && pendingCustomer ? (
+          <UpdatePasswordModal
+            customer={pendingCustomer}
+            onSuccess={handlePasswordUpdateSuccess}
+            onClose={() => {
+              setShowPasswordUpdate(false);
+              setPendingCustomer(null);
+              showNotif('Password update cancelled.', 'error');
+            }}
+          />
+        ) : null}
 
-              {/* Main Action Button */}
-              <TouchableOpacity
-                style={[
-                  styles.mainButton,
-                  loading && styles.mainButtonDisabled
-                ]}
-                onPress={handleMainAction}
-                disabled={loading}
-              >
-                {loading && <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />}
-                <Text style={styles.mainButtonText}>{getButtonText()}</Text>
+        <View style={styles.modal}>
+          <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            {/* Header */}
+            <View style={styles.header}>
+              <TouchableOpacity style={styles.closeBtn} onPress={handleClose}>
+                <Text style={styles.closeBtnText}>×</Text>
               </TouchableOpacity>
-
-              {/* Guest Option for Login and Signup */}
-              {authMode !== 'guest' && (
-                <>
-                  <View style={styles.divider}>
-                    <View style={styles.dividerLine} />
-                    <Text style={styles.dividerText}>OR</Text>
-                    <View style={styles.dividerLine} />
-                  </View>
-                  
-                  <TouchableOpacity
-                    style={styles.guestButton}
-                    onPress={() => setAuthMode('guest')}
-                  >
-                    <Text style={styles.guestButtonText}>Continue as Guest</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-
-              {/* Mode Switch Links */}
-              <View style={styles.switchModeContainer}>
-                {authMode === 'login' ? (
-                  <Text style={styles.switchModeText}>
-                    Don't have an account?{" "}
-                    <Text
-                      style={styles.switchModeLink}
-                      onPress={() => setAuthMode('signup')}
-                    >
-                      Sign up here
-                    </Text>
-                  </Text>
-                ) : authMode === 'signup' ? (
-                  <Text style={styles.switchModeText}>
-                    Already have an account?{" "}
-                    <Text
-                      style={styles.switchModeLink}
-                      onPress={() => setAuthMode('login')}
-                    >
-                      Sign in
-                    </Text>
-                  </Text>
-                ) : (
-                  <Text style={styles.switchModeText}>
-                    Need a customer account?{" "}
-                    <Text
-                      style={styles.switchModeLink}
-                      onPress={() => setAuthMode('signup')}
-                    >
-                      Sign up
-                    </Text>
-                    {" or "}
-                    <Text
-                      style={styles.switchModeLink}
-                      onPress={() => setAuthMode('login')}
-                    >
-                      Sign in
-                    </Text>
-                  </Text>
-                )}
-              </View>
+              <Image source={require('../assets/frankoIcon.png')} style={styles.logo} resizeMode="contain" />
+              <Text style={styles.title}>{headings[authMode].title}</Text>
+              <Text style={styles.subtitle}>{headings[authMode].sub}</Text>
             </View>
+
+            {/* Tabs */}
+            <View style={styles.tabs}>
+              {tabs.map(({ key, label, icon }) => (
+                <TouchableOpacity key={key} style={[styles.tab, authMode === key && styles.tabOn]} onPress={() => setAuthMode(key)}>
+                  <Text style={styles.tabIcon}>{icon}</Text>
+                  <Text style={[styles.tabLabel, authMode === key && styles.tabLabelOn]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Content */}
+            <View style={styles.content}>{renderContent()}</View>
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
@@ -969,264 +723,123 @@ const SignupScreen = ({ visible = false, onClose = () => {} }) => {
   );
 };
 
+/* ─── Styles ─── */
 const styles = StyleSheet.create({
-  // Notification styles - absolutely positioned within modal
-  notificationContainer: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 60 : 40,
-    left: 20,
-    right: 20,
-    borderRadius: 12,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    zIndex: 99999,
-    elevation: 999,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  notificationText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-    flex: 1,
-    marginRight: 10,
-    lineHeight: 20,
-  },
-  notificationClose: {
-    padding: 4,
-    borderRadius: 12,
-  },
-  notificationCloseText: {
-    color: '#ffffff',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
+  // Notification
+  notifWrap: { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, left: 20, right: 20, borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 99999, elevation: 999, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
+  notifIcon: { width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  notifIconText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  notifText: { color: '#fff', fontSize: 13, fontWeight: '500', flex: 1, marginRight: 10, lineHeight: 18 },
+  notifClose: { padding: 4, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.15)' },
+  notifCloseText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
 
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContainer: {
-    width: width * 0.92,
-    maxHeight: height * 0.92,
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    overflow: 'hidden',
-    elevation: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  modalContent: {
-    padding: 24,
-  },
+  // Modal
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modal: { width: '100%', maxHeight: height * 0.92, backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.25, shadowRadius: 60, elevation: 20 },
+  scroll: { flexGrow: 1 },
 
-  // Header styles
-  header: {
-    alignItems: 'center',
-    marginBottom: 5,
-    position: 'relative',
-  },
-  closeButton: {
-    position: 'absolute',
-    top: -8,
-    right: -8,
-    padding: 12,
-    borderRadius: 20,
-    backgroundColor: '#F3F4F6',
-    zIndex: 1,
-  },
-  closeButtonText: {
-    fontSize: 20,
-    color: '#6B7280',
-    fontWeight: 'bold',
-  },
-  logo: {
-    width: 72,
-    height: 72,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#6B7280',
-    textAlign: 'center',
-    fontWeight: '400',
-  },
+  // Header
+  header: { alignItems: 'center', paddingTop: 28, paddingHorizontal: 28, position: 'relative' },
+  closeBtn: { position: 'absolute', top: 16, right: 16, width: 32, height: 32, borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', zIndex: 10 },
+  closeBtnText: { fontSize: 18, color: '#6B7280', fontWeight: 'bold' },
+  logo: { width: 72, height: 72, marginBottom: 16 },
+  title: { fontSize: 22, fontWeight: '800', color: '#111827', textAlign: 'center' },
+  subtitle: { fontSize: 14, color: '#6B7280', textAlign: 'center', marginTop: 4 },
 
-  // Form styles
-  formContainer: {
-    marginBottom: 4,
-  },
-  
-  // Row layout for first name and last name
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  halfWidth: {
-    flex: 0.48,
-  },
-  marginLeft: {
-    marginLeft: 8,
-  },
+  // Tabs
+  tabs: { flexDirection: 'row', marginHorizontal: 28, marginTop: 20, backgroundColor: '#F9FAFB', borderRadius: 10, padding: 4, gap: 2 },
+  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, paddingHorizontal: 8, borderRadius: 7, gap: 6 },
+  tabOn: { backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 2, elevation: 2 },
+  tabIcon: { fontSize: 14 },
+  tabLabel: { fontSize: 12.5, fontWeight: '600', color: '#9CA3AF' },
+  tabLabelOn: { color: '#14532D' },
 
-  // Enhanced Input Field styles
-  inputContainer: {
-    marginBottom: 15,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-    lineHeight: 20,
-  },
-  requiredAsterisk: {
-    color: '#EF4444',
-    fontWeight: '600',
-  },
-  inputWrapper: {
-    position: 'relative',
-  },
-  input: {
-    borderWidth: 2,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 14,
-    fontSize: 16,
-    backgroundColor: '#FFFFFF',
-    color: '#111827',
-    fontWeight: '400',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  inputError: {
-    borderColor: '#EF4444',
-    borderWidth: 2,
-  },
-  passwordInput: {
-    paddingRight: 50,
-  },
-  eyeIcon: {
-    position: 'absolute',
-    right: 16,
-    top: 14,
-    padding: 4,
-    borderRadius: 8,
-  },
-  eyeIconText: {
-    fontSize: 18,
-  },
+  // Content
+  content: { padding: 20, paddingBottom: 28 },
+  form: { gap: 0 },
+  row: { flexDirection: 'row', gap: 12 },
+  half: { flex: 1 },
 
-  // Guest form styles
-  guestInputField: {
-    marginBottom: 16,
-  },
+  // Field
+  field: { marginBottom: 14 },
+  fieldLabel: { fontSize: 12.5, fontWeight: '600', color: '#6B7280', marginBottom: 5, paddingLeft: 2 },
+  fieldInner: { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#E5E7EB', borderRadius: 8, height: 48, overflow: 'hidden' },
+  fieldIcon: { width: 44, textAlign: 'center', fontSize: 16, color: '#9CA3AF' },
+  fieldInput: { flex: 1, height: '100%', paddingRight: 12, fontSize: 14, color: '#111827' },
+  fieldToggle: { width: 42, height: '100%', alignItems: 'center', justifyContent: 'center' },
+  eyeText: { fontSize: 16 },
 
-  // Button styles
-  mainButton: {
-    backgroundColor: '#10B981',
-    paddingVertical: 16,
-    borderRadius: 12,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 2,
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  mainButtonDisabled: {
-    backgroundColor: '#86EFAC',
-    shadowOpacity: 0.1,
-  },
-  mainButtonText: {
-    color: '#ffffff',
-    fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
+  // Strength
+  meterWrap: { paddingVertical: 2, marginBottom: 14 },
+  meterHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 10 },
+  meterBars: { flex: 1, flexDirection: 'row', gap: 3 },
+  meterBar: { flex: 1, height: 4, borderRadius: 99 },
+  meterLabel: { fontSize: 11, fontWeight: '700' },
+  meterRules: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  meterRule: { flexDirection: 'row', alignItems: 'center', gap: 5, width: '48%' },
+  meterCheck: { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  meterCheckIcon: { color: '#fff', fontSize: 9, fontWeight: 'bold' },
+  meterRuleText: { fontSize: 11, color: '#9CA3AF' },
 
-  // Divider styles
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 20,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#E5E7EB',
-  },
-  dividerText: {
-    color: '#9CA3AF',
-    fontSize: 14,
-    fontWeight: '600',
-    marginHorizontal: 16,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 4,
-  },
+  // Button
+  btn: { backgroundColor: '#14532D', paddingVertical: 14, borderRadius: 8, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 2, marginBottom: 16, shadowColor: '#14532D', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 },
+  btnOff: { backgroundColor: '#86EFAC', shadowOpacity: 0.1 },
+  btnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 
-  // Guest button styles
-  guestButton: {
-    borderWidth: 2,
-    borderColor: '#E5E7EB',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 20,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  guestButtonText: {
-    color: '#374151',
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  cancelBtn: { alignItems: 'center', paddingVertical: 12, marginTop: 4 },
+  cancelText: { fontSize: 13, color: '#6B7280', fontWeight: '500' },
 
-  // Switch mode styles
-  switchModeContainer: {
-    alignItems: 'center',
-    paddingTop: 8,
-  },
-  switchModeText: {
-    fontSize: 15,
-    color: '#6B7280',
-    textAlign: 'center',
-    lineHeight: 22,
-    fontWeight: '500',
-  },
-  switchModeLink: {
-    color: '#3B82F6',
-    fontWeight: '700',
-    textDecorationLine: 'underline',
-  },
+  // Links
+  links: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 6 },
+  linkGray: { fontSize: 13, color: '#6B7280' },
+  linkBlue: { fontSize: 13, color: '#3B82F6', fontWeight: '600' },
+  linkDot: { fontSize: 13, color: '#9CA3AF' },
+
+  // Banner
+  banner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 8, padding: 14, marginBottom: 12, gap: 12 },
+  bannerIcon: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#14532D', color: '#fff', textAlign: 'center', lineHeight: 22, fontSize: 12, fontWeight: 'bold', overflow: 'hidden' },
+  bannerBody: { flex: 1 },
+  bannerTitle: { fontSize: 13, fontWeight: '700', color: '#14532D', marginBottom: 2 },
+  bannerSub: { fontSize: 12, color: '#166534' },
+
+  // Warning
+  warnBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 8, padding: 14, marginBottom: 12, gap: 12 },
+  warnIcon: { fontSize: 18 },
+  warnBody: { flex: 1 },
+  warnTitle: { fontSize: 13, fontWeight: '700', color: '#92400E', marginBottom: 2 },
+  warnSub: { fontSize: 12, color: '#B45309' },
+
+  // Guest
+  guestBox: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 8, padding: 16, marginBottom: 16, gap: 12 },
+  guestBoxIcon: { fontSize: 20 },
+  guestBoxBody: { flex: 1 },
+  guestBoxTitle: { fontSize: 13, fontWeight: '700', color: '#14532D', marginBottom: 4 },
+  guestBoxDesc: { fontSize: 12.5, color: '#166534', lineHeight: 18 },
+
+  // Password Update Modal
+  pwOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  pwCard: { backgroundColor: '#fff', borderRadius: 16, width: '100%', maxWidth: 420, maxHeight: height * 0.9, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 40 }, shadowOpacity: 0.3, shadowRadius: 100, elevation: 20 },
+  pwScroll: { flexGrow: 1 },
+  pwStrip: { height: 4, backgroundColor: '#14532D' },
+  pwHeader: { padding: 28, paddingBottom: 16, alignItems: 'center' },
+  pwShield: { width: 64, height: 64, borderRadius: 16, backgroundColor: '#FEF2F2', borderWidth: 2, borderColor: '#FECACA', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  pwShieldIcon: { fontSize: 32 },
+  pwTitle: { fontSize: 20, fontWeight: '800', color: '#111827', marginBottom: 8, textAlign: 'center' },
+  pwDesc: { fontSize: 13.5, color: '#6B7280', textAlign: 'center', lineHeight: 20, paddingHorizontal: 8 },
+  pwBody: { paddingHorizontal: 24, paddingBottom: 28 },
+  pwDone: { alignItems: 'center', padding: 40, gap: 14 },
+  pwDoneIconWrap: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#F0FDF4', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#BBF7D0' },
+  pwDoneIcon: { fontSize: 32, color: '#22C55E' },
+  pwDoneText: { fontSize: 18, fontWeight: '700', color: '#111827', textAlign: 'center' },
+  pwDoneSub: { fontSize: 13, color: '#6B7280' },
+  pwError: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', borderRadius: 8, padding: 12, marginBottom: 14, gap: 8 },
+  pwErrorIcon: { fontSize: 16 },
+  pwErrorText: { fontSize: 13, color: '#DC2626', lineHeight: 18, flex: 1 },
+  pwCustomerCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 14, marginBottom: 16, gap: 12 },
+  pwCustomerIcon: { fontSize: 24 },
+  pwCustomerInfo: { flex: 1 },
+  pwCustomerName: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 2 },
+  pwCustomerPhone: { fontSize: 12.5, color: '#6B7280' },
 });
 
 export default SignupScreen;

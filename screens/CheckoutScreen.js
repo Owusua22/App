@@ -1,4 +1,11 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+// src/screens/CheckoutScreen.jsx
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
@@ -14,15 +21,25 @@ import {
   Dimensions,
   Platform,
 } from "react-native";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { checkOutOrder, updateOrderDelivery } from "../redux/slice/orderSlice";
 import {
+  validateAccount,
+  getAccountHoldName,
   debitCustomer,
   checkTransactionStatus,
+  dispatchToAllNetworks,
+  resetPaymentState,
+  clearError,
+  generateNewRefNo,
+  setValidationStep,
+  incrementRetryAttempts,
+  isValidationSuccess,
+  isDebitSubmitted,
 } from "../redux/slice/paymentSlice";
 import { clearCart } from "../redux/slice/cartSlice";
 import LocationsModal from "../components/Locations";
@@ -47,11 +64,43 @@ const CART_KEYS_TO_CLEAR = [
 const SERVICE_CHARGE_RATE = 0.01;
 const SERVICE_CHARGE_CAP = 20.0;
 const SERVICE_CHARGE_THRESHOLD = 2000;
+
 const TIMER_SECONDS = 60;
-const POLL_TOTAL_MS = 60000;
-const POLL_WARMUP_MS = 15000;
 const POLL_INTERVAL_MS = 5000;
-const API_BASE = "https://ct002.frankotrading.com:444";
+const REDIRECT_TO_HELP_MS = 60 * 1000;
+const AUTO_VALIDATE_DEBOUNCE_MS = 800;
+
+const API_BASE = "https://testing.frankotrading.com";
+
+const NETWORK_CONFIGS = [
+  {
+    id: "1",
+    name: "MTN Ghana",
+    code: "mtn",
+    apiCode: "MTN",
+    prefix: ["024", "054", "055", "059"],
+    color: "#FACC15",
+    logo: mtnLogo,
+  },
+  {
+    id: "2",
+    name: "Vodafone Ghana",
+    code: "vodafone",
+    apiCode: "VODAFONE",
+    prefix: ["020", "050"],
+    color: "#EF4444",
+    logo: vodafoneLogo,
+  },
+  {
+    id: "3",
+    name: "AirtelTigo",
+    code: "airteltigo",
+    apiCode: "TIGO",
+    prefix: ["027", "057", "026", "056"],
+    color: "#3B82F6",
+    logo: airteltigoLogo,
+  },
+];
 
 /* ─── Color System ────────────────────────────────────── */
 const C = {
@@ -61,21 +110,17 @@ const C = {
   brandGhost: "#ECFDF5",
   brandBorder: "#6EE7B7",
   brandAccent: "#10B981",
-
   bg: "#F0F4F8",
   card: "#FFFFFF",
   cardAlt: "#F8FAFC",
   elevated: "#FFFFFF",
-
   ink: "#0F172A",
   inkSoft: "#334155",
   inkMuted: "#64748B",
   inkFaint: "#94A3B8",
   inkGhost: "#CBD5E1",
-
   line: "#E2E8F0",
   lineLight: "#F1F5F9",
-
   red: "#EF4444",
   redGhost: "#FEF2F2",
   green: "#10B981",
@@ -86,7 +131,6 @@ const C = {
   amber: "#F59E0B",
   amberGhost: "#FFFBEB",
   amberBorder: "#FDE68A",
-
   mtn: "#FACC15",
   mtnBorder: "#FDE047",
   mtnBg: "#FEFCE8",
@@ -96,7 +140,6 @@ const C = {
   at: "#3B82F6",
   atBorder: "#93C5FD",
   atBg: "#EFF6FF",
-
   white: "#FFFFFF",
   overlay: "rgba(15, 23, 42, 0.55)",
 };
@@ -152,7 +195,7 @@ const money = (v) => {
   })}`;
 };
 
-const narration = (items) => {
+const buildNarration = (items, maxLen = 40) => {
   if (!items?.length) return "Franko Trading Purchase";
   const parts = items.map((i) => {
     const name = (i.productName || "Item").trim();
@@ -160,7 +203,7 @@ const narration = (items) => {
     return qty > 1 ? `${name} x${qty}` : name;
   });
   const full = parts.join(", ");
-  return full.length > 40 ? `${full.slice(0, 37)}...` : full;
+  return full.length > maxLen ? `${full.slice(0, maxLen - 3)}...` : full;
 };
 
 const productImage = (path) =>
@@ -170,9 +213,53 @@ const productImage = (path) =>
 
 const isFree = (fee) =>
   typeof fee === "string" && fee.toLowerCase().trim().includes("free");
-
 const isNA = (fee) =>
   fee == null || fee === "N/A" || fee === "n/a" || fee === 0 || fee === "0";
+
+/**
+ * FIX #1: Corrected isPaymentSuccess to match exact API response:
+ * { responseCode: "01", responseMessage: "Successfully processed transaction." }
+ * - responseCode can be "01" or "1"
+ * - responseMessage exact match (case-sensitive, includes period)
+ */
+const isPaymentSuccess = (res) => {
+  if (!res) return false;
+  const codeMatch =
+    String(res.responseCode) === "1" || String(res.responseCode) === "01";
+  const messageMatch =
+    res.responseMessage === "Successfully processed transaction.";
+  const result = codeMatch && messageMatch;
+
+  console.log("[isPaymentSuccess] Check:", {
+    responseCode: res.responseCode,
+    responseMessage: res.responseMessage,
+    codeMatch,
+    messageMatch,
+    result,
+  });
+
+  return result;
+};
+
+const detectNetworkFromNumber = (phoneNumber) => {
+  const cleaned = phoneNumber.replace(/\D/g, "");
+  const local =
+    cleaned.startsWith("233") && cleaned.length >= 5
+      ? "0" + cleaned.slice(3)
+      : cleaned;
+  if (local.length < 3) return null;
+  const prefix = local.substring(0, 3);
+  return (
+    NETWORK_CONFIGS.find((net) => net.prefix.some((p) => prefix === p)) || null
+  );
+};
+
+const isMomoValid = (momo) => /^233[1-9]\d{8}$/.test(momo);
+
+const isValidPhoneFormat = (phoneNumber) => {
+  const cleaned = phoneNumber.replace(/\D/g, "");
+  return cleaned.length === 10 && cleaned.startsWith("0");
+};
 
 /* ─── Reusable Components ─────────────────────────────── */
 const Card = ({ children, style }) => (
@@ -220,12 +307,19 @@ const Field = ({
         <Ionicons
           name={icon}
           size={17}
-          color={C.inkFaint}
-          style={[{ marginLeft: 14 }, rest.multiline && { marginTop: 13 }]}
+          color={error ? C.red : C.inkFaint}
+          style={[
+            { marginLeft: 14 },
+            rest.multiline && { marginTop: 13 },
+          ]}
         />
       )}
       <TextInput
-        style={[s.fieldInput, !icon && { paddingLeft: 16 }, inputStyle]}
+        style={[
+          s.fieldInput,
+          !icon && { paddingLeft: 16 },
+          inputStyle,
+        ]}
         placeholderTextColor={C.inkGhost}
         {...rest}
       />
@@ -234,26 +328,31 @@ const Field = ({
   </View>
 );
 
-const NetCard = ({ id, label, sub, logo, selected, onPick }) => {
-  const pal =
-    {
-      mtn: { b: C.mtnBorder, bg: C.mtnBg, d: C.mtn },
-      vodafone: { b: C.vodaBorder, bg: C.vodaBg, d: C.voda },
-      airteltigo: { b: C.atBorder, bg: C.atBg, d: C.at },
-    }[id] || {};
+const NetCard = ({ network, selected, onPick, disabled }) => {
+  const pal = {
+    mtn: { b: C.mtnBorder, bg: C.mtnBg, d: C.mtn },
+    vodafone: { b: C.vodaBorder, bg: C.vodaBg, d: C.voda },
+    airteltigo: { b: C.atBorder, bg: C.atBg, d: C.at },
+  }[network.code] || {};
+
   return (
     <TouchableOpacity
-      activeOpacity={0.7}
-      onPress={() => onPick(id)}
+      activeOpacity={disabled ? 1 : 0.7}
+      onPress={disabled ? null : () => onPick(network)}
       style={[
         s.netCard,
         selected && { borderColor: pal.b, backgroundColor: pal.bg },
+        disabled && { opacity: 0.5 },
       ]}
     >
-      <Image source={logo} style={s.netLogo} resizeMode="contain" />
+      <Image
+        source={network.logo}
+        style={s.netLogo}
+        resizeMode="contain"
+      />
       <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={s.netName}>{label}</Text>
-        <Text style={s.netSub}>{sub}</Text>
+        <Text style={s.netName}>{network.name}</Text>
+        <Text style={s.netSub}>{network.name} Mobile Money</Text>
       </View>
       <View style={[s.radio, selected && { borderColor: pal.d }]}>
         {selected && (
@@ -264,71 +363,200 @@ const NetCard = ({ id, label, sub, logo, selected, onPick }) => {
   );
 };
 
-const SummaryLine = ({ label, value, bold, valueStyle }) => (
-  <View style={s.sumLine}>
-    <Text style={[s.sumLabel, bold && s.sumLabelBold]}>{label}</Text>
-    <Text style={[s.sumVal, bold && s.sumValBold, valueStyle]}>{value}</Text>
-  </View>
-);
+const ValidationStatusBanner = ({
+  validationState,
+  accountName,
+  onRetry,
+}) => {
+  if (validationState === "idle") return null;
+  const configs = {
+    validating: {
+      bg: C.blueGhost,
+      border: C.blueBorder,
+      iconName: null,
+      iconColor: null,
+      textColor: C.blue,
+      title: "Validating your account…",
+      subtitle: "This only takes a moment",
+      showSpinner: true,
+    },
+    success: {
+      bg: C.greenGhost,
+      border: C.green + "40",
+      iconName: "checkmark-circle",
+      iconColor: C.green,
+      textColor: C.green,
+      title: "Account verified successfully",
+      subtitle: accountName
+        ? `Holder: ${accountName.name || accountName.accountName || "Verified"}`
+        : "You may now proceed to pay",
+      showSpinner: false,
+    },
+    failed: {
+      bg: C.redGhost,
+      border: C.red + "40",
+      iconName: "close-circle",
+      iconColor: C.red,
+      textColor: C.red,
+      title: "Validation failed",
+      subtitle:
+        "Please check your number and network, then retry",
+      showSpinner: false,
+    },
+  };
+  const cfg = configs[validationState];
+  if (!cfg) return null;
 
-const Hint = ({ type, text }) => (
-  <View style={s.hintRow}>
-    <Ionicons
-      name={type === "error" ? "warning" : "checkmark-circle"}
-      size={13}
-      color={type === "error" ? C.red : C.green}
-    />
-    <Text
-      style={[s.hintText, { color: type === "error" ? C.red : C.green }]}
-    >
-      {text}
-    </Text>
-  </View>
-);
-
-const InfoLine = ({ label, value, highlight }) => (
-  <View style={s.infoLine}>
-    <Text style={s.infoLabel}>{label}</Text>
-    <Text
-      style={[s.infoVal, highlight && { color: C.brand, fontWeight: "800" }]}
-    >
-      {value}
-    </Text>
-  </View>
-);
-
-const Bar = ({ pct, color = C.brand }) => (
-  <View style={s.barTrack}>
+  return (
     <View
       style={[
-        s.barFill,
-        {
-          width: `${Math.max(0, Math.min(1, pct)) * 100}%`,
-          backgroundColor: color,
-        },
+        s.vBanner,
+        { backgroundColor: cfg.bg, borderColor: cfg.border },
       ]}
-    />
-  </View>
-);
+    >
+      <View style={s.vBannerRow}>
+        {cfg.showSpinner ? (
+          <ActivityIndicator
+            size="small"
+            color={C.blue}
+            style={{ marginRight: 10 }}
+          />
+        ) : (
+          <Ionicons
+            name={cfg.iconName}
+            size={22}
+            color={cfg.iconColor}
+            style={{ marginRight: 10 }}
+          />
+        )}
+        <View style={{ flex: 1 }}>
+          <Text style={[s.vBannerTitle, { color: cfg.textColor }]}>
+            {cfg.title}
+          </Text>
+          <Text style={s.vBannerSub}>{cfg.subtitle}</Text>
+        </View>
+        {validationState === "failed" && onRetry && (
+          <TouchableOpacity style={s.vRetryBtn} onPress={onRetry}>
+            <Ionicons name="refresh" size={14} color={C.white} />
+            <Text style={s.vRetryText}>Retry</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+};
+
+const NetworkDispatchStatus = ({ dispatchData, dispatchStep, loading }) => {
+  if (!dispatchData || dispatchStep === "idle") return null;
+  const { results, summary } = dispatchData;
+  return (
+    <View style={s.dispatchStatusCard}>
+      <View style={s.dispatchHeader}>
+        <Ionicons name="cloud-upload-outline" size={16} color={C.brand} />
+        <Text style={s.dispatchTitle}>Network Dispatch Status</Text>
+        <View
+          style={[
+            s.dispatchSummaryBadge,
+            summary.successful === summary.total && {
+              backgroundColor: C.green,
+            },
+            summary.successful === 0 && { backgroundColor: C.red },
+            summary.successful > 0 &&
+              summary.successful < summary.total && {
+                backgroundColor: C.amber,
+              },
+          ]}
+        >
+          <Text style={s.dispatchSummaryText}>
+            {summary.successful}/{summary.total}
+          </Text>
+        </View>
+      </View>
+      {loading.networkDispatch && (
+        <View style={s.dispatchLoadingStatus}>
+          <ActivityIndicator size="small" color={C.brand} />
+         
+        </View>
+      )}
+      {results?.length > 0 && (
+        <View style={s.dispatchResultsList}>
+          {results.map((result, index) => (
+            <View key={index} style={s.dispatchResultItem}>
+              <View style={s.dispatchResultContent}>
+                <Text style={s.dispatchResultNetwork}>
+                  {result.network}
+                </Text>
+                <Text style={s.dispatchResultTime}>
+                  {new Date(result.timestamp).toLocaleTimeString()}
+                </Text>
+              </View>
+              <View style={s.dispatchResultStatus}>
+                <Ionicons
+                  name={
+                    result.success ? "checkmark-circle" : "close-circle"
+                  }
+                  size={14}
+                  color={result.success ? C.green : C.red}
+                />
+                <Text
+                  style={[
+                    s.dispatchResultText,
+                    { color: result.success ? C.green : C.red },
+                  ]}
+                >
+                  {result.success ? "Success" : "Failed"}
+                </Text>
+                {result.duration && (
+                  <Text style={s.dispatchResultDuration}>
+                    ({result.duration}ms)
+                  </Text>
+                )}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+};
 
 /* ═══════════════════════════════════════════════════════════
- *  MAIN SCREEN
- * ═══════════════════════════════════════════════════════════ */
+   MAIN SCREEN
+   ═══════════════════════════════════════════════════════════ */
 const CheckoutScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const insets = useSafeAreaInsets();
 
-  /* ── Refs ────────────────────────────────────────────── */
+  const {
+    accountHoldName,
+    networkDispatchData,
+    loading,
+    error,
+    authError,
+    validationStep,
+    dispatchStep,
+    retryAttempts,
+  } = useSelector((state) => state.payment);
+
   const doneRef = useRef(false);
-  const payDoneRef = useRef(false);   // ← NEW: prevents error-path after poll succeeds
+  const payDoneRef = useRef(false);
   const mountedRef = useRef(true);
   const pollIntervalRef = useRef(null);
-  const warmupTimeoutRef = useRef(null);
   const tickIntervalRef = useRef(null);
   const tickStartRef = useRef(null);
+  const redirectTimeoutRef = useRef(null);
   const itemsRef = useRef([]);
+  const autoValidateTimerRef = useRef(null);
 
-  /* ── State ───────────────────────────────────────────── */
+  // FIX #2: Refs to hold latest checkout/addr/network during polling
+  // so closures always have the current values
+  const pCoRef = useRef(null);
+  const pAddrRef = useRef(null);
+  const selectedNetworkRef = useRef(null);
+  const oidRef = useRef(null);
+  const momoRef = useRef("233");
+  const grandTotalRef = useRef(0);
+
   const [customer, setCustomer] = useState({});
   const [cartItems, setCartItems] = useState([]);
   const [payMethod, setPayMethod] = useState("");
@@ -344,73 +572,24 @@ const CheckoutScreen = ({ navigation }) => {
   const [ids, setIds] = useState(new Set());
   const [oid, setOid] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [status, setStatus] = useState("idle"); // idle | input | pending | success | failed
+  const [modalPhase, setModalPhase] = useState("input");
+  const [inlineValidation, setInlineValidation] = useState("idle");
   const [tick, setTick] = useState(TIMER_SECONDS);
   const [momo, setMomo] = useState("233");
-  const [net, setNet] = useState(null);
+  const [selectedNetwork, setSelectedNetwork] = useState(null);
   const [pCo, setPCo] = useState(null);
   const [pAddr, setPAddr] = useState(null);
 
-  /* ── Animations ──────────────────────────────────────── */
   const fade = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(1)).current;
 
-  /* ══════════════════════════════════════════════════════
-   *  TIMER HELPERS — wall-clock based, iOS-safe
-   * ══════════════════════════════════════════════════════ */
-  const killAllTimers = useCallback(() => {
-    if (tickIntervalRef.current) {
-      clearInterval(tickIntervalRef.current);
-      tickIntervalRef.current = null;
-    }
-    if (warmupTimeoutRef.current) {
-      clearTimeout(warmupTimeoutRef.current);
-      warmupTimeoutRef.current = null;
-    }
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    tickStartRef.current = null;
-  }, []);
-
-  /**
-   * Starts the visible countdown from TIMER_SECONDS → 0.
-   * Uses Date.now() so iOS timer throttling cannot break it.
-   */
-  const startCountdown = useCallback(() => {
-    if (tickIntervalRef.current) {
-      clearInterval(tickIntervalRef.current);
-      tickIntervalRef.current = null;
-    }
-
-    const started = Date.now();
-    tickStartRef.current = started;
-    setTick(TIMER_SECONDS);
-
-    tickIntervalRef.current = setInterval(() => {
-      if (!mountedRef.current) {
-        clearInterval(tickIntervalRef.current);
-        tickIntervalRef.current = null;
-        return;
-      }
-      const elapsed = Math.floor((Date.now() - started) / 1000);
-      const remaining = Math.max(0, TIMER_SECONDS - elapsed);
-      setTick(remaining);
-      if (remaining <= 0) {
-        clearInterval(tickIntervalRef.current);
-        tickIntervalRef.current = null;
-      }
-    }, 500);
-  }, []);
-
-  /* ── Computed values ─────────────────────────────────── */
   const subtotal = useMemo(
     () =>
-      cartItems.reduce((sum, it) => {
-        const amt = Number(it.amount) || Number(it.total) || 0;
-        return sum + amt;
-      }, 0),
+      cartItems.reduce(
+        (sum, it) =>
+          sum + (Number(it.amount) || Number(it.total) || 0),
+        0
+      ),
     [cartItems]
   );
 
@@ -422,10 +601,13 @@ const CheckoutScreen = ({ navigation }) => {
     return !isNaN(n) && n > 0 ? n : 0;
   }, [typing, loc]);
 
-  const totalBeforeCharge = useMemo(() => {
-    if (typing || isNA(loc?.town?.delivery_fee)) return subtotal;
-    return subtotal + deliveryFee;
-  }, [subtotal, deliveryFee, typing, loc]);
+  const totalBeforeCharge = useMemo(
+    () =>
+      typing || isNA(loc?.town?.delivery_fee)
+        ? subtotal
+        : subtotal + deliveryFee,
+    [subtotal, deliveryFee, typing, loc]
+  );
 
   const serviceCharge = useMemo(
     () =>
@@ -441,7 +623,8 @@ const CheckoutScreen = ({ navigation }) => {
   );
 
   const displayTotal = useMemo(
-    () => (payMethod === "Mobile Money" ? grandTotal : totalBeforeCharge),
+    () =>
+      payMethod === "Mobile Money" ? grandTotal : totalBeforeCharge,
     [payMethod, grandTotal, totalBeforeCharge]
   );
 
@@ -476,15 +659,180 @@ const CheckoutScreen = ({ navigation }) => {
     return list;
   }, [canCOD]);
 
-  const momoOk = useCallback(() => /^233[1-9]\d{8}$/.test(momo), [momo]);
+  const momoOk = useCallback(() => isMomoValid(momo), [momo]);
   const momoZero = useCallback(
     () => momo.length > 3 && momo[3] === "0",
     [momo]
   );
+  const canPay = useMemo(
+    () =>
+      momoOk() &&
+      selectedNetwork !== null &&
+      inlineValidation === "success" &&
+      modalPhase === "input",
+    [momoOk, selectedNetwork, inlineValidation, modalPhase]
+  );
+
+  // Keep refs in sync with state for use inside closures
+  useEffect(() => {
+    grandTotalRef.current = grandTotal;
+  }, [grandTotal]);
+
+  useEffect(() => {
+    momoRef.current = momo;
+  }, [momo]);
+
+  useEffect(() => {
+    selectedNetworkRef.current = selectedNetwork;
+  }, [selectedNetwork]);
+
+  useEffect(() => {
+    oidRef.current = oid;
+  }, [oid]);
+
+  useEffect(() => {
+    pCoRef.current = pCo;
+  }, [pCo]);
+
+  useEffect(() => {
+    pAddrRef.current = pAddr;
+  }, [pAddr]);
+
+  /* ══════════════════════════════════════════════════════
+     AUTO-VALIDATION LOGIC
+     ═══════════════════════════════════════════════════════ */
+  const runValidation = useCallback(
+    async (momoNumber, network) => {
+      if (!isMomoValid(momoNumber) || !network) return;
+      setInlineValidation("validating");
+
+      try {
+        const result = await dispatch(
+          validateAccount({
+            msisdn: momoNumber,
+            network: network.apiCode,
+          })
+        ).unwrap();
+
+        if (!mountedRef.current) return;
+
+        if (isValidationSuccess(result)) {
+          setInlineValidation("success");
+          dispatch(setValidationStep("success"));
+          dispatch(
+            getAccountHoldName({
+              msisdn: momoNumber,
+              network: network.apiCode,
+            })
+          );
+        } else {
+          // Bypass strict validation for non-MTN networks on code 100
+          if (
+            network.code !== "mtn" &&
+            String(result?.responseCode) === "100"
+          ) {
+            console.warn(
+              "[Validation] 100 General Failure for non-MTN. Bypassing."
+            );
+            setInlineValidation("success");
+            dispatch(setValidationStep("success"));
+          } else {
+            console.warn(
+              "[Validation] gateway returned non-success:",
+              result?.responseCode,
+              result?.responseMessage
+            );
+            setInlineValidation("failed");
+            dispatch(setValidationStep("failed"));
+          }
+        }
+      } catch (err) {
+        if (!mountedRef.current) return;
+
+        const errCode = String(
+          err?.responseCode || err?.gatewayCode || err?.code || ""
+        );
+        if (network.code !== "mtn" && errCode === "100") {
+          console.warn(
+            "[Validation] 100 Error thrown for non-MTN. Bypassing."
+          );
+          setInlineValidation("success");
+          dispatch(setValidationStep("success"));
+        } else {
+          console.warn("[Validation] error:", err);
+          setInlineValidation("failed");
+          dispatch(setValidationStep("failed"));
+          if (err?.isAuthError) {
+            Alert.alert(
+              "Authentication Error",
+              err.message ||
+                "Authentication failed. Please contact support."
+            );
+          }
+        }
+      }
+    },
+    [dispatch]
+  );
+
+  const scheduleAutoValidation = useCallback(
+    (momoNumber, network) => {
+      if (autoValidateTimerRef.current) {
+        clearTimeout(autoValidateTimerRef.current);
+        autoValidateTimerRef.current = null;
+      }
+      if (!isMomoValid(momoNumber) || !network) {
+        setInlineValidation("idle");
+        dispatch(setValidationStep("idle"));
+        return;
+      }
+      setInlineValidation("validating");
+      dispatch(setValidationStep("validating"));
+
+      autoValidateTimerRef.current = setTimeout(() => {
+        autoValidateTimerRef.current = null;
+        if (mountedRef.current) runValidation(momoNumber, network);
+      }, AUTO_VALIDATE_DEBOUNCE_MS);
+    },
+    [dispatch, runValidation]
+  );
+
+  /* ══════════════════════════════════════════════════════
+     TIMER HELPERS
+     ═══════════════════════════════════════════════════════ */
+  const killAllTimers = useCallback(() => {
+    clearInterval(tickIntervalRef.current);
+    clearInterval(pollIntervalRef.current);
+    clearTimeout(redirectTimeoutRef.current);
+    clearTimeout(autoValidateTimerRef.current);
+    tickIntervalRef.current = null;
+    pollIntervalRef.current = null;
+    redirectTimeoutRef.current = null;
+    autoValidateTimerRef.current = null;
+    tickStartRef.current = null;
+  }, []);
+
+  const startCountdown = useCallback(() => {
+    clearInterval(tickIntervalRef.current);
+    const started = Date.now();
+    tickStartRef.current = started;
+    setTick(TIMER_SECONDS);
+    tickIntervalRef.current = setInterval(() => {
+      if (!mountedRef.current) {
+        clearInterval(tickIntervalRef.current);
+        return;
+      }
+      const elapsed = Math.floor((Date.now() - started) / 1000);
+      const remaining = Math.max(0, TIMER_SECONDS - elapsed);
+      setTick(remaining);
+      if (remaining <= 0) clearInterval(tickIntervalRef.current);
+    }, 500);
+  }, []);
 
   /* ── Bootstrap ───────────────────────────────────────── */
   useEffect(() => {
     mountedRef.current = true;
+    dispatch(resetPaymentState());
     Animated.timing(fade, {
       toValue: 1,
       duration: 450,
@@ -501,12 +849,10 @@ const CheckoutScreen = ({ navigation }) => {
           AsyncStorage.getItem("usedOrderIds"),
         ]);
         if (!mountedRef.current) return;
-
         const c = cJ ? JSON.parse(cJ) : null;
         setCustomer(c || {});
         setName(c ? `${c.firstName} ${c.lastName}` : "");
         setPhone(c?.contactNumber || "");
-
         const raw = dJ
           ? JSON.parse(dJ)?.cartItems || []
           : cJson
@@ -514,7 +860,6 @@ const CheckoutScreen = ({ navigation }) => {
           : [];
         setCartItems(raw);
         itemsRef.current = raw;
-
         if (lJ) {
           const l = JSON.parse(lJ);
           setLoc(l);
@@ -530,18 +875,18 @@ const CheckoutScreen = ({ navigation }) => {
       mountedRef.current = false;
       killAllTimers();
     };
-  }, []);
+  }, [killAllTimers, dispatch]);
 
   useEffect(() => {
     if (ids.size)
-      AsyncStorage.setItem("usedOrderIds", JSON.stringify([...ids])).catch(
-        () => {}
-      );
+      AsyncStorage.setItem(
+        "usedOrderIds",
+        JSON.stringify([...ids])
+      ).catch(() => {});
   }, [ids]);
 
-  /* pulse animation for pending status */
   useEffect(() => {
-    if (status !== "pending") return;
+    if (modalPhase !== "pending") return;
     const a = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
@@ -558,7 +903,7 @@ const CheckoutScreen = ({ navigation }) => {
     );
     a.start();
     return () => a.stop();
-  }, [status]);
+  }, [modalPhase, pulse]);
 
   /* ── Helpers ─────────────────────────────────────────── */
   const makeId = useCallback(() => {
@@ -576,25 +921,29 @@ const CheckoutScreen = ({ navigation }) => {
 
   const wipe = () => AsyncStorage.multiRemove(CART_KEYS_TO_CLEAR);
 
-  const retry = async (fn, n = 3) => {
+  const retryFn = async (fn, n = 3) => {
     let e;
     for (let i = 1; i <= n; i++) {
       try {
         return await fn();
       } catch (x) {
         e = x;
-        if (i < n) await new Promise((r) => setTimeout(r, 2 ** i * 1e3));
+        if (i < n)
+          await new Promise((r) => setTimeout(r, 2 ** i * 1000));
       }
     }
     throw e;
   };
 
   const submitOrder = async (co, addr) => {
-    await retry(async () => {
-      const cid = (await AsyncStorage.getItem("cartId")) || co.Cartid;
-      return dispatch(checkOutOrder({ ...co, Cartid: cid })).unwrap();
+    await retryFn(async () => {
+      const cid =
+        (await AsyncStorage.getItem("cartId")) || co.Cartid;
+      return dispatch(
+        checkOutOrder({ ...co, Cartid: cid })
+      ).unwrap();
     });
-    await retry(async () => {
+    await retryFn(async () => {
       await dispatch(updateOrderDelivery(addr)).unwrap();
       dispatch(clearCart());
       await wipe();
@@ -605,233 +954,397 @@ const CheckoutScreen = ({ navigation }) => {
     let v = t.replace(/\D/g, "");
     if (v.startsWith("0")) v = "233" + v.slice(1);
     if (!v.startsWith("233")) v = "233";
-    setMomo(v.slice(0, 12));
+    const next = v.slice(0, 12);
+    setMomo(next);
+    const detected = detectNetworkFromNumber(next);
+    let network = selectedNetwork;
+    if (detected && detected.id !== selectedNetwork?.id) {
+      setSelectedNetwork(detected);
+      network = detected;
+    }
+    setInlineValidation("idle");
+    scheduleAutoValidation(next, network);
+  };
+
+  const handleNetworkSelect = (network) => {
+    setSelectedNetwork(network);
+    setInlineValidation("idle");
+    scheduleAutoValidation(momo, network);
+  };
+
+  const handleRetryValidation = () =>
+    scheduleAutoValidation(momo, selectedNetwork);
+
+  /* ── Dispatch order after successful MoMo payment ────── */
+  const dispatchMomoOrder = async (orderId, checkoutObj, addrObj) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    try {
+      const finalCheckoutObj = {
+        ...checkoutObj,
+        paymentService:
+          selectedNetworkRef.current?.apiCode || "MTN",
+      };
+      await submitOrder(finalCheckoutObj, addrObj);
+      await dispatch(
+        dispatchToAllNetworks({
+          paymentData: {
+            transactionNumber: orderId,
+            contactNumber: momoRef.current,
+            amount: grandTotalRef.current,
+          },
+          networks: NETWORK_CONFIGS,
+        })
+      );
+      await AsyncStorage.multiRemove(CART_KEYS_TO_CLEAR);
+    } catch (e) {
+      doneRef.current = false;
+      if (mountedRef.current)
+        Alert.alert(
+          "Order Error",
+          "Payment succeeded but order submission failed. Please contact support with your reference number."
+        );
+      throw e;
+    }
   };
 
   /* ══════════════════════════════════════════════════════
-   *  POLLING — starts after debitCustomer succeeds
-   * ══════════════════════════════════════════════════════ */
+     FIX #3: navigateAfterPayment — single source of truth
+     for ALL post-payment navigation (success AND failure)
+     ═══════════════════════════════════════════════════════ */
+  const navigateAfterPayment = useCallback(
+    (success, orderId, failureReason = null) => {
+      if (!mountedRef.current) return;
+
+      // Close modal first
+      setModalOpen(false);
+      setModalPhase("input");
+
+      if (success) {
+        // Navigate to order placed screen
+        navigation.reset({
+          index: 0,
+          routes: [
+            {
+              name: "OrderPlacedScreen",
+              params: { orderId },
+            },
+          ],
+        });
+      } else {
+        // FIX #3: Always navigate for failures too
+        // Navigate to order cancellation or show failure screen
+        navigation.reset({
+          index: 0,
+          routes: [
+            {
+              name: "OrderCancellationScreen",
+              params: {
+                orderId,
+                reason:
+                  failureReason ||
+                  "Payment was not completed.",
+              },
+            },
+          ],
+        });
+      }
+    },
+    [navigation]
+  );
+
+  /* ── Polling ─────────────────────────────────────────── */
   const beginPolling = useCallback(
-    (orderId, checkoutObj, addrObj, networkVal, momoVal, totalVal) => {
-      if (warmupTimeoutRef.current) {
-        clearTimeout(warmupTimeoutRef.current);
-        warmupTimeoutRef.current = null;
-      }
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
+    (orderId, checkoutObj, addrObj) => {
+      clearInterval(pollIntervalRef.current);
 
-      warmupTimeoutRef.current = setTimeout(() => {
-        if (!mountedRef.current) return;
-        warmupTimeoutRef.current = null;
+      pollIntervalRef.current = setInterval(async () => {
+        if (!mountedRef.current) {
+          clearInterval(pollIntervalRef.current);
+          return;
+        }
 
-        let elapsed = 0;
+        try {
+          const res = await dispatch(
+            checkTransactionStatus({ refNo: orderId })
+          ).unwrap();
 
-        pollIntervalRef.current = setInterval(async () => {
-          if (!mountedRef.current) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            return;
-          }
+          console.log("[Poll] Transaction status response:", {
+            responseCode: res?.responseCode,
+            responseMessage: res?.responseMessage,
+          });
 
-          elapsed += POLL_INTERVAL_MS;
-
-          try {
-            const r = await dispatch(
-              checkTransactionStatus({ refNo: orderId })
-            ).unwrap();
-
-            if (
-              r?.responseMessage ===
-              "Successfully Processed Transaction"
-            ) {
-              // ── SUCCESS ──
-              // Mark done FIRST so any pending error-path timeouts bail out
-              payDoneRef.current = true;
-              killAllTimers();
-              if (!mountedRef.current) return;
-
-              setStatus("success");
-
-              try {
-                await submitOrder(checkoutObj, addrObj);
-                await AsyncStorage.multiRemove([
-                  "checkoutDetails",
-                  "cart",
-                  "cartId",
-                  "cartDetails",
-                  "pendingOrderId",
-                ]);
-              } catch {
-                if (mountedRef.current) {
-                  Alert.alert(
-                    "Order Error",
-                    "Payment succeeded but order submission failed. Please contact support with your reference number."
-                  );
-                }
-              }
-
-              setTimeout(() => {
-                if (!mountedRef.current) return;
-                setModalOpen(false);
-                navigation.reset({
-                  index: 0,
-                  routes: [
-                    {
-                      name: "OrderPlacedScreen",
-                      params: { orderId: orderId },
-                    },
-                  ],
-                });
-              }, 1600);
-              return;
-            }
-          } catch {
-            // individual poll failure — keep polling
-          }
-
-          // ── TIMEOUT ──
-          if (elapsed >= POLL_TOTAL_MS - POLL_WARMUP_MS) {
+          if (isPaymentSuccess(res)) {
+            // ── SUCCESS PATH ──
+            payDoneRef.current = true;
             killAllTimers();
             if (!mountedRef.current) return;
 
-            setStatus("failed");
+            setModalPhase("success");
 
+            try {
+              await dispatchMomoOrder(
+                orderId,
+                checkoutObj,
+                addrObj
+              );
+            } catch (dispatchErr) {
+              console.error(
+                "[Poll] dispatchMomoOrder failed:",
+                dispatchErr
+              );
+            }
+
+            // Navigate after brief success display
             setTimeout(() => {
-              if (!mountedRef.current) return;
-              setModalOpen(false);
-              navigation.navigate("PaymentHelpScreen", {
-                orderId: orderId,
-                network: networkVal,
-                momoNumber: momoVal,
-                amount: totalVal,
-                checkoutDetails: checkoutObj,
-                addressDetails: addrObj,
-                cartItems: itemsRef.current,
-              });
-            }, 2200);
+              navigateAfterPayment(true, orderId);
+            }, 1600);
+          } else {
+            // ── NON-SUCCESS RESPONSE (NOT YET COMPLETE) ──
+            // Log for debugging — polling continues until timeout
+            console.log(
+              "[Poll] Payment not yet complete, continuing to poll:",
+              res?.responseCode,
+              res?.responseMessage
+            );
           }
-        }, POLL_INTERVAL_MS);
-      }, POLL_WARMUP_MS);
+        } catch (err) {
+          if (err.isAuthError) {
+            killAllTimers();
+            payDoneRef.current = true;
+            if (!mountedRef.current) return;
+            setModalPhase("failed");
+            Alert.alert(
+              "Authentication Error",
+              err.message ||
+                "Authentication failed. Please contact support."
+            );
+            // Navigate to failure after alert
+            setTimeout(() => {
+              navigateAfterPayment(
+                false,
+                orderId,
+                "Authentication error"
+              );
+            }, 500);
+          }
+        }
+      }, POLL_INTERVAL_MS);
     },
-    [dispatch, navigation, killAllTimers]
+    [dispatch, killAllTimers, navigateAfterPayment]
   );
 
-  /* ══════════════════════════════════════════════════════
-   *  HANDLE PAY
-   * ══════════════════════════════════════════════════════ */
+  /* ── Handle Pay ──────────────────────────────────────── */
   const handlePay = async () => {
-    if (!momoOk()) {
-      return Alert.alert("Invalid Number", "Enter a valid number after 233.");
-    }
-    if (!net) {
-      return Alert.alert("Network Required", "Pick your network provider.");
-    }
+    if (!canPay) return;
 
-    // Capture current values to avoid stale closures
-    const currentOid = oid;
-    const currentPCo = pCo;
-    const currentPAddr = pAddr;
-    const currentNet = net;
-    const currentMomo = momo;
-    const currentGrandTotal = grandTotal;
-    const currentTotalBeforeCharge = totalBeforeCharge;
+    // Capture all values at call time using refs for closure safety
+    const currentOid = oidRef.current;
+    const currentPCo = pCoRef.current;
+    const currentPAddr = pAddrRef.current;
+    const currentNet = selectedNetworkRef.current?.apiCode;
+    const currentNetCode = selectedNetworkRef.current?.code;
+    const currentMomo = momoRef.current;
+    const currentGrandTotal = grandTotalRef.current;
 
     if (!currentOid || !currentPCo || !currentPAddr) {
       Alert.alert("Error", "Missing order details. Please try again.");
       return;
     }
 
-    // ── Reset the pay-done guard before each fresh attempt ──
     payDoneRef.current = false;
 
     try {
       setPayBusy(true);
-
-      // Show pending UI immediately so user sees feedback before API responds
-      setStatus("pending");
+      setModalPhase("pending");
+      setTick(TIMER_SECONDS);
       startCountdown();
 
-      await dispatch(
+      const debitResult = await dispatch(
         debitCustomer({
           refNo: currentOid,
           msisdn: currentMomo,
-          amount: currentTotalBeforeCharge,
+          amount: totalBeforeCharge,
           network: currentNet,
-          narration: narration(cartItems),
+          narration: buildNarration(cartItems, 30),
         })
       ).unwrap();
 
-      // API call resolved — start polling for payment confirmation
-      beginPolling(
-        currentOid,
-        currentPCo,
-        currentPAddr,
-        currentNet,
-        currentMomo,
-        currentGrandTotal
+      if (!isDebitSubmitted(debitResult)) {
+        console.warn(
+          "[Pay] debit prompt not submitted:",
+          debitResult?.responseCode,
+          debitResult?.responseMessage
+        );
+        const err = new Error(
+          debitResult?.responseMessage ||
+            "Payment prompt could not be sent. Please try again."
+        );
+        err.gatewayCode = debitResult?.responseCode;
+        err.isGatewayRejection = true;
+        throw err;
+      }
+
+      console.log(
+        "[Pay] Prompt submitted, code:",
+        debitResult?.responseCode
       );
+
+      // Start polling for transaction status
+      beginPolling(currentOid, currentPCo, currentPAddr);
+
+      // FIX #4: Redirect to PaymentHelp after timeout
+      // instead of leaving user stranded
+      redirectTimeoutRef.current = setTimeout(() => {
+        if (!mountedRef.current || payDoneRef.current) return;
+        killAllTimers();
+
+        // FIX: Navigate to help screen — DO NOT leave user on modal
+        setModalOpen(false);
+        setModalPhase("input");
+
+        navigation.navigate("PaymentHelpScreen", {
+          orderId: currentOid,
+          network: currentNet,
+          momoNumber: currentMomo,
+          amount: currentGrandTotal,
+          checkoutDetails: currentPCo,
+          addressDetails: currentPAddr,
+          cartItems: itemsRef.current,
+        });
+      }, REDIRECT_TO_HELP_MS);
     } catch (err) {
-      // ── IMPORTANT: iOS can throw a network/timeout error even when
-      //    the MoMo prompt was actually dispatched server-side.
-      //    We must NOT auto-navigate away — instead let the user decide.
       killAllTimers();
-      if (!mountedRef.current) return;
-
-      // If polling already found a success result, bail — don't show error UI
-      if (payDoneRef.current) return;
-
-      setStatus("failed");
+      if (!mountedRef.current || payDoneRef.current) return;
+      setModalPhase("failed");
 
       setTimeout(() => {
-        // Double-check: poll may have succeeded while we were waiting 1.5s
         if (!mountedRef.current || payDoneRef.current) return;
 
+        if (err.isAuthError) {
+          Alert.alert(
+            "Authentication Error",
+            err.message || "Authentication failed."
+          );
+          // FIX #4: Navigate after auth error
+          setTimeout(() => {
+            navigateAfterPayment(
+              false,
+              currentOid,
+              "Authentication error"
+            );
+          }, 500);
+          return;
+        }
+
+        if (err.status === 503 || err.status === 502) {
+          Alert.alert(
+            "Service Temporarily Unavailable",
+            `The payment service is temporarily unavailable.\n\nWould you like to try again?`,
+            [
+              {
+                text: "Try Again",
+                onPress: () => {
+                  dispatch(incrementRetryAttempts());
+                  setModalPhase("input");
+                  handlePay();
+                },
+              },
+              {
+                text: "Cancel",
+                style: "destructive",
+                onPress: () => {
+                  // FIX #4: Navigate on cancel, don't just close modal
+                  navigateAfterPayment(
+                    false,
+                    currentOid,
+                    "Service unavailable"
+                  );
+                },
+              },
+            ]
+          );
+          return;
+        }
+
+        if (err.isGatewayRejection) {
+          Alert.alert(
+            "Payment Could Not Be Processed",
+            err.message ||
+              "The mobile money provider rejected the request. Please check your number and try again.",
+            [
+              {
+                text: "Try Again",
+                onPress: () => {
+                  if (!mountedRef.current) return;
+                  // Return to input phase — user stays on checkout
+                  setModalPhase("input");
+                },
+              },
+              {
+                text: "Cancel Order",
+                style: "destructive",
+                onPress: () => {
+                  // FIX #4: Navigate on cancel
+                  navigateAfterPayment(
+                    false,
+                    currentOid,
+                    "Payment rejected by provider"
+                  );
+                },
+              },
+            ]
+          );
+          return;
+        }
+
+        // Generic fallback — user unsure if prompt was received
         Alert.alert(
           "Payment Request Issue",
-          "We couldn't confirm the payment prompt was sent to your phone. On some networks this is a temporary hiccup — the prompt may still arrive.\n\nDid you receive a payment prompt on your phone?",
+          "We couldn't confirm the payment prompt was sent to your phone.\n\nDid you receive a payment prompt?",
           [
             {
-              // User DID get the prompt — keep polling for their approval
               text: "Yes, I got it",
-              style: "default",
               onPress: () => {
                 if (!mountedRef.current) return;
-                setStatus("pending");
-                startCountdown();
-                beginPolling(
-                  currentOid,
-                  currentPCo,
-                  currentPAddr,
-                  currentNet,
-                  currentMomo,
-                  currentGrandTotal
-                );
-              },
-            },
-            {
-              // User did NOT get the prompt — let them retry cleanly
-              text: "No, try again",
-              style: "default",
-              onPress: () => {
-                if (!mountedRef.current) return;
-                setStatus("input");
+                setModalPhase("pending");
                 setTick(TIMER_SECONDS);
+                startCountdown();
+                beginPolling(currentOid, currentPCo, currentPAddr);
+                redirectTimeoutRef.current = setTimeout(() => {
+                  if (!mountedRef.current || payDoneRef.current) return;
+                  killAllTimers();
+                  setModalOpen(false);
+                  setModalPhase("input");
+                  navigation.navigate("PaymentHelpScreen", {
+                    orderId: currentOid,
+                    network: currentNet,
+                    momoNumber: currentMomo,
+                    amount: currentGrandTotal,
+                    checkoutDetails: currentPCo,
+                    addressDetails: currentPAddr,
+                    cartItems: itemsRef.current,
+                  });
+                }, REDIRECT_TO_HELP_MS);
               },
             },
             {
-              // User wants to abort entirely
+              text: "No, try again",
+              onPress: () => {
+                if (!mountedRef.current) return;
+                setModalPhase("input");
+              },
+            },
+            {
               text: "Cancel Order",
               style: "destructive",
               onPress: () => {
-                if (!mountedRef.current) return;
-                setModalOpen(false);
-                setStatus("idle");
-                navigation.reset({
-                  index: 0,
-                  routes: [{ name: "OrderCancellationScreen" }],
-                });
+                // FIX #4: Navigate on cancel
+                navigateAfterPayment(
+                  false,
+                  currentOid,
+                  "Order cancelled by user"
+                );
               },
             },
           ],
@@ -839,9 +1352,7 @@ const CheckoutScreen = ({ navigation }) => {
         );
       }, 1500);
     } finally {
-      if (mountedRef.current) {
-        setPayBusy(false);
-      }
+      if (mountedRef.current) setPayBusy(false);
     }
   };
 
@@ -853,9 +1364,15 @@ const CheckoutScreen = ({ navigation }) => {
       try {
         setBusy(true);
         await submitOrder(co, addr);
+        // FIX: Ensure navigation always fires for non-momo
         navigation.reset({
           index: 0,
-          routes: [{ name: "OrderPlacedScreen", params: { orderId: id } }],
+          routes: [
+            {
+              name: "OrderPlacedScreen",
+              params: { orderId: id },
+            },
+          ],
         });
       } catch (e) {
         doneRef.current = false;
@@ -865,7 +1382,7 @@ const CheckoutScreen = ({ navigation }) => {
         setOid(null);
       }
     },
-    [dispatch, navigation]
+    [navigation]
   );
 
   /* ── Location ────────────────────────────────────────── */
@@ -874,7 +1391,10 @@ const CheckoutScreen = ({ navigation }) => {
     setAddress(`${l.town?.name}, ${l.region}`);
     setTyping(false);
     setPayMethod("");
-    await AsyncStorage.setItem("selectedLocation", JSON.stringify(l));
+    await AsyncStorage.setItem(
+      "selectedLocation",
+      JSON.stringify(l)
+    );
     setLocOpen(false);
   };
 
@@ -889,7 +1409,7 @@ const CheckoutScreen = ({ navigation }) => {
     }
   };
 
-  /* ── Checkout ────────────────────────────────────────── */
+  /* ── Checkout (Place Order button) ───────────────────── */
   const checkout = async () => {
     if (name.trim().toLowerCase().includes("guest"))
       return Alert.alert("Name Required", "Enter your real name.");
@@ -901,19 +1421,31 @@ const CheckoutScreen = ({ navigation }) => {
       return Alert.alert("Name", "Enter recipient name.");
     if (!phone.trim())
       return Alert.alert("Phone", "Enter contact number.");
+    if (
+      payMethod === "Mobile Money" &&
+      !isValidPhoneFormat(phone)
+    )
+      return Alert.alert(
+        "Invalid Phone",
+        "Please enter a valid 10-digit number starting with 0."
+      );
 
     const id = makeId();
     setOid(id);
-    const cartId = await AsyncStorage.getItem("cartId");
+    oidRef.current = id; // sync ref immediately
 
+    const cartId = await AsyncStorage.getItem("cartId");
     const items = cartItems.map((it) => {
       const qty = Number(it.quantity) || 1;
-      const amt = Number(it.amount) || Number(it.total) || 0;
+      const amt =
+        Number(it.amount) || Number(it.total) || 0;
       return {
         productId: it.productId,
         productName: it.productName,
         quantity: qty,
-        unitPrice: parseFloat((qty > 0 ? amt / qty : amt).toFixed(2)),
+        unitPrice: parseFloat(
+          (qty > 0 ? amt / qty : amt).toFixed(2)
+        ),
         amount: amt,
       };
     });
@@ -925,7 +1457,8 @@ const CheckoutScreen = ({ navigation }) => {
       PaymentMode: payMethod,
       PaymentAccountNumber: customer.contactNumber,
       customerAccountType: customer.accountType || "Customer",
-      paymentService: payMethod === "Mobile Money" ? "Mtn" : "Cash",
+      paymentService:
+        payMethod === "Mobile Money" ? "PENDING_NETWORK" : "Cash",
       totalAmount: totalBeforeCharge,
       items,
       recipientName: name,
@@ -951,18 +1484,28 @@ const CheckoutScreen = ({ navigation }) => {
         return await finalize(id, co, addr);
       }
 
-      await AsyncStorage.setItem("checkoutDetails", JSON.stringify(co));
+      await AsyncStorage.setItem(
+        "checkoutDetails",
+        JSON.stringify(co)
+      );
       await AsyncStorage.setItem(
         "orderDeliveryDetails",
         JSON.stringify(addr)
       );
 
+      // Sync refs immediately so handlePay closures have correct values
       setPCo(co);
       setPAddr(addr);
+      pCoRef.current = co;
+      pAddrRef.current = addr;
+
       setMomo("233");
-      setNet(null);
-      setStatus("input");
+      setSelectedNetwork(null);
+      setModalPhase("input");
+      setInlineValidation("idle");
       setTick(TIMER_SECONDS);
+      dispatch(setValidationStep("idle"));
+      dispatch(clearError());
       setModalOpen(true);
     } catch (e) {
       doneRef.current = false;
@@ -974,20 +1517,22 @@ const CheckoutScreen = ({ navigation }) => {
   };
 
   const closeModal = () => {
-    if (status === "input") {
-      killAllTimers();
-      setModalOpen(false);
-      setStatus("idle");
-    }
+    if (modalPhase === "pending") return;
+    clearTimeout(autoValidateTimerRef.current);
+    killAllTimers();
+    setModalOpen(false);
+    setModalPhase("input");
+    setInlineValidation("idle");
+    dispatch(clearError());
+    dispatch(setValidationStep("idle"));
   };
 
   /* ═══════════════════════════════════════════════════════
-   *  RENDER SECTIONS
-   * ═══════════════════════════════════════════════════════ */
+     RENDER SECTIONS
+     ═══════════════════════════════════════════════════════ */
   const renderDelivery = () => (
     <Card>
       <HeaderRow icon="location-outline" title="Delivery Details" />
-
       <Field
         label="Recipient Name"
         required
@@ -995,8 +1540,12 @@ const CheckoutScreen = ({ navigation }) => {
         value={name}
         onChangeText={setName}
         placeholder="John Doe"
+        error={
+          !name.trim() && name.length > 0
+            ? "Name is required"
+            : null
+        }
       />
-
       <Field
         label="Contact Number"
         required
@@ -1005,12 +1554,15 @@ const CheckoutScreen = ({ navigation }) => {
         onChangeText={setPhone}
         keyboardType="phone-pad"
         placeholder="0XX XXX XXXX"
+        error={
+          phone.length > 0 && !isValidPhoneFormat(phone)
+            ? "Enter a valid 10-digit number starting with 0"
+            : null
+        }
       />
-
       <View style={s.fieldWrap}>
         <Text style={s.fieldLabel}>
-          Delivery Address
-          <Text style={{ color: C.red }}> *</Text>
+          Delivery Address<Text style={{ color: C.red }}> *</Text>
         </Text>
         {!typing ? (
           <View style={s.addrRow}>
@@ -1034,14 +1586,20 @@ const CheckoutScreen = ({ navigation }) => {
               onPress={() => setLocOpen(true)}
               activeOpacity={0.8}
             >
-              <Ionicons name="map-outline" size={14} color={C.white} />
+              <Ionicons
+                name="map-outline"
+                size={14}
+                color={C.white}
+              />
               <Text style={s.locBtnText}>
                 {address ? "Change" : "Select"}
               </Text>
             </TouchableOpacity>
           </View>
         ) : (
-          <View style={[s.fieldBox, { alignItems: "flex-start" }]}>
+          <View
+            style={[s.fieldBox, { alignItems: "flex-start" }]}
+          >
             <Ionicons
               name="create-outline"
               size={17}
@@ -1049,7 +1607,10 @@ const CheckoutScreen = ({ navigation }) => {
               style={{ marginLeft: 14, marginTop: 13 }}
             />
             <TextInput
-              style={[s.fieldInput, { height: 84, textAlignVertical: "top" }]}
+              style={[
+                s.fieldInput,
+                { height: 84, textAlignVertical: "top" },
+              ]}
               value={address}
               onChangeText={setAddress}
               multiline
@@ -1059,7 +1620,6 @@ const CheckoutScreen = ({ navigation }) => {
           </View>
         )}
       </View>
-
       <TouchableOpacity
         style={s.toggle}
         onPress={toggleManual}
@@ -1074,7 +1634,6 @@ const CheckoutScreen = ({ navigation }) => {
           {typing ? "Pick from locations" : "Type address manually"}
         </Text>
       </TouchableOpacity>
-
       <Field
         label="Order Note"
         icon="chatbubble-ellipses-outline"
@@ -1112,9 +1671,16 @@ const CheckoutScreen = ({ navigation }) => {
               </Text>
               <Text style={s.pmSub}>{m.desc}</Text>
             </View>
-            <View style={[s.radio, on && { borderColor: C.brand }]}>
+            <View
+              style={[s.radio, on && { borderColor: C.brand }]}
+            >
               {on && (
-                <View style={[s.radioDot, { backgroundColor: C.brand }]} />
+                <View
+                  style={[
+                    s.radioDot,
+                    { backgroundColor: C.brand },
+                  ]}
+                />
               )}
             </View>
           </TouchableOpacity>
@@ -1124,100 +1690,123 @@ const CheckoutScreen = ({ navigation }) => {
   );
 
   const renderSummary = () => (
-    <Card style={{ marginBottom: 120 }}>
-      <HeaderRow
-        icon="receipt-outline"
-        title="Order Summary"
-        badge={cartItems.length}
-      />
-
-      {cartItems.map((item, i) => {
-        const img = productImage(item.imagePath);
-        const exactAmount = Number(item.amount) || Number(item.total) || 0;
-        const qty = Number(item.quantity) || 1;
-        const unitPr = qty > 0 ? exactAmount / qty : exactAmount;
-
-        return (
-          <View
-            key={`${item.productId}-${i}`}
+    <View>
+      <Card style={{ marginBottom: 120 }}>
+        <HeaderRow
+          icon="receipt-outline"
+          title="Order Summary"
+          badge={cartItems.length}
+        />
+        {cartItems.map((item, i) => {
+          const img = productImage(item.imagePath);
+          const exactAmount =
+            Number(item.amount) || Number(item.total) || 0;
+          const qty = Number(item.quantity) || 1;
+          const unitPr = qty > 0 ? exactAmount / qty : exactAmount;
+          return (
+            <View
+              key={`${item.productId}-${i}`}
+              style={[
+                s.itemRow,
+                i === cartItems.length - 1 && {
+                  borderBottomWidth: 0,
+                },
+              ]}
+            >
+              {img ? (
+                <Image
+                  source={{ uri: img }}
+                  style={s.itemImg}
+                />
+              ) : (
+                <View style={s.itemImgFallback}>
+                  <Ionicons
+                    name="cube-outline"
+                    size={18}
+                    color={C.inkGhost}
+                  />
+                </View>
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={s.itemName} numberOfLines={2}>
+                  {item.productName}
+                </Text>
+                <View style={s.itemMeta}>
+                  <View style={s.qtyTag}>
+                    <Text style={s.qtyTagText}>Qty {qty}</Text>
+                  </View>
+                  {qty > 1 && (
+                    <Text style={s.unitPrice}>
+                      {money(unitPr)} each
+                    </Text>
+                  )}
+                </View>
+              </View>
+              <Text style={s.itemTotal}>{money(exactAmount)}</Text>
+            </View>
+          );
+        })}
+        <View style={s.divider} />
+        <View style={s.sumLine}>
+          <Text style={s.sumLabel}>Subtotal</Text>
+          <Text style={s.sumVal}>{money(subtotal)}</Text>
+        </View>
+        <View style={s.sumLine}>
+          <Text style={s.sumLabel}>Delivery Fee</Text>
+          <Text
             style={[
-              s.itemRow,
-              i === cartItems.length - 1 && { borderBottomWidth: 0 },
+              s.sumVal,
+              deliveryLabel === "FREE" && {
+                color: C.green,
+                fontWeight: "800",
+              },
             ]}
           >
-            {img ? (
-              <Image source={{ uri: img }} style={s.itemImg} />
-            ) : (
-              <View style={s.itemImgFallback}>
-                <Ionicons name="cube-outline" size={18} color={C.inkGhost} />
-              </View>
-            )}
-            <View style={{ flex: 1 }}>
-              <Text style={s.itemName} numberOfLines={2}>
-                {item.productName}
-              </Text>
-              <View style={s.itemMeta}>
-                <View style={s.qtyTag}>
-                  <Text style={s.qtyTagText}>Qty {qty}</Text>
-                </View>
-                {qty > 1 && (
-                  <Text style={s.unitPrice}>{money(unitPr)} each</Text>
-                )}
-              </View>
-            </View>
-            <Text style={s.itemTotal}>{money(exactAmount)}</Text>
+            {deliveryLabel}
+          </Text>
+        </View>
+        {payMethod === "Mobile Money" && (
+          <View style={s.sumLine}>
+            <Text style={s.sumLabel}>Momo Service Charge</Text>
+            <Text style={s.sumVal}>{money(serviceCharge)}</Text>
           </View>
-        );
-      })}
-
-      <View style={s.divider} />
-      <SummaryLine label="Subtotal" value={money(subtotal)} />
-      <SummaryLine
-        label="Delivery Fee"
-        value={deliveryLabel}
-        valueStyle={
-          deliveryLabel === "FREE"
-            ? { color: C.green, fontWeight: "800" }
-            : null
-        }
+        )}
+        <View style={[s.divider, { borderStyle: "dashed" }]} />
+        <View style={s.totalRow}>
+          <View>
+            <Text style={s.totalLabel}>Total</Text>
+            <Text style={s.totalHint}>
+              {payMethod === "Mobile Money"
+                ? "Includes service charge"
+                : "No extra charges"}
+            </Text>
+          </View>
+          <Text style={s.totalVal}>{money(displayTotal)}</Text>
+        </View>
+        {payMethod === "Mobile Money" && (
+          <View style={s.notice}>
+            <Ionicons
+              name="information-circle-outline"
+              size={14}
+              color={C.blue}
+            />
+            <Text style={s.noticeText}>
+              The {money(serviceCharge)} service charge is applied by
+              your mobile money provider. Your account will be
+              automatically validated in the payment screen.
+            </Text>
+          </View>
+        )}
+      </Card>
+      <NetworkDispatchStatus
+        dispatchData={networkDispatchData}
+        dispatchStep={dispatchStep}
+        loading={loading}
       />
-      {payMethod === "Mobile Money" && (
-        <SummaryLine
-          label="Momo Service Charge"
-          value={money(serviceCharge)}
-        />
-      )}
-      <View style={[s.divider, { borderStyle: "dashed" }]} />
-
-      <View style={s.totalRow}>
-        <View>
-          <Text style={s.totalLabel}>Total</Text>
-          <Text style={s.totalHint}>
-            {payMethod === "Mobile Money"
-              ? "Includes service charge"
-              : "No extra charges"}
-          </Text>
-        </View>
-        <Text style={s.totalVal}>{money(displayTotal)}</Text>
-      </View>
-
-      {payMethod === "Mobile Money" && (
-        <View style={s.notice}>
-          <Ionicons
-            name="information-circle-outline"
-            size={14}
-            color={C.blue}
-          />
-          <Text style={s.noticeText}>
-            The {money(serviceCharge)} service charge is applied by your mobile
-            money provider, not by Franko Trading.
-          </Text>
-        </View>
-      )}
-    </Card>
+    </View>
   );
 
-  /* ── Payment Modal ──────────────────────────────────── */
+  /* ── Payment Modal ───────────────────────────────────── */
   const renderModal = () => (
     <Modal
       visible={modalOpen}
@@ -1228,9 +1817,16 @@ const CheckoutScreen = ({ navigation }) => {
       <View style={s.mOverlay}>
         <View style={s.mSheet}>
           <View style={s.mDrag} />
-          {status === "input" && (
-            <TouchableOpacity style={s.mClose} onPress={closeModal}>
-              <Ionicons name="close-circle" size={28} color={C.inkGhost} />
+          {modalPhase !== "pending" && (
+            <TouchableOpacity
+              style={s.mClose}
+              onPress={closeModal}
+            >
+              <Ionicons
+                name="close-circle"
+                size={28}
+                color={C.inkGhost}
+              />
             </TouchableOpacity>
           )}
           <ScrollView
@@ -1247,16 +1843,19 @@ const CheckoutScreen = ({ navigation }) => {
                 style={s.mLogo}
                 resizeMode="contain"
               />
-              <Text style={s.mBrandText}>Franko Trading</Text>
+              <Text style={s.mBrandText}>
+                Franko Trading Limited
+              </Text>
             </View>
-
             <View style={s.mAmountBox}>
               <Text style={s.mAmountLabel}>AMOUNT TO PAY</Text>
               <Text style={s.mAmountVal}>{money(grandTotal)}</Text>
               <View style={s.mBreakdown}>
                 <Text style={s.mBreakdownText}>
                   Items: {money(subtotal)}
-                  {deliveryFee > 0 ? ` + Delivery: ${money(deliveryFee)}` : ""}
+                  {deliveryFee > 0
+                    ? ` + Delivery: ${money(deliveryFee)}`
+                    : ""}
                   {" + Service: "}
                   {money(serviceCharge)}
                 </Text>
@@ -1271,18 +1870,21 @@ const CheckoutScreen = ({ navigation }) => {
               </View>
             </View>
 
-            {/* ── INPUT STATE ── */}
-            {status === "input" && (
+            {modalPhase === "input" && (
               <>
                 <View style={s.mStep}>
                   <View style={s.mStepHead}>
                     <View style={s.mBadge}>
                       <Text style={s.mBadgeText}>1</Text>
                     </View>
-                    <Text style={s.mStepTitle}>Mobile Money Number</Text>
+                    <Text style={s.mStepTitle}>
+                      Mobile Money Number
+                    </Text>
                   </View>
                   <View style={s.momoRow}>
-                    <Text style={{ fontSize: 18, marginRight: 8 }}>🇬🇭</Text>
+                    <Text style={{ fontSize: 18, marginRight: 8 }}>
+                      🇬🇭
+                    </Text>
                     <TextInput
                       style={s.momoInput}
                       value={momo}
@@ -1291,22 +1893,76 @@ const CheckoutScreen = ({ navigation }) => {
                       maxLength={12}
                       placeholder="233XXXXXXXXX"
                       placeholderTextColor={C.inkGhost}
+                      editable={inlineValidation !== "validating"}
                     />
-                    {momoOk() && (
+                    {inlineValidation === "validating" && (
+                      <ActivityIndicator
+                        size="small"
+                        color={C.brand}
+                      />
+                    )}
+                    {inlineValidation === "success" && (
                       <Ionicons
                         name="checkmark-circle"
-                        size={20}
+                        size={22}
                         color={C.green}
+                      />
+                    )}
+                    {inlineValidation === "failed" && (
+                      <Ionicons
+                        name="close-circle"
+                        size={22}
+                        color={C.red}
                       />
                     )}
                   </View>
                   {momoZero() && (
-                    <Hint type="error" text="Don't start with 0 after 233" />
+                    <View style={s.hintRow}>
+                      <Ionicons
+                        name="warning"
+                        size={13}
+                        color={C.red}
+                      />
+                      <Text
+                        style={[s.hintText, { color: C.red }]}
+                      >
+                        Don't include a leading 0 after 233
+                      </Text>
+                    </View>
                   )}
-                  {momo.length === 12 && !momoOk() && !momoZero() && (
-                    <Hint type="error" text="Invalid number" />
+                  {momo.length === 12 &&
+                    !momoOk() &&
+                    !momoZero() && (
+                      <View style={s.hintRow}>
+                        <Ionicons
+                          name="warning"
+                          size={13}
+                          color={C.red}
+                        />
+                        <Text
+                          style={[s.hintText, { color: C.red }]}
+                        >
+                          Invalid number
+                        </Text>
+                      </View>
+                    )}
+                  {momoOk() && inlineValidation === "idle" && (
+                    <View style={s.hintRow}>
+                      <Ionicons
+                        name="ellipse-outline"
+                        size={13}
+                        color={C.inkFaint}
+                      />
+                      <Text
+                        style={[
+                          s.hintText,
+                          { color: C.inkFaint },
+                        ]}
+                      >
+                        Select a network to validate automatically
+                      </Text>
+                    </View>
                   )}
-                  {momoOk() && <Hint type="success" text="Valid number" />}
                 </View>
 
                 <View style={s.mStep}>
@@ -1314,57 +1970,70 @@ const CheckoutScreen = ({ navigation }) => {
                     <View style={s.mBadge}>
                       <Text style={s.mBadgeText}>2</Text>
                     </View>
-                    <Text style={s.mStepTitle}>Select Network</Text>
+                    <Text style={s.mStepTitle}>
+                      Select Network
+                    </Text>
+                    {inlineValidation === "validating" && (
+                      <Text style={s.autoValidatingLabel}>
+                        Auto-validating…
+                      </Text>
+                    )}
                   </View>
-                  <NetCard
-                    id="mtn"
-                    label="MTN"
-                    sub="MTN Mobile Money"
-                    logo={mtnLogo}
-                    selected={net === "mtn"}
-                    onPick={setNet}
-                  />
-                  <NetCard
-                    id="vodafone"
-                    label="Vodafone"
-                    sub="Vodafone Cash"
-                    logo={vodafoneLogo}
-                    selected={net === "vodafone"}
-                    onPick={setNet}
-                  />
-                  <NetCard
-                    id="airteltigo"
-                    label="AirtelTigo"
-                    sub="AirtelTigo Money"
-                    logo={airteltigoLogo}
-                    selected={net === "airteltigo"}
-                    onPick={setNet}
-                  />
+                  {NETWORK_CONFIGS.map((network) => (
+                    <NetCard
+                      key={network.id}
+                      network={network}
+                      selected={selectedNetwork?.id === network.id}
+                      onPick={handleNetworkSelect}
+                      disabled={inlineValidation === "validating"}
+                    />
+                  ))}
                 </View>
 
+                <ValidationStatusBanner
+                  validationState={inlineValidation}
+                  accountName={accountHoldName}
+                  onRetry={handleRetryValidation}
+                />
+
                 <TouchableOpacity
-                  activeOpacity={0.85}
-                  disabled={!momoOk() || !net || payBusy}
+                  activeOpacity={canPay ? 0.85 : 1}
+                  disabled={!canPay || payBusy}
                   onPress={handlePay}
                   style={[
                     s.payBtn,
-                    (!momoOk() || !net || payBusy) && s.payBtnOff,
+                    (!canPay || payBusy) && s.payBtnOff,
                   ]}
                 >
                   {payBusy ? (
                     <View style={s.payBtnInner}>
-                      <ActivityIndicator color={C.white} size="small" />
-                      <Text style={s.payBtnText}>Sending request…</Text>
+                      <ActivityIndicator
+                        color={C.white}
+                        size="small"
+                      />
+                      <Text style={s.payBtnText}>
+                        Sending request…
+                      </Text>
                     </View>
                   ) : (
                     <View style={s.payBtnInner}>
                       <Ionicons
-                        name="shield-checkmark-outline"
+                        name={
+                          canPay
+                            ? "card-outline"
+                            : "lock-closed-outline"
+                        }
                         size={18}
                         color={C.white}
                       />
                       <Text style={s.payBtnText}>
-                        Pay {money(grandTotal)}
+                        {inlineValidation === "validating"
+                          ? "Validating…"
+                          : inlineValidation === "success"
+                          ? `Pay ${money(grandTotal)}`
+                          : inlineValidation === "failed"
+                          ? "Validation Failed – Retry Above"
+                          : "Complete Fields to Pay"}
                       </Text>
                     </View>
                   )}
@@ -1372,14 +2041,19 @@ const CheckoutScreen = ({ navigation }) => {
 
                 <View style={s.helpCard}>
                   <View style={s.helpHead}>
-                    <Ionicons name="bulb-outline" size={15} color={C.amber} />
-                    <Text style={s.helpTitle}>What happens next?</Text>
+                    <Ionicons
+                      name="bulb-outline"
+                      size={15}
+                      color={C.amber}
+                    />
+                    <Text style={s.helpTitle}>How It Works</Text>
                   </View>
                   {[
-                    "Payment prompt appears on your phone",
-                    "Enter your Mobile Money PIN to approve",
-                    "Wait 10–25 seconds for confirmation",
-                    "Order processes immediately after payment",
+                    "Enter your MoMo number – network detected automatically",
+                    "Your account is validated automatically",
+                    "Tap Pay once validation succeeds",
+                    "Approve the prompt on your phone",
+                    "Your order is confirmed instantly after payment",
                   ].map((t, i) => (
                     <View key={i} style={s.helpLine}>
                       <View style={s.helpDot} />
@@ -1390,8 +2064,7 @@ const CheckoutScreen = ({ navigation }) => {
               </>
             )}
 
-            {/* ── PENDING STATE ── */}
-            {status === "pending" && (
+            {modalPhase === "pending" && (
               <View style={s.statusBox}>
                 <Animated.View
                   style={[
@@ -1407,21 +2080,55 @@ const CheckoutScreen = ({ navigation }) => {
                     />
                   </View>
                 </Animated.View>
-                <Text style={s.statusTitle}>Approve on Your Phone</Text>
+                <Text style={s.statusTitle}>
+                  Approve on Your Phone
+                </Text>
                 <Text style={s.statusSub}>
                   A payment prompt has been sent
                 </Text>
                 <View style={s.statusMeta}>
-                  <InfoLine label="Number" value={momo} />
-                  <InfoLine label="Network" value={net?.toUpperCase()} />
-                  <InfoLine
-                    label="Amount"
-                    value={money(grandTotal)}
-                    highlight
-                  />
+                  <View style={s.infoLine}>
+                    <Text style={s.infoLabel}>Number</Text>
+                    <Text style={s.infoVal}>{momo}</Text>
+                  </View>
+                  <View style={s.infoLine}>
+                    <Text style={s.infoLabel}>Network</Text>
+                    <Text style={s.infoVal}>
+                      {selectedNetwork?.name}
+                    </Text>
+                  </View>
+                  <View style={s.infoLine}>
+                    <Text style={s.infoLabel}>Amount</Text>
+                    <Text
+                      style={[
+                        s.infoVal,
+                        {
+                          color: C.brand,
+                          fontWeight: "800",
+                        },
+                      ]}
+                    >
+                      {money(grandTotal)}
+                    </Text>
+                  </View>
                 </View>
                 <View style={s.tickWrap}>
-                  <Bar pct={tick / TIMER_SECONDS} />
+                  <View style={s.barTrack}>
+                    <View
+                      style={[
+                        s.barFill,
+                        {
+                          width: `${
+                            Math.max(
+                              0,
+                              Math.min(1, tick / TIMER_SECONDS)
+                            ) * 100
+                          }%`,
+                          backgroundColor: C.brand,
+                        },
+                      ]}
+                    />
+                  </View>
                   <Text style={s.tickText}>
                     {tick > 0 ? `${tick}s remaining` : "Checking…"}
                   </Text>
@@ -1429,11 +2136,13 @@ const CheckoutScreen = ({ navigation }) => {
               </View>
             )}
 
-            {/* ── SUCCESS STATE ── */}
-            {status === "success" && (
+            {modalPhase === "success" && (
               <View style={s.statusBox}>
                 <View
-                  style={[s.statusBubble, { backgroundColor: C.greenGhost }]}
+                  style={[
+                    s.statusBubble,
+                    { backgroundColor: C.greenGhost },
+                  ]}
                 >
                   <Ionicons
                     name="checkmark-circle"
@@ -1444,29 +2153,51 @@ const CheckoutScreen = ({ navigation }) => {
                 <Text style={[s.statusTitle, { color: C.green }]}>
                   Payment Successful!
                 </Text>
-                <Text style={s.statusSub}>Processing your order…</Text>
-                <ActivityIndicator
-                  size="small"
-                  color={C.brand}
-                  style={{ marginTop: 18 }}
-                />
+                <Text style={s.statusSub}>
+                  Processing your order…
+                </Text>
+                {loading.networkDispatch && (
+                  <View style={s.dispatchingStatus}>
+                    <ActivityIndicator
+                      size="small"
+                      color={C.brand}
+                      style={{ marginTop: 18 }}
+                    />
+                    
+                  </View>
+                )}
               </View>
             )}
 
-            {/* ── FAILED STATE ── */}
-            {status === "failed" && (
+            {modalPhase === "failed" && (
               <View style={s.statusBox}>
                 <View
-                  style={[s.statusBubble, { backgroundColor: C.redGhost }]}
+                  style={[
+                    s.statusBubble,
+                    { backgroundColor: C.redGhost },
+                  ]}
                 >
-                  <Ionicons name="close-circle" size={68} color={C.red} />
+                  <Ionicons
+                    name="close-circle"
+                    size={68}
+                    color={C.red}
+                  />
                 </View>
                 <Text style={[s.statusTitle, { color: C.red }]}>
                   Payment Not Completed
                 </Text>
                 <Text style={s.statusSub}>
-                  Please check the alert for options
+                  {authError
+                    ? "Authentication failed — please contact support"
+                    : error?.status === 503
+                    ? "Service temporarily unavailable"
+                    : "Check the alert above for options"}
                 </Text>
+                {error?.status === 503 && retryAttempts > 0 && (
+                  <Text style={s.retryText}>
+                    Retry attempts: {retryAttempts}
+                  </Text>
+                )}
               </View>
             )}
           </ScrollView>
@@ -1476,8 +2207,8 @@ const CheckoutScreen = ({ navigation }) => {
   );
 
   /* ═══════════════════════════════════════════════════════
-   *  RENDER
-   * ═══════════════════════════════════════════════════════ */
+     RENDER
+     ═══════════════════════════════════════════════════════ */
   return (
     <View style={s.root}>
       {busy && (
@@ -1489,8 +2220,7 @@ const CheckoutScreen = ({ navigation }) => {
           </View>
         </View>
       )}
-
-      <View style={[s.header, { paddingTop: insets.top + 10 }]}>
+      <View style={[s.header, { paddingTop: 10 }]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={s.hBack}
@@ -1501,15 +2231,25 @@ const CheckoutScreen = ({ navigation }) => {
         <View style={{ flex: 1 }}>
           <Text style={s.hTitle}>Checkout</Text>
           <View style={s.hSec}>
-            <Ionicons name="lock-closed" size={9} color={C.brandLight} />
+            <Ionicons
+              name="lock-closed"
+              size={9}
+              color={C.brandLight}
+            />
             <Text style={s.hSecText}>Secure checkout</Text>
           </View>
         </View>
         <View style={s.hBag}>
-          <Ionicons name="bag-handle-outline" size={19} color={C.white} />
+          <Ionicons
+            name="bag-handle-outline"
+            size={19}
+            color={C.white}
+          />
           {cartItems.length > 0 && (
             <View style={s.hBagBadge}>
-              <Text style={s.hBagBadgeText}>{cartItems.length}</Text>
+              <Text style={s.hBagBadgeText}>
+                {cartItems.length}
+              </Text>
             </View>
           )}
         </View>
@@ -1517,7 +2257,7 @@ const CheckoutScreen = ({ navigation }) => {
 
       <Animated.ScrollView
         style={[{ flex: 1 }, { opacity: fade }]}
-        contentContainerStyle={{ padding: 14, paddingBottom: 0 }}
+        contentContainerStyle={{ padding: 14 }}
         showsVerticalScrollIndicator={false}
       >
         {renderDelivery()}
@@ -1531,7 +2271,7 @@ const CheckoutScreen = ({ navigation }) => {
           {
             paddingBottom:
               Platform.OS === "ios"
-                ? Math.max(insets.bottom, 14) + 10
+                ? Math.max(insets.bottom, 14)
                 : 14,
           },
         ]}
@@ -1547,7 +2287,11 @@ const CheckoutScreen = ({ navigation }) => {
           activeOpacity={0.85}
         >
           <Text style={s.botBtnText}>Place Order</Text>
-          <Ionicons name="arrow-forward-circle" size={18} color={C.white} />
+          <Ionicons
+            name="arrow-forward-circle"
+            size={18}
+            color={C.white}
+          />
         </TouchableOpacity>
       </View>
 
@@ -1564,12 +2308,8 @@ const CheckoutScreen = ({ navigation }) => {
 
 export default CheckoutScreen;
 
-/* ──────────────────────────────────────────────────────
- *  STYLES
- * ────────────────────────────────────────────────────── */
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -1594,7 +2334,11 @@ const s = StyleSheet.create({
     gap: 4,
     marginTop: 2,
   },
-  hSecText: { color: C.brandLight, fontSize: 10, fontWeight: "600" },
+  hSecText: {
+    color: C.brandLight,
+    fontSize: 10,
+    fontWeight: "600",
+  },
   hBag: { position: "relative", padding: 4 },
   hBagBadge: {
     position: "absolute",
@@ -1608,8 +2352,11 @@ const s = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 3,
   },
-  hBagBadgeText: { color: C.white, fontSize: 9, fontWeight: "800" },
-
+  hBagBadgeText: {
+    color: C.white,
+    fontSize: 9,
+    fontWeight: "800",
+  },
   card: {
     backgroundColor: C.card,
     borderRadius: 18,
@@ -1631,17 +2378,30 @@ const s = StyleSheet.create({
     justifyContent: "center",
     marginRight: 10,
   },
-  cardTitle: { flex: 1, fontSize: 15, fontWeight: "800", color: C.ink },
+  cardTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.ink,
+  },
   cardBadge: {
     backgroundColor: C.brandGhost,
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
-  cardBadgeText: { fontSize: 11, fontWeight: "800", color: C.brand },
-
+  cardBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: C.brand,
+  },
   fieldWrap: { marginBottom: 12 },
-  fieldLabel: { fontSize: 12, fontWeight: "700", color: C.inkSoft, marginBottom: 6 },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.inkSoft,
+    marginBottom: 6,
+  },
   fieldBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -1659,9 +2419,17 @@ const s = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: Platform.OS === "ios" ? 13 : 10,
   },
-  fieldError: { fontSize: 11, color: C.red, fontWeight: "600", marginTop: 4 },
-
-  addrRow: { flexDirection: "row", gap: 8, alignItems: "center" },
+  fieldError: {
+    fontSize: 11,
+    color: C.red,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  addrRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
   locBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1679,7 +2447,6 @@ const s = StyleSheet.create({
     marginBottom: 12,
   },
   toggleText: { color: C.brand, fontWeight: "700", fontSize: 12 },
-
   pmCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -1690,7 +2457,10 @@ const s = StyleSheet.create({
     marginBottom: 8,
     backgroundColor: C.cardAlt,
   },
-  pmCardOn: { borderColor: C.brandBorder, backgroundColor: C.brandGhost },
+  pmCardOn: {
+    borderColor: C.brandBorder,
+    backgroundColor: C.brandGhost,
+  },
   pmIconBox: {
     width: 40,
     height: 40,
@@ -1703,7 +2473,6 @@ const s = StyleSheet.create({
   pmIconBoxOn: { backgroundColor: C.brandLight },
   pmTitle: { fontSize: 13, fontWeight: "700", color: C.ink },
   pmSub: { fontSize: 10, color: C.inkFaint, marginTop: 2 },
-
   radio: {
     width: 20,
     height: 20,
@@ -1714,7 +2483,6 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
   radioDot: { width: 10, height: 10, borderRadius: 5 },
-
   itemRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1744,7 +2512,11 @@ const s = StyleSheet.create({
     lineHeight: 17,
     marginBottom: 3,
   },
-  itemMeta: { flexDirection: "row", alignItems: "center", gap: 8 },
+  itemMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   qtyTag: {
     backgroundColor: C.brandGhost,
     borderRadius: 5,
@@ -1754,7 +2526,6 @@ const s = StyleSheet.create({
   qtyTagText: { fontSize: 10, fontWeight: "700", color: C.brand },
   unitPrice: { fontSize: 10, color: C.inkFaint, fontWeight: "600" },
   itemTotal: { fontSize: 14, fontWeight: "800", color: C.ink },
-
   divider: {
     borderBottomWidth: 1,
     borderBottomColor: C.line,
@@ -1766,10 +2537,7 @@ const s = StyleSheet.create({
     paddingVertical: 5,
   },
   sumLabel: { fontSize: 13, fontWeight: "600", color: C.inkMuted },
-  sumLabelBold: { fontWeight: "800", color: C.ink },
   sumVal: { fontSize: 13, fontWeight: "700", color: C.ink },
-  sumValBold: { fontWeight: "900" },
-
   totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1777,9 +2545,13 @@ const s = StyleSheet.create({
     paddingVertical: 6,
   },
   totalLabel: { fontSize: 16, fontWeight: "900", color: C.ink },
-  totalHint: { fontSize: 10, color: C.inkFaint, fontWeight: "600", marginTop: 2 },
+  totalHint: {
+    fontSize: 10,
+    color: C.inkFaint,
+    fontWeight: "600",
+    marginTop: 2,
+  },
   totalVal: { fontSize: 18, fontWeight: "900", color: C.red },
-
   notice: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -1798,7 +2570,80 @@ const s = StyleSheet.create({
     fontWeight: "600",
     lineHeight: 16,
   },
-
+  dispatchStatusCard: {
+    backgroundColor: C.card,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 12,
+    ...shadow("sm"),
+  },
+  dispatchHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  dispatchTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    color: C.ink,
+    marginLeft: 8,
+  },
+  dispatchSummaryBadge: {
+    backgroundColor: C.brand,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  dispatchSummaryText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.white,
+  },
+  dispatchLoadingStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+  },
+  dispatchLoadingText: {
+    fontSize: 12,
+    color: C.inkMuted,
+    fontWeight: "500",
+  },
+  dispatchResultsList: { marginTop: 8 },
+  dispatchResultItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: C.cardAlt,
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  dispatchResultContent: { flex: 1 },
+  dispatchResultNetwork: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: C.ink,
+  },
+  dispatchResultTime: {
+    fontSize: 10,
+    color: C.inkMuted,
+    marginTop: 1,
+  },
+  dispatchResultStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  dispatchResultText: { fontSize: 11, fontWeight: "600" },
+  dispatchResultDuration: {
+    fontSize: 9,
+    color: C.inkFaint,
+    marginLeft: 4,
+  },
   bottom: {
     flexDirection: "row",
     alignItems: "center",
@@ -1811,7 +2656,12 @@ const s = StyleSheet.create({
     ...shadow("lg"),
   },
   botLabel: { fontSize: 11, color: C.inkFaint, fontWeight: "600" },
-  botAmount: { fontSize: 18, fontWeight: "900", color: C.ink, marginTop: 1 },
+  botAmount: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: C.ink,
+    marginTop: 1,
+  },
   botBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1823,7 +2673,6 @@ const s = StyleSheet.create({
     ...shadow("brand"),
   },
   botBtnText: { color: C.white, fontSize: 14, fontWeight: "800" },
-
   busyOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: C.overlay,
@@ -1838,9 +2687,13 @@ const s = StyleSheet.create({
     alignItems: "center",
     ...shadow("lg"),
   },
-  busyTitle: { marginTop: 12, fontSize: 15, fontWeight: "800", color: C.ink },
+  busyTitle: {
+    marginTop: 12,
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.ink,
+  },
   busySub: { marginTop: 3, fontSize: 12, color: C.inkMuted },
-
   mOverlay: {
     flex: 1,
     backgroundColor: C.overlay,
@@ -1869,11 +2722,18 @@ const s = StyleSheet.create({
     zIndex: 10,
     padding: 6,
   },
-
-  mBrand: { alignItems: "center", marginTop: 6, marginBottom: 12 },
+  mBrand: {
+    alignItems: "center",
+    marginTop: 6,
+    marginBottom: 12,
+  },
   mLogo: { width: 90, height: 36 },
-  mBrandText: { fontSize: 12, fontWeight: "800", color: C.inkSoft, marginTop: 4 },
-
+  mBrandText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: C.inkSoft,
+    marginTop: 4,
+  },
   mAmountBox: {
     backgroundColor: C.brandGhost,
     borderWidth: 1.5,
@@ -1890,7 +2750,12 @@ const s = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  mAmountVal: { fontSize: 24, fontWeight: "900", color: C.brandDark, marginTop: 3 },
+  mAmountVal: {
+    fontSize: 24,
+    fontWeight: "900",
+    color: C.brandDark,
+    marginTop: 3,
+  },
   mBreakdown: {
     backgroundColor: "rgba(5,150,105,0.08)",
     borderRadius: 8,
@@ -1898,7 +2763,11 @@ const s = StyleSheet.create({
     paddingVertical: 4,
     marginTop: 8,
   },
-  mBreakdownText: { fontSize: 10, fontWeight: "700", color: C.brandDark },
+  mBreakdownText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.brandDark,
+  },
   mRefWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -1906,7 +2775,6 @@ const s = StyleSheet.create({
     marginTop: 6,
   },
   mRefText: { fontSize: 10, color: C.inkFaint, fontWeight: "600" },
-
   mStep: {
     backgroundColor: C.cardAlt,
     borderRadius: 14,
@@ -1930,8 +2798,18 @@ const s = StyleSheet.create({
     marginRight: 8,
   },
   mBadgeText: { color: C.white, fontSize: 12, fontWeight: "800" },
-  mStepTitle: { fontSize: 13, fontWeight: "800", color: C.ink },
-
+  mStepTitle: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "800",
+    color: C.ink,
+  },
+  autoValidatingLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: C.brand,
+    fontStyle: "italic",
+  },
   momoRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1948,10 +2826,13 @@ const s = StyleSheet.create({
     color: C.ink,
     paddingVertical: 12,
   },
-
-  hintRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 },
+  hintRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 6,
+  },
   hintText: { fontSize: 11, fontWeight: "600" },
-
   netCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -1965,7 +2846,32 @@ const s = StyleSheet.create({
   netLogo: { width: 38, height: 38, borderRadius: 9 },
   netName: { fontSize: 13, fontWeight: "700", color: C.ink },
   netSub: { fontSize: 10, color: C.inkFaint, marginTop: 1 },
-
+  vBanner: {
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1.5,
+  },
+  vBannerRow: { flexDirection: "row", alignItems: "flex-start" },
+  vBannerTitle: { fontSize: 13, fontWeight: "700" },
+  vBannerSub: {
+    fontSize: 11,
+    color: C.inkMuted,
+    marginTop: 3,
+    lineHeight: 16,
+  },
+  vRetryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: C.brand,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginLeft: 10,
+    alignSelf: "flex-start",
+  },
+  vRetryText: { color: C.white, fontSize: 11, fontWeight: "700" },
   payBtn: {
     backgroundColor: C.brand,
     borderRadius: 14,
@@ -1982,9 +2888,12 @@ const s = StyleSheet.create({
       android: { elevation: 0 },
     }),
   },
-  payBtnInner: { flexDirection: "row", alignItems: "center", gap: 8 },
+  payBtnInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   payBtnText: { color: C.white, fontSize: 16, fontWeight: "800" },
-
   helpCard: {
     backgroundColor: C.amberGhost,
     borderWidth: 1,
@@ -2012,8 +2921,12 @@ const s = StyleSheet.create({
     backgroundColor: C.amber,
     marginTop: 5,
   },
-  helpText: { flex: 1, fontSize: 11, color: "#78350F", lineHeight: 16 },
-
+  helpText: {
+    flex: 1,
+    fontSize: 11,
+    color: "#78350F",
+    lineHeight: 16,
+  },
   statusBox: { alignItems: "center", paddingVertical: 32 },
   pulseRing: {
     width: 96,
@@ -2040,9 +2953,13 @@ const s = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 6,
   },
-  statusTitle: { fontSize: 18, fontWeight: "900", color: C.ink, marginTop: 18 },
+  statusTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: C.ink,
+    marginTop: 18,
+  },
   statusSub: { fontSize: 13, color: C.inkFaint, marginTop: 5 },
-
   statusMeta: {
     width: "100%",
     backgroundColor: C.cardAlt,
@@ -2061,10 +2978,17 @@ const s = StyleSheet.create({
   },
   infoLabel: { fontSize: 12, color: C.inkFaint, fontWeight: "600" },
   infoVal: { fontSize: 12, color: C.ink, fontWeight: "700" },
-
-  tickWrap: { width: "100%", marginTop: 22, alignItems: "center" },
-  tickText: { fontSize: 12, fontWeight: "700", color: C.brandDark, marginTop: 7 },
-
+  tickWrap: {
+    width: "100%",
+    marginTop: 22,
+    alignItems: "center",
+  },
+  tickText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.brandDark,
+    marginTop: 7,
+  },
   barTrack: {
     width: "100%",
     height: 5,
@@ -2073,4 +2997,16 @@ const s = StyleSheet.create({
     overflow: "hidden",
   },
   barFill: { height: 5, borderRadius: 3 },
+  dispatchingStatus: { alignItems: "center", marginTop: 10 },
+  dispatchingText: {
+    fontSize: 12,
+    color: C.inkMuted,
+    marginTop: 6,
+  },
+  retryText: {
+    fontSize: 11,
+    color: C.inkMuted,
+    marginTop: 4,
+    textAlign: "center",
+  },
 });

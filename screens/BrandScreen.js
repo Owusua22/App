@@ -196,10 +196,10 @@ const BrandScreen = () => {
     if (!imagePath) return 'https://via.placeholder.com/300x300/f0f0f0/cccccc?text=No+Image';
     const fileName = imagePath.split(/[\\/]/).pop();
     if (imagePath.includes('\\') || imagePath.includes('F:') || imagePath.includes('D:')) {
-      return `https://ct002.frankotrading.com:444/Media/Products_Images/${fileName}`;
+      return `https://testing.frankotrading.com/Media/Products_Images/${fileName}`;
     }
     if (imagePath.startsWith('http')) return imagePath;
-    return `https://ct002.frankotrading.com:444/${imagePath}`;
+    return `https://testing.frankotrading.com/${imagePath}`;
   };
 
   const handleAddToCart = useCallback((product) => {

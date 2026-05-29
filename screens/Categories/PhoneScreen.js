@@ -63,7 +63,7 @@ const getValidImageURL = (imagePath) => {
   if (!imagePath) {
     return "https://via.placeholder.com/150";
   }
-  return `https://ct002.frankotrading.com:444/Media/Products_Images/${imagePath
+  return `https://testing.frankotrading.com/Media/Products_Images/${imagePath
     .split("\\")
     .pop()}`;
 };

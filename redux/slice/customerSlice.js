@@ -1,18 +1,24 @@
-// src/redux/slice/customerSlice.js (React Native)
+// src/redux/slice/customerSlice.js
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import api from "./axiosInstance"; // Lambda-based axios instance (RN)
+import api from "./axiosInstance";
+import { reset } from "../../services/navigationService";
 
 const CUSTOMER_KEY = "customer";
+const CUSTOMERS_KEY = "customers";
 
-// -------------------------
-// AsyncStorage helpers
-// -------------------------
 const loadCustomerFromStorage = async () => {
   try {
     const value = await AsyncStorage.getItem(CUSTOMER_KEY);
-    return value ? JSON.parse(value) : null;
-  } catch {
+    if (!value) return null;
+    const customer = JSON.parse(value);
+    if (!customer || typeof customer !== "object") {
+      await AsyncStorage.removeItem(CUSTOMER_KEY);
+      return null;
+    }
+    return customer;
+  } catch (e) {
+    await AsyncStorage.removeItem(CUSTOMER_KEY);
     return null;
   }
 };
@@ -25,15 +31,71 @@ const saveCustomerToStorage = async (customer) => {
       await AsyncStorage.setItem(CUSTOMER_KEY, JSON.stringify(customer));
     }
   } catch (e) {
-    console.warn("Failed to save customer:", e);
+    console.warn("[CustomerSlice] Failed to save customer:", e);
   }
 };
 
-// -------------------------
-// Async Thunks (via Lambda)
-// -------------------------
+const loadCustomersFromStorage = async () => {
+  try {
+    const value = await AsyncStorage.getItem(CUSTOMERS_KEY);
+    return value ? JSON.parse(value) : [];
+  } catch { return []; }
+};
 
-// Create a new customer
+const saveCustomersToStorage = async (customers) => {
+  try {
+    await AsyncStorage.setItem(CUSTOMERS_KEY, JSON.stringify(customers));
+  } catch (e) {
+    console.warn("[CustomerSlice] Failed to save customers:", e);
+  }
+};
+
+const parseResponse = (data) => {
+  if (typeof data === "string") {
+    try { return JSON.parse(data); } catch { return data; }
+  }
+  return data;
+};
+
+const extractResponseInfo = (data) => {
+  return {
+    code: String(
+      data?.response?.responseCode ||
+      data?.ResponseCode ||
+      data?.responseCode ||
+      ""
+    ),
+    message:
+      data?.response?.responseMessage ||
+      data?.ResponseMessage ||
+      data?.responseMessage ||
+      "",
+    status: data?.status,
+    accessToken: data?.accessToken || data?.AccessToken || null,
+    refreshToken: data?.refreshToken || data?.RefreshToken || null,
+  };
+};
+
+// Check auth status
+export const checkAuthStatus = createAsyncThunk(
+  "customers/checkAuthStatus",
+  async () => {
+    try {
+      const customer = await loadCustomerFromStorage();
+      if (!customer) return { isAuthenticated: false, customer: null };
+      if (!customer.accessToken) {
+        await AsyncStorage.removeItem(CUSTOMER_KEY);
+        return { isAuthenticated: false, customer: null };
+      }
+      return { isAuthenticated: true, customer };
+    } catch (error) {
+      await AsyncStorage.removeItem(CUSTOMER_KEY);
+      return { isAuthenticated: false, customer: null };
+    }
+  }
+);
+
+// Create customer
 export const createCustomer = createAsyncThunk(
   "customers/createCustomer",
   async (customerData, { rejectWithValue }) => {
@@ -42,18 +104,9 @@ export const createCustomer = createAsyncThunk(
         params: { endpoint: "/Users/Customer-Post" },
         headers: { "Content-Type": "application/json" },
       });
-
-      // sometimes proxy returns string JSON
-      const data =
-        typeof response.data === "string"
-          ? JSON.parse(response.data)
-          : response.data;
-
-      return data;
+      return parseResponse(response.data);
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data || error.message || "An unknown error occurred."
-      );
+      return rejectWithValue(error.response?.data || error.message || "An unknown error occurred.");
     }
   }
 );
@@ -63,169 +116,294 @@ export const fetchCustomers = createAsyncThunk(
   "customers/fetchCustomers",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get("/", {
-        params: { endpoint: "/Users/Customer-Get" },
-      });
-
-      const data =
-        typeof response.data === "string"
-          ? JSON.parse(response.data)
-          : response.data;
-
+      const response = await api.get("/", { params: { endpoint: "/Users/Customer-Get" } });
+      const data = parseResponse(response.data);
+      if (Array.isArray(data)) await saveCustomersToStorage(data);
       return data;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data || error.message || "An unknown error occurred."
-      );
+      const cached = await loadCustomersFromStorage();
+      if (cached.length > 0) return cached;
+      return rejectWithValue(error.response?.data || error.message || "An unknown error occurred.");
     }
   }
 );
 
-// Get customer by contact number (exactly like web)
+// Get customer by ID - accepts optional accessToken for auth
 export const getCustomerById = createAsyncThunk(
   "customers/getCustomerById",
-  async (contactNumber, { rejectWithValue }) => {
+  async (contactNumberOrObj, { rejectWithValue }) => {
     try {
-      const response = await api.get("/", {
-        params: {
-          endpoint: "/Users/GetCustomerById",
-          contactNumber, // ✅ matches web
-        },
-      });
+      // Accept either a string or { contactNumber, accessToken }
+      let contactNumber;
+      let accessToken;
 
-      let raw = response.data;
-      if (typeof raw === "string") {
-        try {
-          raw = JSON.parse(raw);
-        } catch {
-          // keep as-is if not JSON
-        }
+      if (typeof contactNumberOrObj === "string") {
+        contactNumber = contactNumberOrObj;
+      } else {
+        contactNumber = contactNumberOrObj.contactNumber;
+        accessToken = contactNumberOrObj.accessToken;
       }
 
-      const data = Array.isArray(raw) ? raw[0] : raw;
+      console.log("[getCustomerById] Fetching for:", contactNumber, "hasToken:", !!accessToken);
+
+      // Build request config with optional Authorization header
+      const config = {
+        params: {
+          endpoint: "/Users/GetCustomerById",
+          ContactNumber: contactNumber,
+        },
+      };
+
+      // If token is passed directly, set it on this specific request
+      if (accessToken) {
+        config.headers = {
+          Authorization: `Bearer ${accessToken}`,
+        };
+      }
+
+      const response = await api.get("/", config);
+      const rawData = parseResponse(response.data);
+      console.log("[getCustomerById] Raw response type:", typeof rawData, Array.isArray(rawData));
+
+      const data = Array.isArray(rawData) ? rawData[0] : rawData;
 
       if (!data || !data.contactNumber) {
         return rejectWithValue("No customer found with that contact number.");
       }
 
+      console.log("[getCustomerById] Customer found:", data.contactNumber, "accountStatus:", data.accountStatus);
       return data;
     } catch (error) {
+      console.error("[getCustomerById] Error:", error?.message || error);
+
+      // Try cached data on failure
+      const contactNumber = typeof contactNumberOrObj === "string" 
+        ? contactNumberOrObj 
+        : contactNumberOrObj?.contactNumber;
+
+      const cached = await loadCustomerFromStorage();
+      if (cached && cached.contactNumber === contactNumber) {
+        console.log("[getCustomerById] Using cached customer data");
+        return cached;
+      }
+
       return rejectWithValue(
-        error.response?.data ||
-          error.message ||
-          "An unknown error occurred while fetching the customer."
+        error?.response?.data || error?.message || "Failed to fetch customer."
       );
     }
   }
 );
 
-// Customer login (exactly like web)
+// Customer login
 export const loginCustomer = createAsyncThunk(
   "customers/loginCustomer",
   async ({ contactNumber, password }, { dispatch, rejectWithValue }) => {
     try {
+      console.log("[loginCustomer] Calling API with:", { contactNumber });
+
       const loginResponse = await api.post(
         "/",
-        {
-          contactNumber,
-          password,
-          FullName: "N/A",
-        },
+        { contactNumber, password, fullName: "N/A" },
         { params: { endpoint: "/Users/CustomerLogin" } }
       );
 
-      let loginData = loginResponse.data;
+      const loginData = parseResponse(loginResponse.data);
+      console.log("[loginCustomer] Response:", JSON.stringify(loginData));
 
-      // 🔴 Backend may return JSON string
-      if (typeof loginData === "string") {
-        try {
-          loginData = JSON.parse(loginData);
-        } catch (e) {
-          console.error("Failed to parse loginData JSON:", e, loginData);
-          return rejectWithValue("Invalid response from server.");
-        }
+      const { code, message, status, accessToken, refreshToken } = extractResponseInfo(loginData);
+      console.log("[loginCustomer] Extracted - code:", code, "status:", status, "hasToken:", !!accessToken);
+
+      const isSuccess = code === "1" || code === "0" || status === true;
+
+      if (!isSuccess) {
+        return rejectWithValue(message || "Login failed. Invalid credentials.");
       }
 
-      if (String(loginData?.ResponseCode) !== "1") {
-        return rejectWithValue(
-          loginData?.ResponseMessage || "Login failed. Invalid credentials."
+      // IMPORTANT: Save token to storage BEFORE calling getCustomerById
+      // so the axios interceptor can pick it up
+      if (accessToken) {
+        console.log("[loginCustomer] Saving token to storage before fetching customer...");
+        await AsyncStorage.setItem(
+          CUSTOMER_KEY,
+          JSON.stringify({
+            contactNumber,
+            accessToken,
+            refreshToken,
+          })
         );
       }
 
-      // ✅ Load full customer record
-      const customer = await dispatch(getCustomerById(contactNumber)).unwrap();
+      // Get full customer details - pass the token directly
+      console.log("[loginCustomer] Fetching customer details...");
+      const customer = await dispatch(
+        getCustomerById({
+          contactNumber,
+          accessToken,
+        })
+      ).unwrap();
 
-      // ✅ Persist to AsyncStorage
-      await saveCustomerToStorage(customer);
+      console.log("[loginCustomer] Customer fetched, accountStatus:", customer?.accountStatus);
 
-      return customer;
+      // Merge tokens into customer
+      const customerWithTokens = {
+        ...customer,
+        accessToken: accessToken || customer.accessToken,
+        refreshToken: refreshToken || customer.refreshToken,
+      };
+
+      await saveCustomerToStorage(customerWithTokens);
+      return customerWithTokens;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data ||
-          error.message ||
-          "An unknown error occurred during login."
-      );
+      console.error("[loginCustomer] Error:", error);
+
+      const errMsg =
+        error?.response?.data?.response?.responseMessage ||
+        error?.response?.data?.ResponseMessage ||
+        error?.message ||
+        "An unknown error occurred during login.";
+
+      return rejectWithValue(errMsg);
     }
   }
 );
 
-// Update account status (deactivate) like web (RN version)
+// Update account status
 export const updateAccountStatus = createAsyncThunk(
   "customers/updateAccountStatus",
-  async (arg, { getState, rejectWithValue }) => {
+  async ({ accountNumber, accountStatus }, { getState, rejectWithValue }) => {
     try {
-      // 1) from arg
-      let accountNumber = arg?.accountNumber;
-
-      // 2) from redux
-      if (!accountNumber) {
+      let accNum = accountNumber;
+      if (!accNum) {
         const state = getState();
-        const current = state.customer?.currentCustomer;
-        if (current?.customerAccountNumber) {
-          accountNumber = current.customerAccountNumber;
-        }
+        accNum = state.customer?.currentCustomer?.customerAccountNumber;
       }
-
-      // 3) from AsyncStorage
-      if (!accountNumber) {
+      if (!accNum) {
         const stored = await loadCustomerFromStorage();
-        if (stored?.customerAccountNumber) {
-          accountNumber = stored.customerAccountNumber;
-        }
+        accNum = stored?.customerAccountNumber;
       }
-
-      if (!accountNumber) {
-        return rejectWithValue("No customer account number found.");
-      }
+      if (!accNum) return rejectWithValue("No customer account number found.");
 
       const response = await api.post(
         "/",
-        { accountNumber, accountStatus: "0" },
+        { accountNumber: accNum, accountStatus: accountStatus || "0" },
         { params: { endpoint: "/Users/Customer-Status" } }
       );
 
-      await saveCustomerToStorage(null);
-      return response.data;
+      const data = parseResponse(response.data);
+      const { code, message } = extractResponseInfo(data);
+
+      if (code !== "1" && data?.status !== true) {
+        return rejectWithValue(message || "Failed to update account status.");
+      }
+
+      if (accountStatus === "0") {
+        await AsyncStorage.removeItem(CUSTOMER_KEY);
+        await AsyncStorage.removeItem(CUSTOMERS_KEY);
+      }
+
+      return data;
     } catch (error) {
-      console.error("Error updating account status:", error);
-      return rejectWithValue(
-        error.response?.data?.message ||
-          error.response?.data ||
-          error.message ||
-          "Failed to delete account."
-      );
+      return rejectWithValue(error.response?.data || error.message || "Failed to update account status.");
     }
   }
 );
 
-// -------------------------
+// Update customer password
+export const updateCustomerPassword = createAsyncThunk(
+  "customers/updateCustomerPassword",
+  async ({ contactNumber, newPassword, customerData }, { dispatch, getState, rejectWithValue }) => {
+    try {
+      console.log("[updateCustomerPassword] Updating for:", contactNumber);
+
+      // Get current token for authenticated requests
+      const state = getState();
+      const currentToken = state.customer?.currentCustomer?.accessToken;
+      const storedCustomer = await loadCustomerFromStorage();
+      const token = currentToken || storedCustomer?.accessToken;
+
+      const payload = { ...customerData, password: newPassword, contactNumber };
+
+      const config = {
+        params: { endpoint: "/Users/Customer-Post" },
+        headers: { "Content-Type": "application/json" },
+      };
+
+      // Add token if available
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+
+      const response = await api.post("/", payload, config);
+      const data = parseResponse(response.data);
+      console.log("[updateCustomerPassword] Response:", JSON.stringify(data));
+
+      // Reactivate account
+      if (customerData?.customerAccountNumber) {
+        try {
+          await dispatch(updateAccountStatus({
+            accountNumber: customerData.customerAccountNumber,
+            accountStatus: "1",
+          })).unwrap();
+          console.log("[updateCustomerPassword] Account reactivated");
+        } catch (e) {
+          console.warn("[updateCustomerPassword] Failed to reactivate:", e);
+        }
+      }
+
+      // Fetch updated customer with token
+      const updatedCustomer = await dispatch(
+        getCustomerById({
+          contactNumber,
+          accessToken: token,
+        })
+      ).unwrap();
+
+      return updatedCustomer;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || error.message || "Failed to update password.");
+    }
+  }
+);
+
+// Refresh token
+export const refreshCustomerToken = createAsyncThunk(
+  "customers/refreshToken",
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const state = getState();
+      const currentCustomer = state.customer?.currentCustomer;
+      if (!currentCustomer?.refreshToken) return rejectWithValue("No refresh token available.");
+
+      const response = await api.post(
+        "/",
+        { refreshToken: currentCustomer.refreshToken },
+        { params: { endpoint: "/Users/CustomerRefreshToken" } }
+      );
+
+      const data = parseResponse(response.data);
+      const updatedCustomer = {
+        ...currentCustomer,
+        accessToken: data.accessToken || currentCustomer.accessToken,
+        refreshToken: data.refreshToken || currentCustomer.refreshToken,
+      };
+
+      await saveCustomerToStorage(updatedCustomer);
+      return updatedCustomer;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || error.message || "Failed to refresh token.");
+    }
+  }
+);
+
 // Slice
-// -------------------------
 const initialState = {
   currentCustomer: null,
   customerList: [],
+  selectedCustomer: null,
   loading: false,
   error: null,
+  isAuthenticated: false,
+  isAuthChecked: false,
 };
 
 const customerSlice = createSlice({
@@ -234,100 +412,95 @@ const customerSlice = createSlice({
   reducers: {
     logoutCustomer: (state) => {
       state.currentCustomer = null;
-      state.currentCustomerDetails = null;
+      state.selectedCustomer = null;
+      state.isAuthenticated = false;
+      AsyncStorage.multiRemove(["customer", "customers"]).catch(() => {});
+      reset("Home");
+    },
+    silentLogoutAction: (state) => {
+      state.currentCustomer = null;
+      state.selectedCustomer = null;
+      state.isAuthenticated = false;
       AsyncStorage.removeItem("customer").catch(() => {});
     },
-     clearCustomers: (state) => {
-      state.customerList = [];
+    setCurrentCustomer: (state, action) => {
+      state.currentCustomer = action.payload;
+      state.isAuthenticated = !!action.payload;
     },
-    setCustomer: (state, action) => {
-      state.selectedCustomer = action.payload;
-    },
-    clearSelectedCustomer: (state) => {
-      state.selectedCustomer = null;
-    },
+    clearCustomers: (state) => { state.customerList = []; },
+    setCustomer: (state, action) => { state.selectedCustomer = action.payload; },
+    clearSelectedCustomer: (state) => { state.selectedCustomer = null; },
+    setAuthenticated: (state, action) => { state.isAuthenticated = action.payload; },
+    clearError: (state) => { state.error = null; },
   },
   extraReducers: (builder) => {
     builder
-      // createCustomer
-      .addCase(createCustomer.pending, (state) => {
-        state.loading = true;
-        state.error = null;
+      .addCase(checkAuthStatus.pending, (s) => { s.loading = true; })
+      .addCase(checkAuthStatus.fulfilled, (s, a) => {
+        s.loading = false; s.isAuthChecked = true;
+        s.currentCustomer = a.payload.customer; s.isAuthenticated = a.payload.isAuthenticated;
       })
-      .addCase(createCustomer.fulfilled, (state, action) => {
-        state.loading = false;
-        // Don’t force-set currentCustomer here; web doesn’t.
-        // You can keep it if you want, but safest is to just keep response.
-      })
-      .addCase(createCustomer.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload || action.error?.message;
+      .addCase(checkAuthStatus.rejected, (s) => {
+        s.loading = false; s.isAuthChecked = true; s.currentCustomer = null; s.isAuthenticated = false;
       })
 
-      // fetchCustomers
-      .addCase(fetchCustomers.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(fetchCustomers.fulfilled, (state, action) => {
-        state.loading = false;
-        state.customerList = Array.isArray(action.payload) ? action.payload : [];
-      })
-      .addCase(fetchCustomers.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload || action.error?.message;
-      })
+      .addCase(createCustomer.pending, (s) => { s.loading = true; s.error = null; })
+      .addCase(createCustomer.fulfilled, (s) => { s.loading = false; s.error = null; })
+      .addCase(createCustomer.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
 
-      // getCustomerById
-      .addCase(getCustomerById.pending, (state) => {
-        state.loading = true;
-        state.error = null;
+      .addCase(fetchCustomers.pending, (s) => { s.loading = true; s.error = null; })
+      .addCase(fetchCustomers.fulfilled, (s, a) => {
+        s.loading = false; s.customerList = Array.isArray(a.payload) ? a.payload : []; s.error = null;
       })
-      .addCase(getCustomerById.fulfilled, (state, action) => {
-        state.loading = false;
-        // keep details in currentCustomer (web returns customer)
-        state.currentCustomer = action.payload;
-      })
-      .addCase(getCustomerById.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload || action.error?.message;
-      })
+      .addCase(fetchCustomers.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
 
-      // loginCustomer
-      .addCase(loginCustomer.pending, (state) => {
-        state.loading = true;
-        state.error = null;
+      .addCase(getCustomerById.pending, (s) => { s.loading = true; s.error = null; })
+      .addCase(getCustomerById.fulfilled, (s, a) => {
+        s.loading = false; s.error = null;
+        // Don't overwrite currentCustomer if it already has tokens
+        // Only set if not already authenticated or if this is a fresh fetch
+        if (!s.currentCustomer || !s.isAuthenticated) {
+          s.currentCustomer = a.payload;
+          s.isAuthenticated = true;
+        }
       })
-      .addCase(loginCustomer.fulfilled, (state, action) => {
-        state.loading = false;
-        state.currentCustomer = action.payload;
-      })
-      .addCase(loginCustomer.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload || action.error?.message;
-      })
+      .addCase(getCustomerById.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
 
-      // updateAccountStatus
-      .addCase(updateAccountStatus.pending, (state) => {
-        state.loading = true;
-        state.error = null;
+      .addCase(loginCustomer.pending, (s) => { s.loading = true; s.error = null; })
+      .addCase(loginCustomer.fulfilled, (s, a) => {
+        s.loading = false; s.currentCustomer = a.payload; s.isAuthenticated = true; s.error = null;
       })
-      .addCase(updateAccountStatus.fulfilled, (state) => {
-        state.loading = false;
-        state.currentCustomer = null;
+      .addCase(loginCustomer.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
+
+      .addCase(updateAccountStatus.pending, (s) => { s.loading = true; s.error = null; })
+      .addCase(updateAccountStatus.fulfilled, (s, a) => {
+        s.loading = false; s.error = null;
+        if (a.meta?.arg?.accountStatus === "0") { s.currentCustomer = null; s.isAuthenticated = false; }
       })
-      .addCase(updateAccountStatus.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload || action.error?.message;
-      });
+      .addCase(updateAccountStatus.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
+
+      .addCase(updateCustomerPassword.pending, (s) => { s.loading = true; s.error = null; })
+      .addCase(updateCustomerPassword.fulfilled, (s, a) => {
+        s.loading = false; s.currentCustomer = a.payload; s.isAuthenticated = true; s.error = null;
+      })
+      .addCase(updateCustomerPassword.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
+
+      .addCase(refreshCustomerToken.pending, (s) => { s.loading = true; s.error = null; })
+      .addCase(refreshCustomerToken.fulfilled, (s, a) => { s.loading = false; s.currentCustomer = a.payload; s.error = null; })
+      .addCase(refreshCustomerToken.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; });
   },
 });
 
 export const {
-  logoutCustomer,
-  clearCustomers,
-  setCustomer,
-  clearSelectedCustomer,
+  logoutCustomer, silentLogoutAction, setCurrentCustomer,
+  clearCustomers, setCustomer, clearSelectedCustomer, setAuthenticated, clearError,
 } = customerSlice.actions;
+
+export const selectCurrentCustomer = (s) => s.customer.currentCustomer;
+export const selectCustomerList = (s) => s.customer.customerList;
+export const selectCustomerLoading = (s) => s.customer.loading;
+export const selectCustomerError = (s) => s.customer.error;
+export const selectIsAuthenticated = (s) => s.customer.isAuthenticated;
+export const selectIsAuthChecked = (s) => s.customer.isAuthChecked;
 
 export default customerSlice.reducer;

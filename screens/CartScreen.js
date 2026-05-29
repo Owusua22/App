@@ -28,7 +28,7 @@ import SignupScreen from "./SignupScreen";
 
 /* ---------- helpers ---------- */
 
-const backendBaseURL = "https://ct002.frankotrading.com:444";
+const backendBaseURL = "https://testing.frankotrading.com";
 
 const formatCurrency = (amount) => {
   const n = Number(amount) || 0;

@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
+// src/screens/PaymentHelpScreen.jsx
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,8 +10,11 @@ import {
   Alert,
   Animated,
   Platform,
+  ScrollView,
+  Vibration,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useDispatch } from "react-redux";
 import { checkTransactionStatus } from "../redux/slice/paymentSlice";
 import { checkOutOrder, updateOrderDelivery } from "../redux/slice/orderSlice";
@@ -18,815 +22,797 @@ import { clearCart } from "../redux/slice/cartSlice";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const mtnLogo = require("../assets/momo.png");
+const mtnLogo      = require("../assets/momo.png");
 const vodafoneLogo = require("../assets/voda.jpeg");
-const atLogo = require("../assets/AT.png");
+const atLogo       = require("../assets/AT.png");
 
+/* ═══════════════════════════════════════════════════════════
+ *  CONSTANTS — mirrors web Checkout.jsx exactly
+ * ═══════════════════════════════════════════════════════════ */
 const CART_KEYS_TO_CLEAR = [
-  "cart",
-  "cartId",
-  "cartDetails",
-  "checkoutDetails",
-  "pendingOrderId",
-  "selectedLocation",
+  "cart", "cartId", "cartDetails", "checkoutDetails",
+  "pendingOrderId", "selectedLocation", "orderDeliveryDetails",
 ];
 
-/* ─── Tokens ─────────────────────────────────────────── */
+const AUTO_CHECK_DELAY_MS = 120_000; // 2 minutes — same as web AUTO_CHECK_DELAY_MS
+
+/* ─── Colour System ───────────────────────────────────── */
 const C = {
-  primary: "#059669",
-  primaryDark: "#047857",
-  primaryDeep: "#064E3B",
-  primaryMist: "#A7F3D0",
+  primary:      "#059669",
+  primaryDark:  "#047857",
+  primaryDeep:  "#064E3B",
+  primaryLight: "#34D399",
   primaryGhost: "#ECFDF5",
-
-  bg: "#F7F8F5",
-  surface: "#FFFFFF",
-  textMain: "#111714",
-  textBody: "#2D3E35",
-  textSub: "#5C7068",
-  textMuted: "#8FA396",
-  border: "#DDE5DF",
-  borderLight: "#EEF3EF",
-  borderHair: "#F3F7F4",
-
-  danger: "#DC2626",
-  warning: "#D97706",
+  bg:           "#F8FAFC",
+  surface:      "#FFFFFF",
+  textMain:     "#0F172A",
+  textSub:      "#64748B",
+  textMuted:    "#94A3B8",
+  border:       "#E2E8F0",
+  borderLight:  "#F1F5F9",
+  borderHair:   "#E5E7EB",
+  danger:       "#EF4444",
+  dangerDark:   "#DC2626",
+  dangerGhost:  "#FEF2F2",
+  warning:      "#F59E0B",
+  warningDark:  "#D97706",
   warningGhost: "#FFFBEB",
-  warningBorder: "#FDE68A",
+  success:      "#10B981",
+  successGhost: "#ECFDF5",
+  white:        "#FFFFFF",
+  overlay:      "rgba(15,23,42,0.6)",
 
-  mtnAccent: "#F59E0B",
-  mtnBg: "#FFFBEB",
-  mtnBorder: "#FCD34D",
-  vodaAccent: "#E11D48",
-  vodaBg: "#FFF1F2",
-  vodaBorder: "#FECDD3",
-  atAccent: "#2563EB",
-  atBg: "#EFF6FF",
-  atBorder: "#BFDBFE",
-
-  white: "#FFFFFF",
+  mtn:       { accent: "#F59E0B", dark: "#D97706", bg: "#FFFBEB", border: "#FDE68A", gradient: ["#F59E0B", "#EF8C0B"] },
+  vodafone:  { accent: "#EF4444", dark: "#DC2626", bg: "#FEF2F2", border: "#FCA5A5", gradient: ["#EF4444", "#DC2626"] },
+  airteltigo:{ accent: "#3B82F6", dark: "#2563EB", bg: "#EFF6FF", border: "#93C5FD", gradient: ["#3B82F6", "#2563EB"] },
 };
 
-const SHADOW_SM = Platform.select({
-  ios: {
-    shadowColor: "#0A2018",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
-    shadowRadius: 8,
-  },
-  android: { elevation: 2 },
-});
-const SHADOW_LG = Platform.select({
-  ios: {
-    shadowColor: "#0A2018",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.14,
-    shadowRadius: 24,
-  },
-  android: { elevation: 8 },
-});
-const SHADOW_BTN = Platform.select({
-  ios: {
-    shadowColor: "#047857",
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-  },
-  android: { elevation: 7 },
-});
-
+/* ─── Helpers ─────────────────────────────────────────── */
 const fmt = (v) => {
   const n = Number(v) || 0;
-  return `GH₵${n.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return `GH₵${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-const BACKEND_BASE = "https://ct002.frankotrading.com:444";
 const itemImageUri = (p) =>
-  p
-    ? `${BACKEND_BASE}/Media/Products_Images/${p.split("\\").pop()}`
-    : null;
+  p ? `https://testing.frankotrading.com/Media/Products_Images/${p.split("\\").pop()}` : null;
 
-/* ─── Network Config ─────────────────────────────────── */
+const formatMomo = (num) => {
+  if (!num) return "";
+  const c = num.replace(/\D/g, "");
+  if (c.length === 12) return `+${c.slice(0,3)} ${c.slice(3,6)} ${c.slice(6,9)} ${c.slice(9)}`;
+  if (c.length === 10) return `${c.slice(0,3)} ${c.slice(3,6)} ${c.slice(6)}`;
+  return c;
+};
+
+/**
+ * Exact match — mirrors web Checkout.jsx isPaymentSuccess
+ * code === "01" AND message includes "successfully" + "processed" + "transaction"
+ */
+const isPaymentSuccess = (response) => {
+  if (!response) return false;
+  const code = response.responseCode;
+  const msg  = (response.responseMessage || "").toLowerCase().trim();
+  const result = code === "01" && msg.includes("successfully") && msg.includes("processed") && msg.includes("transaction");
+  console.log("[PaymentHelp][isPaymentSuccess]", { responseCode: code, responseMessage: response.responseMessage, result });
+  return result;
+};
+
+const formatAutoCheckTime = (seconds) => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+};
+
+/* ─── Network Config ──────────────────────────────────── */
 const NETWORK_CONFIG = {
   mtn: {
-    name: "MTN Mobile Money",
-    short: "MTN",
-    logo: mtnLogo,
-    accent: C.mtnAccent,
-    bg: C.mtnBg,
-    border: C.mtnBorder,
-    ussd: "*170#",
+    name: "MTN Mobile Money", short: "MTN MoMo",
+    logo: mtnLogo, theme: C.mtn, ussd: "*170#",
     steps: [
-      {
-        icon: "phone-portrait-outline",
-        label: "Dial *170# on your MTN phone",
-      },
-      {
-        icon: "list-outline",
-        label: "Select 6 — My Wallet (or 10 on some versions)",
-      },
-      { icon: "checkmark-circle-outline", label: "Select 3 — My Approvals" },
-      {
-        icon: "lock-closed-outline",
-        label: "Enter your MoMo PIN to load pending list",
-      },
-      {
-        icon: "search-outline",
-        label: "Select the Franko Trading transaction",
-      },
-      { icon: "checkmark-done-outline", label: "Select 1 (YES) to approve" },
+      { icon: "keypad-outline",               title: "Dial *170#",       desc: "Open dialer & enter USSD code" },
+      { icon: "menu-outline",                  title: "Select Option 6",  desc: "Choose 'My Wallet'" },
+      { icon: "checkmark-circle-outline",      title: "Select Option 3",  desc: "Navigate to 'My Approvals'" },
+      { icon: "lock-closed-outline",           title: "Enter MoMo PIN",   desc: "4-digit PIN to see pending requests" },
+      { icon: "search-outline",                title: "Find Transaction",  desc: "Look for 'Franko Trading' in the list" },
+      { icon: "checkmark-done-circle-outline", title: "Approve Payment",  desc: "Select YES to confirm payment" },
     ],
-    tip: "You can also open the MTN MoMo app → Approvals → approve the pending request.",
+    tip: "Open MTN MoMo app → Tap 'Approve' or notification → Confirm with PIN",
   },
   vodafone: {
-    name: "Vodafone Cash",
-    short: "Vodafone",
-    logo: vodafoneLogo,
-    accent: C.vodaAccent,
-    bg: C.vodaBg,
-    border: C.vodaBorder,
-    ussd: "*110#",
+    name: "Vodafone Cash", short: "Vodafone Cash",
+    logo: vodafoneLogo, theme: C.vodafone, ussd: "*110#",
     steps: [
-      {
-        icon: "phone-portrait-outline",
-        label: "Dial *110# on your Vodafone phone",
-      },
-      { icon: "list-outline", label: "Select 4 — Make Payments" },
-      { icon: "checkmark-circle-outline", label: "Select 8 — My Approvals" },
-      {
-        icon: "lock-closed-outline",
-        label: "Enter your MoMo PIN to load pending list",
-      },
-      {
-        icon: "search-outline",
-        label: "Select the Franko Trading transaction",
-      },
-      { icon: "checkmark-done-outline", label: "Select 1 (YES) to approve" },
+      { icon: "keypad-outline",               title: "Dial *110#",       desc: "Open dialer & enter USSD code" },
+      { icon: "menu-outline",                  title: "Select Option 4",  desc: "Choose 'Make Payments'" },
+      { icon: "checkmark-circle-outline",      title: "Select Option 8",  desc: "Navigate to 'Pending Approvals'" },
+      { icon: "lock-closed-outline",           title: "Enter PIN",        desc: "Type PIN to view pending transactions" },
+      { icon: "search-outline",                title: "Find Transaction",  desc: "Look for 'Franko Trading' in the list" },
+      { icon: "checkmark-done-circle-outline", title: "Approve Payment",  desc: "Select YES to confirm payment" },
     ],
-    tip: "You can also open the Vodafone Cash app → Pending Transactions → approve.",
+    tip: "Open Vodafone Cash app → Pending → Find request → Approve with PIN",
   },
   airteltigo: {
-    name: "AirtelTigo Money",
-    short: "AirtelTigo",
-    logo: atLogo,
-    accent: C.atAccent,
-    bg: C.atBg,
-    border: C.atBorder,
-    ussd: "*110#",
+    name: "AirtelTigo Money", short: "AirtelTigo",
+    logo: atLogo, theme: C.airteltigo, ussd: "*110#",
     steps: [
-      {
-        icon: "phone-portrait-outline",
-        label: "Dial *110# on your AirtelTigo phone",
-      },
-      {
-        icon: "list-outline",
-        label: "Select Pending Approvals or Wallet (option 8 or 6)",
-      },
-      {
-        icon: "lock-closed-outline",
-        label: "Enter your 4-digit PIN to view pending transactions",
-      },
-      {
-        icon: "search-outline",
-        label: "Select the Franko Trading transaction",
-      },
-      {
-        icon: "checkmark-done-outline",
-        label: "Choose Approve to confirm the payment",
-      },
+      { icon: "keypad-outline",               title: "Dial *110#",       desc: "Open dialer & enter USSD code" },
+      { icon: "menu-outline",                  title: "Select Option 6",  desc: "Choose 'Wallet' / 'AirtelTigo Money'" },
+      { icon: "checkmark-circle-outline",      title: "Select Pending",   desc: "Navigate to pending requests" },
+      { icon: "lock-closed-outline",           title: "Enter PIN",        desc: "Type 4-digit PIN to view transactions" },
+      { icon: "search-outline",                title: "Find Transaction",  desc: "Look for 'Franko Trading' in the list" },
+      { icon: "checkmark-done-circle-outline", title: "Approve Payment",  desc: "Select Approve to confirm" },
     ],
-    tip: "You can also open the AirtelTigo Money app → Pending Approvals → confirm.",
+    tip: "Open AirtelTigo Money app → Pending Approvals → Find request → Approve",
   },
 };
 
-/* ─── Pulsing dot ────────────────────────────────────── */
-const PulsingDot = ({ color, size = 6 }) => {
-  const ring = useRef(new Animated.Value(1)).current;
+const API_TO_KEY = {
+  MTN: "mtn", VODAFONE: "vodafone", TIGO: "airteltigo",
+  VOD: "vodafone", ATL: "airteltigo", ATT: "airteltigo",
+  mtn: "mtn", vodafone: "vodafone", airteltigo: "airteltigo",
+};
+const getNetworkConfig = (code) =>
+  NETWORK_CONFIG[API_TO_KEY[code] ?? String(code ?? "").toLowerCase()] ?? NETWORK_CONFIG.mtn;
+
+/* ─── PulsingDot ─────────────────────────────────────── */
+const PulsingDot = ({ color = C.success, size = 6 }) => {
+  const anim = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(ring, {
-          toValue: 2.2,
-          duration: 900,
-          useNativeDriver: true,
-        }),
-        Animated.timing(ring, {
-          toValue: 1,
-          duration: 900,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(anim, { toValue: 0.2, duration: 800, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: 1,   duration: 800, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
   }, []);
   return (
-    <View
-      style={{
-        width: size * 2.5,
-        height: size * 2.5,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Animated.View
-        style={{
-          position: "absolute",
-          width: size * 2.5,
-          height: size * 2.5,
-          borderRadius: size * 1.25,
-          backgroundColor: color,
-          opacity: 0.18,
-          transform: [{ scale: ring }],
-        }}
-      />
-      <View
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: color,
-        }}
-      />
-    </View>
+    <Animated.View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color, opacity: anim }} />
   );
 };
 
-/* ═══════════════════════════════════════════════════════
- *  MAIN
- * ═════════════════════════════════════════════════════*/
+/* ─── ResultOverlay ──────────────────────────────────── */
+const ResultOverlay = ({ status, orderId, onDismiss }) => {
+  const scale   = useRef(new Animated.Value(0.7)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(scale,   { toValue: 1, friction: 6, tension: 80, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  const ok = status === "success";
+  return (
+    <Animated.View style={[styles.overlayBack, { opacity }]}>
+      <Animated.View style={[styles.overlayCard, { transform: [{ scale }] }]}>
+        <View style={[styles.overlayIcon, { backgroundColor: ok ? C.successGhost : C.dangerGhost }]}>
+          <Ionicons name={ok ? "checkmark-circle" : "close-circle"} size={68} color={ok ? C.success : C.danger} />
+        </View>
+        <Text style={[styles.overlayTitle, { color: ok ? C.success : C.danger }]}>
+          {ok ? "Payment Confirmed!" : "Payment Not Found"}
+        </Text>
+        <Text style={styles.overlaySub}>
+          {ok ? "Your order has been placed successfully." : "We could not confirm your payment. Your order has been cancelled."}
+        </Text>
+        {orderId ? (
+          <View style={styles.overlayRef}>
+            <Text style={styles.overlayRefLabel}>Ref: </Text>
+            <Text style={styles.overlayRefVal}>{orderId}</Text>
+          </View>
+        ) : null}
+        <TouchableOpacity
+          style={[styles.overlayBtn, { backgroundColor: ok ? C.primary : C.danger }]}
+          onPress={onDismiss}
+        >
+          <Text style={styles.overlayBtnText}>{ok ? "View Order" : "Go Back"}</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </Animated.View>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════════
+ *  MAIN SCREEN — exact port of web Approval Guide phase
+ * ═══════════════════════════════════════════════════════════ */
 const PaymentHelpScreen = ({ navigation, route }) => {
   const dispatch = useDispatch();
-  const insets = useSafeAreaInsets();
+  const insets   = useSafeAreaInsets();
+
   const {
     orderId,
-    network,
+    network: networkApiCode,
     momoNumber,
     amount,
     checkoutDetails,
     addressDetails,
     cartItems = [],
-  } = route?.params || {};
+  } = route?.params ?? {};
 
-  const [checking, setChecking] = useState(false);
-  const cfg = NETWORK_CONFIG[network] || NETWORK_CONFIG.mtn;
+  const cfg       = getNetworkConfig(networkApiCode);
+  const { theme } = cfg;
+  const itemCount = cartItems.length;
 
-  const masterFade = useRef(new Animated.Value(0)).current;
-  const bodyY = useRef(new Animated.Value(20)).current;
-  const stagger = useRef(cfg.steps.map(() => new Animated.Value(0))).current;
+  /* ── State ── */
+  const [autoCheckCountdown, setAutoCheckCountdown] = useState(AUTO_CHECK_DELAY_MS / 1000);
+  const [manualVerifying, setManualVerifying]       = useState(false);
+  const [redirecting, setRedirecting]               = useState(false);
+  const [resultStatus, setResultStatus]             = useState(null);
+  const [showSteps, setShowSteps]                   = useState(false);
+  const [showSummary, setShowSummary]               = useState(false);
+  const [lastCheckResult, setLastCheckResult]       = useState(null); // "success" | "not_confirmed" | null
 
+  /* ── Refs ── */
+  const mountedRef        = useRef(true);
+  const paymentResolvedRef = useRef(false); // mirrors web paymentResolvedRef
+  const autoCheckFiredRef  = useRef(false); // mirrors web autoCheckFiredRef
+  const orderProcessedRef  = useRef(false);
+  const autoCheckTimerRef  = useRef(null);  // setTimeout for auto-check
+  const autoCountdownRef   = useRef(null);  // setInterval for countdown UI
+  const redirectTimerRef   = useRef(null);
+
+  /* ── Cleanup ── */
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(masterFade, {
-        toValue: 1,
-        duration: 380,
-        useNativeDriver: true,
-      }),
-      Animated.spring(bodyY, {
-        toValue: 0,
-        tension: 75,
-        friction: 10,
-        delay: 80,
-        useNativeDriver: true,
-      }),
-    ]).start();
-    stagger.forEach((a, i) =>
-      Animated.timing(a, {
-        toValue: 1,
-        duration: 280,
-        delay: 420 + i * 80,
-        useNativeDriver: true,
-      }).start()
-    );
+    return () => {
+      mountedRef.current = false;
+      clearAllTimers();
+    };
   }, []);
 
-  /* helpers */
-  const clearAllCartStorage = () =>
-    AsyncStorage.multiRemove(CART_KEYS_TO_CLEAR);
-  const retryAsync = async (fn, retries = 3) => {
-    let err;
-    for (let i = 1; i <= retries; i++) {
-      try {
-        return await fn();
-      } catch (e) {
-        err = e;
-        if (i < retries)
-          await new Promise((r) => setTimeout(r, 2 ** i * 1000));
+  const clearAllTimers = useCallback(() => {
+    if (autoCheckTimerRef.current) clearTimeout(autoCheckTimerRef.current);
+    if (autoCountdownRef.current)  clearInterval(autoCountdownRef.current);
+    if (redirectTimerRef.current)  clearTimeout(redirectTimerRef.current);
+    autoCheckTimerRef.current = null;
+    autoCountdownRef.current  = null;
+    redirectTimerRef.current  = null;
+  }, []);
+
+  /* ── Storage ── */
+  const clearStorage = useCallback(async () => {
+    try { await AsyncStorage.multiRemove(CART_KEYS_TO_CLEAR); } catch (_) {}
+  }, []);
+
+  /* ── Order submission (idempotent — mirrors web processDirectCheckout) ── */
+  const processOrder = useCallback(async () => {
+    if (orderProcessedRef.current) {
+      console.log("[PaymentHelp] Order already processed — skipping.");
+      return;
+    }
+    orderProcessedRef.current = true;
+
+    const retry = async (fn, n = 3) => {
+      let err;
+      for (let i = 1; i <= n; i++) {
+        try { return await fn(); }
+        catch (e) { err = e; if (i < n) await new Promise(r => setTimeout(r, 2 ** i * 1000)); }
+      }
+      throw err;
+    };
+
+    try {
+      const cartId = (await AsyncStorage.getItem("cartId")) || checkoutDetails?.Cartid;
+      await retry(() => dispatch(checkOutOrder({ ...checkoutDetails, Cartid: cartId })).unwrap());
+      await retry(async () => {
+        await dispatch(updateOrderDelivery(addressDetails)).unwrap();
+        dispatch(clearCart());
+        await clearStorage();
+      });
+      console.log("[PaymentHelp] Order submitted.");
+    } catch (e) {
+      orderProcessedRef.current = false;
+      throw e;
+    }
+  }, [dispatch, checkoutDetails, addressDetails, clearStorage]);
+
+  /* ══════════════════════════════════════════════════
+   *  handlePaymentSuccessFlow
+   *  Exact mirror of web handlePaymentSuccessFlow
+   * ═════════════════════════════════════════════════*/
+  const handlePaymentSuccessFlow = useCallback(async () => {
+    if (paymentResolvedRef.current) return;
+    paymentResolvedRef.current = true;
+    clearAllTimers();
+
+    if (!mountedRef.current) return;
+    setResultStatus("success");
+    setRedirecting(true);
+
+    try {
+      await processOrder();
+    } catch (e) {
+      console.error("[PaymentHelp] processOrder failed:", e);
+      if (mountedRef.current) {
+        Alert.alert(
+          "Order Issue",
+          `Payment confirmed but order recording failed.\nRef: ${orderId}\nPlease contact support.`,
+          [{ text: "OK" }]
+        );
       }
     }
-    throw err;
-  };
-  const processOrder = async () => {
-    const cartId =
-      (await AsyncStorage.getItem("cartId")) || checkoutDetails?.Cartid;
-    await retryAsync(() =>
-      dispatch(checkOutOrder({ ...checkoutDetails, Cartid: cartId })).unwrap()
-    );
-    await retryAsync(async () => {
-      await dispatch(updateOrderDelivery(addressDetails)).unwrap();
-      dispatch(clearCart());
-      await clearAllCartStorage();
-    });
-  };
 
-  /* actions */
-  const handleCancelOrder = () =>
+    // Navigate after brief success display — same as web's setTimeout 1500
+    redirectTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current) return;
+      navigation.reset({
+        index: 0,
+        routes: [{ name: "OrderPlacedScreen", params: { orderId } }],
+      });
+    }, 1500);
+  }, [clearAllTimers, processOrder, navigation, orderId]);
+
+  /* ══════════════════════════════════════════════════
+   *  navigateToCancel — mirrors web performCancelOrder
+   * ═════════════════════════════════════════════════*/
+  const navigateToCancel = useCallback((reason = "Cancelled by user") => {
+    if (paymentResolvedRef.current) return;
+    paymentResolvedRef.current = true;
+    clearAllTimers();
+
+    if (!mountedRef.current) return;
+    setResultStatus("failed");
+    setRedirecting(true);
+
+    redirectTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current) return;
+      navigation.reset({
+        index: 0,
+        routes: [{ name: "OrderCancellationScreen", params: { orderId, reason } }],
+      });
+    }, 1500);
+  }, [clearAllTimers, navigation, orderId]);
+
+  /* ══════════════════════════════════════════════════
+   *  AUTO-CHECK useEffect
+   *  Exact mirror of web useEffect watching isApprovalGuideVisible
+   *
+   *  Sets up a 2-minute countdown. When it hits zero,
+   *  fires ONE checkTransactionStatus call.
+   *
+   *  On success → navigate to success
+   *  On failure → show warning (NO auto-cancel, just like web)
+   * ═════════════════════════════════════════════════*/
+  useEffect(() => {
+    if (!orderId) return;
+
+    // Reset guards
+    autoCheckFiredRef.current = false;
+
+    // Countdown UI
+    const totalSeconds = AUTO_CHECK_DELAY_MS / 1000;
+    setAutoCheckCountdown(totalSeconds);
+
+    autoCountdownRef.current = setInterval(() => {
+      if (!mountedRef.current || paymentResolvedRef.current) {
+        clearInterval(autoCountdownRef.current);
+        return;
+      }
+      setAutoCheckCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(autoCountdownRef.current);
+          autoCountdownRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    // Fire auto-check after 2 minutes — mirrors web setTimeout(AUTO_CHECK_DELAY_MS)
+    autoCheckTimerRef.current = setTimeout(async () => {
+      if (autoCheckFiredRef.current || paymentResolvedRef.current || !mountedRef.current) return;
+      autoCheckFiredRef.current = true;
+
+      console.log("[PaymentHelp] Auto-check fired at 2 min for:", orderId);
+
+      try {
+        const response = await dispatch(
+          checkTransactionStatus({ refNo: orderId })
+        ).unwrap();
+
+        if (isPaymentSuccess(response)) {
+          await handlePaymentSuccessFlow();
+        } else {
+          // Web: message.warning("Payment not yet confirmed...")
+          // Just show a non-blocking alert — NO auto-cancel
+          console.log("[PaymentHelp] Auto-check: payment not confirmed yet.", response?.responseCode, response?.responseMessage);
+          if (mountedRef.current) {
+            Alert.alert(
+              "Still Pending",
+              "Payment not yet confirmed. Please approve on your phone or tap 'I've Approved' to check again.",
+              [{ text: "OK" }]
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("[PaymentHelp] Auto-check error:", err);
+        if (mountedRef.current) {
+          Alert.alert(
+            "Check Failed",
+            "Could not verify payment automatically. Use 'I've Approved' to check manually.",
+            [{ text: "OK" }]
+          );
+        }
+      }
+    }, AUTO_CHECK_DELAY_MS);
+
+    return () => {
+      if (autoCountdownRef.current) clearInterval(autoCountdownRef.current);
+      if (autoCheckTimerRef.current) clearTimeout(autoCheckTimerRef.current);
+      autoCountdownRef.current = null;
+      autoCheckTimerRef.current = null;
+    };
+  }, [orderId, dispatch, handlePaymentSuccessFlow]);
+
+  /* ══════════════════════════════════════════════════
+   *  handleManualConfirm
+   *  Exact mirror of web handleManualConfirm
+   *
+   *  User taps "I've Approved" → immediate check
+   *  Success → navigate
+   *  Failure → show not_confirmed dialog
+   * ═════════════════════════════════════════════════*/
+  const handleManualConfirm = useCallback(async () => {
+    if (!orderId || paymentResolvedRef.current) return;
+
+    try {
+      setManualVerifying(true);
+      setLastCheckResult(null);
+
+      console.log("[PaymentHelp] Manual confirm — checking:", orderId);
+
+      const response = await dispatch(
+        checkTransactionStatus({ refNo: orderId })
+      ).unwrap();
+
+      if (isPaymentSuccess(response)) {
+        // Cancel auto-check timer if still pending
+        if (autoCheckTimerRef.current) clearTimeout(autoCheckTimerRef.current);
+        if (autoCountdownRef.current) clearInterval(autoCountdownRef.current);
+
+        await handlePaymentSuccessFlow();
+      } else {
+        // Not confirmed — mirror web: set actionDialog({ open: true, mode: "not_confirmed" })
+        setLastCheckResult("not_confirmed");
+        console.log("[PaymentHelp] Manual confirm: not confirmed.", response?.responseCode, response?.responseMessage);
+      }
+    } catch (err) {
+      console.warn("[PaymentHelp] Manual confirm error:", err);
+      setLastCheckResult("not_confirmed");
+    } finally {
+      if (mountedRef.current) setManualVerifying(false);
+    }
+  }, [orderId, dispatch, handlePaymentSuccessFlow]);
+
+  /* ══════════════════════════════════════════════════
+   *  handleDialogRetry
+   *  From the "not confirmed" dialog — user taps "Try Again"
+   * ═════════════════════════════════════════════════*/
+  const handleDialogRetry = useCallback(() => {
+    setLastCheckResult(null);
+    handleManualConfirm();
+  }, [handleManualConfirm]);
+
+  /* ══════════════════════════════════════════════════
+   *  handleDialogCancel
+   *  From either dialog — user taps "Yes, Cancel Order"
+   * ═════════════════════════════════════════════════*/
+  const handleDialogCancel = useCallback(() => {
+    setLastCheckResult(null);
+    navigateToCancel("Cancelled by user");
+  }, [navigateToCancel]);
+
+  /* ── Cancel order button (opens cancel dialog) ── */
+  const handleCancelFromGuide = useCallback(() => {
+    // Mirror web: setActionDialog({ open: true, mode: "cancel" })
     Alert.alert(
       "Cancel Order?",
-      "This will cancel your order. You have not been charged.",
+      "Are you sure you want to cancel this order?",
       [
         { text: "Keep Trying", style: "cancel" },
         {
           text: "Yes, Cancel",
           style: "destructive",
-          onPress: () =>
-            navigation.reset({
-              index: 0,
-              routes: [{ name: "OrderCancellationScreen" }],
-            }),
+          onPress: () => navigateToCancel("Cancelled by user"),
         },
-      ]
+      ],
+      { cancelable: false }
     );
+  }, [navigateToCancel]);
 
-  const handleConfirmPayment = async () => {
-    if (!orderId) {
-      Alert.alert(
-        "Error",
-        "Order reference not found. Please contact support."
-      );
-      return;
+  /* ── Overlay dismiss ── */
+  const handleOverlayDismiss = useCallback(() => {
+    if (resultStatus === "success") {
+      navigation.reset({ index: 0, routes: [{ name: "OrderPlacedScreen", params: { orderId } }] });
+    } else {
+      navigation.reset({
+        index: 0,
+        routes: [{ name: "OrderCancellationScreen", params: { orderId, reason: "Payment not confirmed" } }],
+      });
     }
-    try {
-      setChecking(true);
-      const res = await dispatch(
-        checkTransactionStatus({ refNo: orderId })
-      ).unwrap();
-      if (
-        res?.responseMessage === "Successfully Processed Transaction"
-      ) {
-        try {
-          await processOrder();
-          await AsyncStorage.multiRemove([
-            "checkoutDetails",
-            "orderDeliveryDetails",
-          ]);
-          navigation.reset({
-            index: 0,
-            routes: [
-              { name: "OrderPlacedScreen", params: { orderId } },
-            ],
-          });
-        } catch {
-          Alert.alert(
-            "Order Error",
-            "Payment confirmed but order processing failed. Contact support."
-          );
-        }
-      } else {
-        Alert.alert(
-          "Not Yet Confirmed",
-          "We couldn't confirm your payment. Follow the steps to approve, then try again.",
-          [
-            { text: "Try Again" },
-            {
-              text: "Cancel Order",
-              style: "destructive",
-              onPress: handleCancelOrder,
-            },
-          ]
-        );
-      }
-    } catch {
-      Alert.alert("Connection Error", "Check your internet and try again.");
-    } finally {
-      setChecking(false);
-    }
-  };
+  }, [resultStatus, navigation, orderId]);
 
-  const itemCount = cartItems.length;
-  const totalQty = cartItems.reduce(
-    (sum, i) => sum + (Number(i.quantity) || 1),
-    0
-  );
+  /* ── Derived ── */
+  const urgentTimer = autoCheckCountdown <= 30;
 
-  return (
-    <View style={s.root}>
-      {/* ══════ COMPACT HEADER ══════ */}
-      <Animated.View
-        style={[
-          s.header,
-          {
-            opacity: masterFade,
-            paddingTop: insets.top + 12,
-          },
-        ]}
-      >
-        <View style={s.arc} pointerEvents="none" />
-
-        {/* Row 1: back · title+status · network */}
-        <View style={s.topRow}>
-          <TouchableOpacity
-            style={s.backBtn}
-            onPress={() => navigation.goBack()}
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name="chevron-back"
-              size={17}
-              color={C.white}
-            />
-          </TouchableOpacity>
-
-          <View style={s.headerMid}>
-            <Text style={s.headerTitle}>Complete Payment</Text>
-            <View style={s.statusRow}>
-              <PulsingDot color="#FCD34D" size={4} />
-              <Text style={s.statusText}>Action Required</Text>
+  /* ══════════════════════════════════════════════════
+   *  "Not Confirmed" Dialog
+   *  Mirror of web PaymentActionDialog with mode="not_confirmed"
+   * ═════════════════════════════════════════════════*/
+  const renderNotConfirmedDialog = () => {
+    if (lastCheckResult !== "not_confirmed") return null;
+    return (
+      <Animated.View style={[styles.overlayBack, { opacity: 1 }]} pointerEvents="auto">
+        <View style={styles.dialogCard}>
+          <View style={[styles.dialogBar, { backgroundColor: C.warning }]} />
+          <View style={styles.dialogBody}>
+            <View style={[styles.dialogIcon, { backgroundColor: C.warningGhost }]}>
+              <Ionicons name="alert-circle" size={32} color={C.warningDark} />
             </View>
-          </View>
-
-          <View
-            style={[
-              s.netPill,
-              { borderColor: `${cfg.accent}55` },
-            ]}
-          >
-            <Image
-              source={cfg.logo}
-              style={s.netLogo}
-              resizeMode="contain"
-            />
-            <Text style={[s.netText, { color: cfg.accent }]}>
-              {cfg.short}
+            <Text style={styles.dialogTitle}>Payment not confirmed yet</Text>
+            <Text style={styles.dialogDesc}>
+              We couldn't verify your payment. Please approve via your MoMo app or USSD, then try again.
             </Text>
-          </View>
-        </View>
-
-        {/* Row 2: amount · ref · number */}
-        <View style={s.amountRow}>
-          <View style={s.amountLeft}>
-            <Text style={s.amountEye}>AMOUNT DUE</Text>
-            <Text style={s.amountVal}>{fmt(amount)}</Text>
-          </View>
-          <View style={s.amountSep} />
-          <View style={s.amountRight}>
-            <Text style={s.amountEye}>ORDER REF</Text>
-            <View style={s.refRow}>
-              <Ionicons
-                name="receipt-outline"
-                size={10}
-                color={C.primaryMist}
-              />
-              <Text style={s.refCode}>{orderId}</Text>
+            <View style={styles.dialogActions}>
+              <TouchableOpacity
+                onPress={handleDialogRetry}
+                disabled={manualVerifying}
+                style={[styles.dialogBtnPrimary, manualVerifying && { opacity: 0.5 }]}
+                activeOpacity={0.85}
+              >
+                {manualVerifying ? (
+                  <View style={styles.dialogBtnInner}>
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text style={styles.dialogBtnPrimaryText}>Verifying…</Text>
+                  </View>
+                ) : (
+                  <View style={styles.dialogBtnInner}>
+                    <Ionicons name="refresh" size={16} color="#fff" />
+                    <Text style={styles.dialogBtnPrimaryText}>I've Approved — Try Again</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleDialogCancel}
+                disabled={manualVerifying}
+                style={[styles.dialogBtnDanger, manualVerifying && { opacity: 0.5 }]}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="close-circle-outline" size={16} color={C.danger} />
+                <Text style={styles.dialogBtnDangerText}>Yes, Cancel Order</Text>
+              </TouchableOpacity>
             </View>
-          </View>
-          <View style={s.amountSep} />
-          <View style={s.amountRight}>
-            <Text style={s.amountEye}>NUMBER</Text>
-            <Text style={s.refCode}>{momoNumber}</Text>
           </View>
         </View>
       </Animated.View>
+    );
+  };
 
-      {/* ══════ BODY ══════ */}
-      <Animated.ScrollView
-        style={[
-          s.scroll,
-          { opacity: masterFade, transform: [{ translateY: bodyY }] },
-        ]}
-        contentContainerStyle={s.scrollContent}
+  /* ══════════════════════════════════════════════════
+   *  RENDER
+   * ═════════════════════════════════════════════════*/
+  return (
+    <View style={styles.root}>
+      {/* Result overlay */}
+      {resultStatus !== null && (
+        <ResultOverlay status={resultStatus} orderId={orderId} onDismiss={handleOverlayDismiss} />
+      )}
+
+      {/* "Not Confirmed" dialog — mirrors web PaymentActionDialog */}
+      {renderNotConfirmedDialog()}
+
+      {/* ── HEADER ── */}
+      <LinearGradient
+        colors={theme.gradient}
+        style={[styles.header, { paddingTop: insets.top + 8 }]}
+      >
+        <View style={styles.headerTop}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backBtn}
+            disabled={redirecting}
+          >
+            <Ionicons name="chevron-back" size={18} color={C.white} />
+          </TouchableOpacity>
+
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Complete Payment</Text>
+            <View style={styles.statusRow}>
+              <PulsingDot color="#FFFDE7" size={5} />
+              <Text style={styles.statusText}>
+                {redirecting ? "Redirecting…" : "Waiting for approval"}
+              </Text>
+              {!redirecting && (
+                <View style={[styles.timerPill, urgentTimer && { backgroundColor: "rgba(239,68,68,0.2)" }]}>
+                  <Ionicons name={urgentTimer ? "alarm" : "time-outline"} size={11} color={urgentTimer ? "#FCA5A5" : C.white} />
+                  <Text style={[styles.timerText, { color: urgentTimer ? "#FCA5A5" : C.white }]}>
+                    {formatAutoCheckTime(autoCheckCountdown)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+
+          <Image source={cfg.logo} style={styles.networkIcon} />
+        </View>
+
+        <View style={styles.amountRow}>
+          <View style={styles.amountBlock}>
+            <Text style={styles.amountLabel}>AMOUNT</Text>
+            <Text style={styles.amountValue}>{fmt(amount)}</Text>
+          </View>
+          <View style={styles.headerDivider} />
+          <View style={styles.amountBlock}>
+            <Text style={styles.amountLabel}>NETWORK</Text>
+            <Text style={styles.amountSub}>{cfg.short}</Text>
+          </View>
+          <View style={styles.headerDivider} />
+          <View style={styles.amountBlock}>
+            <Text style={styles.amountLabel}>PHONE</Text>
+            <Text style={styles.amountSub}>{formatMomo(momoNumber)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.refRow}>
+          <Ionicons name="receipt-outline" size={10} color="rgba(255,255,255,0.6)" />
+          <Text style={styles.refLabel}>Ref: </Text>
+          <Text style={styles.refValue}>{orderId}</Text>
+        </View>
+      </LinearGradient>
+
+      {/* ── CONTENT ── */}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.scrollInner, { paddingBottom: insets.bottom + 140 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* USSD banner */}
-        <TouchableOpacity
-          style={[
-            s.ussdBanner,
-            { backgroundColor: cfg.bg, borderColor: cfg.border },
-          ]}
-          activeOpacity={0.8}
-        >
-          <View
-            style={[
-              s.ussdIcon,
-              { backgroundColor: `${cfg.accent}18` },
-            ]}
-          >
-            <Ionicons
-              name="keypad-outline"
-              size={20}
-              color={cfg.accent}
-            />
+        {/* Auto-check countdown — mirrors web co-auto-check-bar */}
+        {!redirecting && (
+          <View style={styles.autoCheckBar}>
+            <View style={styles.autoCheckLeft}>
+              <Ionicons name="time-outline" size={14} color={C.warningDark} />
+              <Text style={styles.autoCheckLabel}>Auto-checking payment in</Text>
+            </View>
+            <Text style={[styles.autoCheckTime, urgentTimer && { color: C.danger }]}>
+              {formatAutoCheckTime(autoCheckCountdown)}
+            </Text>
+          </View>
+        )}
+
+        {/* USSD Quick Dial */}
+        <View style={[styles.ussdCard, { backgroundColor: theme.bg, borderColor: theme.border }]}>
+          <View style={[styles.ussdIconWrap, { backgroundColor: `${theme.accent}20` }]}>
+            <Ionicons name="call-outline" size={18} color={theme.accent} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={[s.ussdEye, { color: cfg.accent }]}>
-              QUICK DIAL
-            </Text>
-            <Text style={[s.ussdCode, { color: cfg.accent }]}>
-              {cfg.ussd}
-            </Text>
+            <Text style={[styles.ussdLabel, { color: theme.accent }]}>DIAL TO APPROVE</Text>
+            <Text style={[styles.ussdCode,  { color: theme.dark   }]}>{cfg.ussd}</Text>
           </View>
-          <View
-            style={[
-              s.ussdArrow,
-              { backgroundColor: `${cfg.accent}18` },
-            ]}
-          >
-            <Ionicons
-              name="arrow-forward"
-              size={12}
-              color={cfg.accent}
-            />
+        </View>
+
+        {/* Steps toggle */}
+        <TouchableOpacity style={styles.toggleRow} onPress={() => setShowSteps(s => !s)} activeOpacity={0.7}>
+          <View style={[styles.toggleIcon, { backgroundColor: `${theme.accent}15` }]}>
+            <Ionicons name="list-outline" size={14} color={theme.accent} />
           </View>
+          <Text style={styles.toggleText}>{showSteps ? "Hide" : "Show"} {cfg.steps.length} Steps</Text>
+          <Ionicons name={showSteps ? "chevron-up" : "chevron-down"} size={14} color={C.textSub} />
         </TouchableOpacity>
 
-        {/* Steps card */}
-        <View style={s.card}>
-          <View style={s.cardHead}>
-            <View
-              style={[
-                s.cardIcon,
-                { backgroundColor: `${cfg.accent}18` },
-              ]}
-            >
-              <Ionicons
-                name="list-outline"
-                size={14}
-                color={cfg.accent}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.cardTitle}>How to Approve</Text>
-              <Text style={s.cardSub}>{cfg.name}</Text>
-            </View>
-            <View
-              style={[
-                s.badge,
-                { backgroundColor: cfg.bg, borderColor: cfg.border },
-              ]}
-            >
-              <Text style={[s.badgeText, { color: cfg.accent }]}>
-                {cfg.steps.length} steps
-              </Text>
-            </View>
-          </View>
-
-          <View style={s.stepsWrap}>
+        {showSteps && (
+          <View style={styles.stepsCard}>
             {cfg.steps.map((step, idx) => {
               const isLast = idx === cfg.steps.length - 1;
-              const dotColor = isLast ? cfg.accent : C.primary;
               return (
-                <Animated.View
-                  key={idx}
-                  style={[
-                    s.stepRow,
-                    {
-                      opacity: stagger[idx],
-                      transform: [
-                        {
-                          translateX: stagger[idx].interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [16, 0],
-                          }),
-                        },
-                      ],
-                    },
-                  ]}
-                >
-                  <View style={s.tlCol}>
-                    <View
-                      style={[s.dot, { backgroundColor: dotColor }]}
+                <View key={idx} style={styles.stepRow}>
+                  <View style={styles.stepTimeline}>
+                    <LinearGradient
+                      colors={isLast ? [theme.accent, theme.dark] : [C.primary, C.primaryDark]}
+                      style={styles.stepDot}
                     >
-                      <Text style={s.dotNum}>{idx + 1}</Text>
-                    </View>
-                    {!isLast && (
-                      <View
-                        style={[
-                          s.line,
-                          { backgroundColor: C.border },
-                        ]}
-                      />
-                    )}
+                      {isLast ? <Ionicons name="checkmark" size={10} color={C.white} /> : <Text style={styles.stepNum}>{idx + 1}</Text>}
+                    </LinearGradient>
+                    {!isLast && <View style={[styles.stepLine, { backgroundColor: `${theme.accent}30` }]} />}
                   </View>
-                  <View
-                    style={[
-                      s.stepContent,
-                      isLast && { paddingBottom: 0 },
-                    ]}
-                  >
-                    <View
-                      style={[
-                        s.stepIconBox,
-                        {
-                          backgroundColor: isLast
-                            ? cfg.bg
-                            : C.primaryGhost,
-                          borderColor: isLast
-                            ? cfg.border
-                            : C.borderLight,
-                        },
-                      ]}
-                    >
-                      <Ionicons
-                        name={step.icon}
-                        size={11}
-                        color={dotColor}
-                      />
+                  <View style={styles.stepContent}>
+                    <View style={[styles.stepIconBox, { backgroundColor: theme.bg }]}>
+                      <Ionicons name={step.icon} size={12} color={theme.accent} />
                     </View>
-                    <Text
-                      style={[
-                        s.stepLabel,
-                        isLast && {
-                          color: cfg.accent,
-                          fontWeight: "700",
-                        },
-                      ]}
-                    >
-                      {step.label}
-                    </Text>
-                  </View>
-                </Animated.View>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Tip */}
-        <View style={s.tipBanner}>
-          <View style={s.tipIcon}>
-            <Ionicons name="bulb" size={14} color={C.warning} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={s.tipTitle}>PRO TIP</Text>
-            <Text style={s.tipBody}>{cfg.tip}</Text>
-          </View>
-        </View>
-
-        {/* Order Items */}
-        {itemCount > 0 && (
-          <View style={s.card}>
-            <View style={s.cardHead}>
-              <View
-                style={[
-                  s.cardIcon,
-                  { backgroundColor: C.primaryGhost },
-                ]}
-              >
-                <Ionicons
-                  name="bag-handle-outline"
-                  size={14}
-                  color={C.primary}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.cardTitle}>Order Summary</Text>
-                <Text style={s.cardSub}>
-                  {itemCount} item{itemCount !== 1 ? "s" : ""} ·{" "}
-                  {totalQty} unit{totalQty !== 1 ? "s" : ""}
-                </Text>
-              </View>
-            </View>
-
-            {cartItems.map((item, idx) => {
-              const uri = itemImageUri(item.imagePath);
-              const lineTotal =
-                Number(item.amount) || Number(item.total) || 0;
-              const qty = Number(item.quantity) || 1;
-              return (
-                <View
-                  key={`${item.productId}-${idx}`}
-                  style={[
-                    s.itemRow,
-                    idx === itemCount - 1 && {
-                      borderBottomWidth: 0,
-                    },
-                  ]}
-                >
-                  {uri ? (
-                    <Image
-                      source={{ uri }}
-                      style={s.itemThumb}
-                    />
-                  ) : (
-                    <View style={s.itemThumbFallback}>
-                      <Ionicons
-                        name="cube-outline"
-                        size={16}
-                        color={C.textMuted}
-                      />
-                    </View>
-                  )}
-                  <View style={s.itemInfo}>
-                    <Text style={s.itemName} numberOfLines={2}>
-                      {item.productName || "Item"}
-                    </Text>
-                    <View style={s.qtyChip}>
-                      <Ionicons
-                        name="layers-outline"
-                        size={9}
-                        color={C.primary}
-                      />
-                      <Text style={s.qtyText}>Qty {qty}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.stepTitle}>{step.title}</Text>
+                      <Text style={styles.stepDesc}>{step.desc}</Text>
                     </View>
                   </View>
-                  <Text style={s.itemPrice}>
-                    {fmt(lineTotal)}
-                  </Text>
                 </View>
               );
             })}
-
-            <View style={s.orderTotal}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 5,
-                }}
-              >
-                <Ionicons
-                  name="receipt-outline"
-                  size={12}
-                  color={C.textSub}
-                />
-                <Text style={s.orderTotalLabel}>Order Total</Text>
-              </View>
-              <Text style={s.orderTotalValue}>
-                {fmt(amount)}
-              </Text>
+            <View style={[styles.tipBox, { backgroundColor: C.warningGhost }]}>
+              <Ionicons name="flash" size={12} color={C.warningDark} />
+              <Text style={styles.tipText}>{cfg.tip}</Text>
             </View>
           </View>
         )}
 
-        {/* Security */}
-        <View style={s.secRow}>
-          <Ionicons
-            name="shield-checkmark-outline"
-            size={12}
-            color={C.primary}
-          />
-          <Text style={s.secText}>
-            End-to-end encrypted · Secured by Franko Trading
+        {/* Order Summary toggle */}
+        {itemCount > 0 && (
+          <>
+            <TouchableOpacity style={styles.toggleRow} onPress={() => setShowSummary(s => !s)} activeOpacity={0.7}>
+              <View style={[styles.toggleIcon, { backgroundColor: C.primaryGhost }]}>
+                <Ionicons name="bag-handle-outline" size={14} color={C.primary} />
+              </View>
+              <Text style={styles.toggleText}>Order Summary ({itemCount} item{itemCount !== 1 ? "s" : ""})</Text>
+              <View style={styles.totalBadge}><Text style={styles.totalBadgeText}>{fmt(amount)}</Text></View>
+              <Ionicons name={showSummary ? "chevron-up" : "chevron-down"} size={14} color={C.textSub} />
+            </TouchableOpacity>
+
+            {showSummary && (
+              <View style={styles.summaryCard}>
+                {cartItems.map((item, idx) => {
+                  const uri = itemImageUri(item.imagePath);
+                  const lineTotal = Number(item.amount) || Number(item.total) || 0;
+                  const qty = Number(item.quantity) || 1;
+                  return (
+                    <View key={idx} style={[styles.cartItem, idx < itemCount - 1 && styles.cartItemBorder]}>
+                      <View style={styles.cartImgWrap}>
+                        {uri ? <Image source={{ uri }} style={styles.cartImg} /> : <Ionicons name="cube-outline" size={16} color={C.textMuted} />}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.cartName} numberOfLines={1}>{item.productName || "Item"}</Text>
+                        <Text style={styles.cartQty}>×{qty}</Text>
+                      </View>
+                      <Text style={styles.cartPrice}>{fmt(lineTotal)}</Text>
+                    </View>
+                  );
+                })}
+                <LinearGradient colors={[C.primaryGhost, "#F0FDF4"]} style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Total</Text>
+                  <Text style={styles.totalValue}>{fmt(amount)}</Text>
+                </LinearGradient>
+              </View>
+            )}
+          </>
+        )}
+
+        {/* Help */}
+        <View style={styles.helpBox}>
+          <Ionicons name="shield-checkmark-outline" size={16} color={C.primary} />
+          <Text style={styles.helpText}>
+            Secure payment. Dial {cfg.ussd} if you didn't receive the prompt.
+            We auto-check every 2 minutes. You can also tap "I've Approved" at any time.
           </Text>
         </View>
-      </Animated.ScrollView>
+      </ScrollView>
 
-      {/* ══════ BOTTOM BAR ══════ */}
-      <View
-        style={[
-          s.bottomBar,
-          {
-            paddingBottom:
-              Platform.OS === "ios"
-                ? Math.max(insets.bottom, 16) + 12
-                : 16,
-          },
-        ]}
-      >
+      {/* ── BOTTOM BAR ── */}
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <TouchableOpacity
-          style={[s.confirmBtn, checking && s.confirmDisabled]}
-          onPress={handleConfirmPayment}
-          disabled={checking}
-          activeOpacity={0.88}
+          onPress={handleManualConfirm}
+          disabled={manualVerifying || redirecting}
+          activeOpacity={0.85}
         >
-          {checking ? (
-            <View style={s.btnInner}>
-              <ActivityIndicator color={C.white} size="small" />
-              <Text style={s.btnLabel}>Verifying Payment…</Text>
-            </View>
-          ) : (
-            <View style={s.btnInner}>
-              <View style={s.checkCircle}>
-                <Ionicons
-                  name="checkmark"
-                  size={13}
-                  color={C.white}
-                />
+          <LinearGradient
+            colors={manualVerifying || redirecting ? [C.textMuted, "#CBD5E1"] : [C.primary, C.primaryDark]}
+            style={styles.ctaBtn}
+          >
+            {manualVerifying || redirecting ? (
+              <View style={styles.ctaInner}>
+                <ActivityIndicator color={C.white} size="small" />
+                <Text style={styles.ctaText}>{redirecting ? "Redirecting…" : "Verifying…"}</Text>
               </View>
-              <Text style={s.btnLabel}>
-                I've Approved — Confirm Payment
-              </Text>
-              <Ionicons
-                name="arrow-forward"
-                size={14}
-                color="rgba(255,255,255,0.55)"
-              />
-            </View>
-          )}
+            ) : (
+              <View style={styles.ctaInner}>
+                <Ionicons name="checkmark-circle" size={18} color={C.white} />
+                <Text style={styles.ctaText}>I've Approved — Confirm Payment</Text>
+              </View>
+            )}
+          </LinearGradient>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={s.cancelBtn}
-          onPress={handleCancelOrder}
-          disabled={checking}
-          activeOpacity={0.7}
+          style={styles.cancelBtn}
+          onPress={handleCancelFromGuide}
+          disabled={redirecting}
         >
-          <Ionicons
-            name="close-circle-outline"
-            size={12}
-            color={C.danger}
-          />
-          <Text style={s.cancelLabel}>Cancel Order</Text>
+          <Text style={[styles.cancelText, redirecting && { opacity: 0.4 }]}>Cancel Order</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -835,429 +821,148 @@ const PaymentHelpScreen = ({ navigation, route }) => {
 
 export default PaymentHelpScreen;
 
-/* ══════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════
  *  STYLES
- * ════════════════════════════════════════════════════ */
-const s = StyleSheet.create({
+ * ═══════════════════════════════════════════════════════════ */
+const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
 
-  /* ── Compact Header ─────────── */
-  header: {
-    backgroundColor: C.primary,
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-    overflow: "hidden",
-    /* paddingTop is set dynamically via insets.top + 12 */
+  /* Result overlay */
+  overlayBack: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: C.overlay,
+    justifyContent: "center", alignItems: "center",
+    zIndex: 999, paddingHorizontal: 24,
   },
-  arc: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    borderWidth: 36,
-    borderColor: "rgba(255,255,255,0.05)",
-    top: -80,
-    right: -50,
-  },
-
-  topRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-    gap: 8,
-  },
-  backBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerMid: { flex: 1 },
-  headerTitle: {
-    color: C.white,
-    fontSize: 16,
-    fontWeight: "800",
-    letterSpacing: -0.2,
-    lineHeight: 20,
-  },
-  statusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginTop: 2,
-  },
-  statusText: {
-    color: "rgba(255,255,255,0.65)",
-    fontSize: 10,
-    fontWeight: "600",
-  },
-
-  netPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "rgba(255,255,255,0.09)",
-    borderWidth: 1,
-    borderRadius: 9,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  netLogo: { width: 15, height: 15, borderRadius: 4 },
-  netText: { fontSize: 10, fontWeight: "800" },
-
-  amountRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.12)",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-  },
-  amountLeft: { flex: 1.2 },
-  amountRight: { flex: 1 },
-  amountSep: {
-    width: 1,
-    height: 30,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    marginHorizontal: 12,
-  },
-  amountEye: {
-    color: "rgba(255,255,255,0.45)",
-    fontSize: 8,
-    fontWeight: "800",
-    letterSpacing: 0.9,
-    marginBottom: 3,
-    textTransform: "uppercase",
-  },
-  amountVal: {
-    color: C.white,
-    fontSize: 19,
-    fontWeight: "900",
-    letterSpacing: -0.4,
-  },
-  refRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-  },
-  refCode: {
-    color: C.primaryMist,
-    fontSize: 11,
-    fontWeight: "700",
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-
-  /* ── Scroll ─────────────────── */
-  scroll: { flex: 1 },
-  scrollContent: { padding: 14, paddingBottom: 140 },
-
-  /* ── USSD ───────────────────── */
-  ussdBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    borderWidth: 1.5,
-    borderRadius: 15,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 12,
-  },
-  ussdIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  ussdEye: {
-    fontSize: 8,
-    fontWeight: "900",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    marginBottom: 1,
-  },
-  ussdCode: {
-    fontSize: 22,
-    fontWeight: "900",
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    letterSpacing: -0.2,
-  },
-  ussdArrow: {
-    width: 28,
-    height: 28,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  /* ── Card ───────────────────── */
-  card: {
-    backgroundColor: C.surface,
-    borderRadius: 17,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: C.borderLight,
-    overflow: "hidden",
-    ...SHADOW_SM,
-  },
-  cardHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    padding: 14,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.borderHair,
-  },
-  cardIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cardTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: C.textMain,
-    letterSpacing: -0.1,
-  },
-  cardSub: { fontSize: 10.5, color: C.textSub, marginTop: 1 },
-  badge: {
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  badgeText: { fontSize: 9.5, fontWeight: "800" },
-
-  /* steps */
-  stepsWrap: { padding: 14, paddingTop: 10 },
-  stepRow: { flexDirection: "row" },
-  tlCol: { width: 24, alignItems: "center" },
-  dot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dotNum: { color: C.white, fontSize: 8.5, fontWeight: "900" },
-  line: {
-    width: 1.5,
-    flex: 1,
-    minHeight: 6,
-    borderRadius: 1,
-    marginVertical: 2,
-  },
-  stepContent: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 9,
-    paddingLeft: 9,
-    paddingBottom: 12,
-  },
-  stepIconBox: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    marginTop: 1,
-  },
-  stepLabel: {
-    flex: 1,
-    fontSize: 12.5,
-    color: C.textBody,
-    fontWeight: "500",
-    lineHeight: 18,
-    paddingTop: 3,
-  },
-
-  /* tip */
-  tipBanner: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-    backgroundColor: C.warningGhost,
-    borderWidth: 1,
-    borderColor: C.warningBorder,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 12,
-  },
-  tipIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 9,
-    backgroundColor: "rgba(217,119,6,0.10)",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  tipTitle: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: "#92400E",
-    marginBottom: 2,
-    letterSpacing: 0.4,
-  },
-  tipBody: {
-    fontSize: 12,
-    color: "#78350F",
-    lineHeight: 18,
-    fontWeight: "500",
-  },
-
-  /* items */
-  itemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    gap: 11,
-    borderBottomWidth: 1,
-    borderBottomColor: C.borderHair,
-  },
-  itemThumb: {
-    width: 44,
-    height: 44,
-    borderRadius: 11,
-    backgroundColor: C.borderLight,
-  },
-  itemThumbFallback: {
-    width: 44,
-    height: 44,
-    borderRadius: 11,
-    backgroundColor: C.borderLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  itemInfo: { flex: 1 },
-  itemName: {
-    fontSize: 12.5,
-    fontWeight: "700",
-    color: C.textMain,
-    lineHeight: 17,
-    marginBottom: 4,
-  },
-  qtyChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    backgroundColor: C.primaryGhost,
-    borderRadius: 5,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    alignSelf: "flex-start",
-  },
-  qtyText: { fontSize: 9.5, fontWeight: "700", color: C.primary },
-  itemPrice: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: C.textMain,
-  },
-
-  orderTotal: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: C.primaryGhost,
-  },
-  orderTotalLabel: {
-    fontSize: 12.5,
-    fontWeight: "600",
-    color: C.textSub,
-  },
-  orderTotalValue: {
-    fontSize: 15,
-    fontWeight: "900",
-    color: C.primaryDark,
-  },
-
-  /* security */
-  secRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    paddingVertical: 8,
-  },
-  secText: {
-    fontSize: 10.5,
-    color: C.textMuted,
-    fontWeight: "500",
-  },
-
-  /* bottom bar */
-  bottomBar: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: C.surface,
-    borderTopWidth: 1,
-    borderTopColor: C.border,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    /* paddingBottom is set dynamically via insets */
-    ...SHADOW_LG,
-  },
-  confirmBtn: {
-    backgroundColor: C.primaryDark,
-    borderRadius: 15,
-    paddingVertical: 15,
-    ...SHADOW_BTN,
-  },
-  confirmDisabled: {
-    backgroundColor: C.textMuted,
+  overlayCard: {
+    backgroundColor: C.white, borderRadius: 24,
+    padding: 28, alignItems: "center", width: "100%", maxWidth: 340,
     ...Platform.select({
-      ios: { shadowOpacity: 0 },
-      android: { elevation: 0 },
+      ios:     { shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 20 },
+      android: { elevation: 12 },
     }),
   },
-  btnInner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+  overlayIcon: { width: 110, height: 110, borderRadius: 55, alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  overlayTitle: { fontSize: 20, fontWeight: "900", textAlign: "center", marginBottom: 8 },
+  overlaySub:   { fontSize: 13, color: C.textSub, textAlign: "center", lineHeight: 19, marginBottom: 14 },
+  overlayRef:   { flexDirection: "row", backgroundColor: C.borderLight, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, marginBottom: 20 },
+  overlayRefLabel: { fontSize: 11, color: C.textMuted, fontWeight: "600" },
+  overlayRefVal: { fontSize: 11, color: C.textMain, fontWeight: "700", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
+  overlayBtn:     { width: "100%", borderRadius: 14, paddingVertical: 14, alignItems: "center" },
+  overlayBtnText: { color: C.white, fontSize: 15, fontWeight: "800" },
+
+  /* Dialog (not confirmed / cancel) — mirrors web co-dialog-card */
+  dialogCard: {
+    backgroundColor: C.white, borderRadius: 16, width: "100%", maxWidth: 360,
+    overflow: "hidden",
+    ...Platform.select({
+      ios:     { shadowColor: "#000", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.2, shadowRadius: 24 },
+      android: { elevation: 12 },
+    }),
   },
-  checkCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
+  dialogBar: { height: 4, width: "100%" },
+  dialogBody: { padding: 24 },
+  dialogIcon: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center", alignSelf: "center", marginBottom: 16 },
+  dialogTitle: { fontSize: 18, fontWeight: "900", color: C.textMain, textAlign: "center", marginBottom: 6 },
+  dialogDesc: { fontSize: 13, color: C.textMuted, textAlign: "center", lineHeight: 20, marginBottom: 20 },
+  dialogActions: { gap: 8 },
+  dialogBtnPrimary: {
+    width: "100%", padding: 14, backgroundColor: C.primary,
+    borderRadius: 10, alignItems: "center",
   },
-  btnLabel: {
-    color: C.white,
-    fontSize: 13.5,
-    fontWeight: "800",
-    letterSpacing: -0.1,
+  dialogBtnPrimaryText: { color: C.white, fontSize: 14, fontWeight: "800" },
+  dialogBtnDanger: {
+    width: "100%", padding: 12, backgroundColor: C.white,
+    borderWidth: 1, borderColor: `${C.danger}40`,
+    borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
   },
-  cancelBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    paddingVertical: 10,
-    marginTop: 2,
+  dialogBtnDangerText: { color: C.danger, fontSize: 14, fontWeight: "700" },
+  dialogBtnInner: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+
+  /* Header */
+  header:     { paddingHorizontal: 12, paddingBottom: 12 },
+  headerTop:  { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 },
+  backBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
+  headerTitle: { color: C.white, fontSize: 17, fontWeight: "800" },
+  statusRow:   { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
+  statusText:  { color: "rgba(255,255,255,0.8)", fontSize: 11, fontWeight: "600" },
+  timerPill: { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "rgba(255,255,255,0.15)", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  timerText: { fontSize: 11, fontWeight: "800", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
+  networkIcon: { width: 32, height: 32, borderRadius: 8 },
+  amountRow: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(0,0,0,0.15)", borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 8 },
+  amountBlock: { flex: 1 },
+  amountLabel: { color: "rgba(255,255,255,0.5)", fontSize: 8, fontWeight: "800", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 2 },
+  amountValue: { color: C.white, fontSize: 20, fontWeight: "900", letterSpacing: -0.5 },
+  amountSub:   { color: "rgba(255,255,255,0.9)", fontSize: 11, fontWeight: "700" },
+  headerDivider: { width: 1, height: 30, backgroundColor: "rgba(255,255,255,0.15)", marginHorizontal: 8 },
+  refRow: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "rgba(0,0,0,0.1)", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5 },
+  refLabel: { color: "rgba(255,255,255,0.6)", fontSize: 10, fontWeight: "600" },
+  refValue: { color: "rgba(255,255,255,0.9)", fontSize: 10, fontWeight: "700", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
+
+  /* Scroll */
+  scroll:      { flex: 1 },
+  scrollInner: { paddingHorizontal: 12, paddingTop: 12 },
+
+  /* Auto-check bar — mirrors web co-auto-check-bar */
+  autoCheckBar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    backgroundColor: C.warningGhost, borderRadius: 8,
+    borderWidth: 1, borderColor: "#FDE68A",
+    paddingHorizontal: 12, paddingVertical: 8, marginBottom: 10,
   },
-  cancelLabel: {
-    color: C.danger,
-    fontSize: 12,
-    fontWeight: "700",
-  },
+  autoCheckLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
+  autoCheckLabel: { fontSize: 12, fontWeight: "700", color: C.warningDark },
+  autoCheckTime: { fontSize: 14, fontWeight: "900", color: C.warningDark, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
+
+  /* USSD */
+  ussdCard: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1.2, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10 },
+  ussdIconWrap: { width: 38, height: 38, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  ussdLabel: { fontSize: 8, fontWeight: "900", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 1 },
+  ussdCode: { fontSize: 20, fontWeight: "900", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
+
+  /* Toggle rows */
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10, borderWidth: 1, borderColor: C.borderLight },
+  toggleIcon: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  toggleText: { flex: 1, fontSize: 13, fontWeight: "700", color: C.textMain },
+  totalBadge: { backgroundColor: C.primaryGhost, borderRadius: 7, paddingHorizontal: 8, paddingVertical: 3 },
+  totalBadgeText: { fontSize: 11, fontWeight: "800", color: C.primaryDark },
+
+  /* Steps */
+  stepsCard: { backgroundColor: C.surface, borderRadius: 14, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: C.borderLight },
+  stepRow:      { flexDirection: "row", alignItems: "flex-start", marginBottom: 6 },
+  stepTimeline: { width: 22, alignItems: "center" },
+  stepDot:      { width: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  stepNum:      { color: C.white, fontSize: 9, fontWeight: "900" },
+  stepLine:     { width: 2, height: 24, borderRadius: 1 },
+  stepContent:  { flex: 1, flexDirection: "row", gap: 8, paddingLeft: 8, paddingBottom: 8 },
+  stepIconBox:  { width: 24, height: 24, borderRadius: 7, alignItems: "center", justifyContent: "center", marginTop: 1 },
+  stepTitle:    { fontSize: 12, fontWeight: "700", color: C.textMain, marginBottom: 1 },
+  stepDesc:     { fontSize: 10.5, color: C.textSub, lineHeight: 15 },
+  tipBox:       { flexDirection: "row", gap: 8, borderRadius: 8, padding: 10, marginTop: 4 },
+  tipText:      { flex: 1, fontSize: 11, color: "#78350F", lineHeight: 16 },
+
+  /* Summary */
+  summaryCard:    { backgroundColor: C.surface, borderRadius: 14, overflow: "hidden", marginBottom: 10, borderWidth: 1, borderColor: C.borderLight },
+  cartItem:       { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, gap: 10 },
+  cartItemBorder: { borderBottomWidth: 1, borderBottomColor: C.borderHair },
+  cartImgWrap:    { width: 40, height: 40, borderRadius: 8, backgroundColor: C.borderLight, alignItems: "center", justifyContent: "center" },
+  cartImg:        { width: 40, height: 40, borderRadius: 8 },
+  cartName:       { fontSize: 12, fontWeight: "700", color: C.textMain, marginBottom: 3 },
+  cartQty:        { fontSize: 10, fontWeight: "600", color: C.textSub },
+  cartPrice:      { fontSize: 12, fontWeight: "800", color: C.textMain },
+  totalRow:       { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 10 },
+  totalLabel:     { fontSize: 12, fontWeight: "600", color: C.textSub },
+  totalValue:     { fontSize: 15, fontWeight: "900", color: C.primaryDark },
+
+  /* Help */
+  helpBox:  { flexDirection: "row", gap: 10, backgroundColor: C.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.borderLight, marginBottom: 10 },
+  helpText: { flex: 1, fontSize: 11, color: C.textSub, lineHeight: 16 },
+
+  /* Bottom bar */
+  bottomBar: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border, paddingHorizontal: 12, paddingTop: 10 },
+  ctaBtn:    { borderRadius: 14, paddingVertical: 14 },
+  ctaInner:  { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  ctaText:   { color: C.white, fontSize: 14, fontWeight: "800" },
+  cancelBtn: { alignItems: "center", paddingVertical: 8, marginTop: 2 },
+  cancelText:{ color: C.textMuted, fontSize: 12, fontWeight: "600" },
 });

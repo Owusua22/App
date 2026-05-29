@@ -10,9 +10,10 @@ import {
   Animated,
   Dimensions,
   Platform,
+  AppState,
 } from "react-native";
 
-import { Provider, useDispatch } from "react-redux";
+import { Provider, useDispatch, useSelector } from "react-redux";
 import { PersistGate } from "redux-persist/integration/react";
 import { store, persistor } from "./redux/store";
 
@@ -26,7 +27,16 @@ import {
 } from "react-native-safe-area-context";
 
 import { LinearGradient } from "expo-linear-gradient";
+import NetInfo from "@react-native-community/netinfo";
+
 import { loadWishlistFromStorage } from "./redux/wishlistSlice";
+import { checkAuthStatus, selectIsAuthChecked } from "./redux/slice/customerSlice";
+import { navigationRef } from "./services/navigationService";
+import {
+  updateLastActivity,
+  checkInactivityTimeout,
+  logoutAndRedirect,
+} from "./redux/slice/axiosInstance";
 import ForceUpdateGate from "./config/ForceUpdateGate";
 
 // Screens
@@ -77,23 +87,7 @@ import PaymentHelpScreen from "./screens/PaymentHelpScreen";
 const Stack = createStackNavigator();
 const { width, height } = Dimensions.get("window");
 
-/* ────────────────────────────────────────────────────────
- *  iOS STATUS BAR FIX:
- *
- *  Problem:
- *    • iOS ignores StatusBar's `translucent={false}` and `backgroundColor`
- *    • Content always renders BEHIND the status bar on iOS
- *    • edges={["bottom"]} left the top unprotected
- *    • Status bar indicators (time, battery) were hidden behind app content
- *
- *  Solution:
- *    • Welcome screen → light-content bar + manual insets (gradient behind bar)
- *    • Main app → SafeAreaView edges={["top","bottom"]} handles the top
- *    • Removed manual paddingTop from MainAppContainer (SafeAreaView does it)
- *    • StatusBar barStyle changes dynamically based on current screen
- * ──────────────────────────────────────────────────────── */
-
-/* ═══════════════ WelcomeScreen ═══════════════ */
+/* WelcomeScreen */
 const WelcomeScreen = ({ onReady }) => {
   const [loading, setLoading] = useState(true);
   const dispatch = useDispatch();
@@ -111,23 +105,35 @@ const WelcomeScreen = ({ onReady }) => {
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
-        toValue: 1, duration: 1000, useNativeDriver: true,
+        toValue: 1,
+        duration: 1000,
+        useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
-        toValue: 1, tension: 50, friction: 7, useNativeDriver: true,
+        toValue: 1,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
       }),
       Animated.timing(slideAnim, {
-        toValue: 0, duration: 800, delay: 300, useNativeDriver: true,
+        toValue: 0,
+        duration: 800,
+        delay: 300,
+        useNativeDriver: true,
       }),
     ]).start();
 
     const pulseLoop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
-          toValue: 1.1, duration: 1500, useNativeDriver: true,
+          toValue: 1.1,
+          duration: 1500,
+          useNativeDriver: true,
         }),
         Animated.timing(pulseAnim, {
-          toValue: 1, duration: 1500, useNativeDriver: true,
+          toValue: 1,
+          duration: 1500,
+          useNativeDriver: true,
         }),
       ])
     );
@@ -145,10 +151,6 @@ const WelcomeScreen = ({ onReady }) => {
 
   return (
     <View style={styles.welcomeWrapper}>
-      {/*
-        ✅ Welcome screen gets its own StatusBar config:
-        light-content = white text/icons visible on green gradient
-      */}
       <RNStatusBar
         barStyle="light-content"
         translucent={true}
@@ -161,7 +163,6 @@ const WelcomeScreen = ({ onReady }) => {
         end={{ x: 1, y: 1 }}
         style={styles.welcomeContainer}
       >
-        {/* Background Pattern */}
         <View style={styles.backgroundPattern}>
           {[...Array(20)].map((_, i) => (
             <View
@@ -178,10 +179,6 @@ const WelcomeScreen = ({ onReady }) => {
           ))}
         </View>
 
-        {/*
-          ✅ Content starts below the status bar via paddingTop.
-          The gradient still extends behind the bar (looks good).
-        */}
         <Animated.View
           style={[
             styles.contentWrapper,
@@ -205,7 +202,10 @@ const WelcomeScreen = ({ onReady }) => {
           </Animated.View>
 
           <Animated.View
-            style={[styles.textContainer, { transform: [{ translateY: slideAnim }] }]}
+            style={[
+              styles.textContainer,
+              { transform: [{ translateY: slideAnim }] },
+            ]}
           >
             <Text style={styles.welcomeTitle}>Welcome to</Text>
             <Text style={styles.companyName}>Franko Trading Ent</Text>
@@ -233,7 +233,7 @@ const WelcomeScreen = ({ onReady }) => {
   );
 };
 
-/* ═══════════════ Screen Wrappers ═══════════════ */
+/* Screen Wrappers */
 const ScreenWithFooter = ({ children }) => (
   <View style={{ flex: 1 }}>
     {children}
@@ -269,7 +269,7 @@ const AddressManagementScreenWithFooter = () => (
   <ScreenWithFooter><AddressManagementScreen /></ScreenWithFooter>
 );
 
-/* ═══════════════ App Stack ═══════════════ */
+/* App Stack */
 const AppStack = () => (
   <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false }}>
     <Stack.Screen name="Home" component={HomeScreenWithFooter} />
@@ -313,28 +313,54 @@ const AppStack = () => (
   </Stack.Navigator>
 );
 
-/* ═══════════════ Main App Container ═══════════════ */
+/* No Internet Banner */
+const NoInternetBanner = () => {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.offlineContainer, { top: insets.top || 0 }]}>
+      <Text style={styles.offlineText}>No internet connection</Text>
+    </View>
+  );
+};
+
+/* Auth Loading Screen */
+const AuthLoadingScreen = () => {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={styles.authLoadingContainer}>
+      <RNStatusBar
+        barStyle="dark-content"
+        translucent={true}
+        backgroundColor="transparent"
+      />
+      <View style={[styles.authLoadingContent, { paddingTop: insets.top + 50 }]}>
+        <Image
+          source={require("./assets/frankoIcon.png")}
+          style={styles.authLoadingLogo}
+          resizeMode="contain"
+        />
+        <ActivityIndicator
+          size="large"
+          color="#10B981"
+          style={styles.authLoadingIndicator}
+        />
+        <Text style={styles.authLoadingText}>Loading...</Text>
+      </View>
+    </View>
+  );
+};
+
+/* Main App Container */
 const MainAppContainer = () => {
-  /*
-    ✅ FIX: Removed manual paddingTop: insets.top
-    SafeAreaView with edges={["top","bottom"]} now handles the top inset.
-    This prevents the double-padding bug and ensures the status bar area
-    is always clear on every iOS device (notch, Dynamic Island, etc.)
-  */
   return (
     <View style={styles.mainContainer}>
-      {/*
-        ✅ Main app StatusBar: dark text on white background.
-        translucent={true} is the iOS reality — we embrace it.
-      */}
       <RNStatusBar
         barStyle="dark-content"
         translucent={true}
         backgroundColor="#FFFFFF"
       />
-
       <Header />
-
       <View style={styles.contentContainer}>
         <AppStack />
         <FloatingTawkChat />
@@ -343,45 +369,97 @@ const MainAppContainer = () => {
   );
 };
 
-/* ═══════════════ App Content ═══════════════ */
+/* App Content */
 const AppContent = () => {
   const [showWelcome, setShowWelcome] = useState(true);
+  const [isConnected, setIsConnected] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const dispatch = useDispatch();
+
+  const isAuthChecked = useSelector(selectIsAuthChecked);
+
   const handleReady = () => setShowWelcome(false);
 
+  // Monitor network connectivity
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const hasInternet =
+        state.isConnected && (state.isInternetReachable !== false);
+      setIsConnected(!!hasInternet);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Check authentication status on app load
+  useEffect(() => {
+    const initializeAuth = async () => {
+      try {
+        await dispatch(checkAuthStatus()).unwrap();
+      } catch (error) {
+        console.log("[App] Auth initialization completed");
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+
+    initializeAuth();
+  }, [dispatch]);
+
+  // Track activity and check inactivity on app state changes
+  useEffect(() => {
+    // Set initial activity timestamp
+    updateLastActivity();
+
+    const subscription = AppState.addEventListener("change", async (nextAppState) => {
+      if (nextAppState === "active") {
+        // App came to foreground - check inactivity
+        const isInactive = await checkInactivityTimeout();
+        if (isInactive) {
+          console.log("[App] User inactive for 3+ days - logging out");
+          dispatch({ type: "customer/silentLogoutAction" });
+          await logoutAndRedirect();
+        } else {
+          // User is active - update timestamp
+          await updateLastActivity();
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [dispatch]);
+
   if (showWelcome) {
-    /*
-      ✅ Welcome screen renders OUTSIDE SafeAreaView
-      so the gradient can extend behind the status bar.
-      It handles its own top padding via useSafeAreaInsets().
-    */
     return (
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
+        {!isConnected && <NoInternetBanner />}
         <WelcomeScreen onReady={handleReady} />
       </NavigationContainer>
     );
   }
 
-  return (
-    <NavigationContainer>
-      {/*
-        ✅ KEY FIX: edges now includes "top"
-        This tells SafeAreaView to add padding equal to the status bar
-        height (+ notch/Dynamic Island) at the top.
+  if (isInitializing || !isAuthChecked) {
+    return (
+      <NavigationContainer ref={navigationRef}>
+        {!isConnected && <NoInternetBanner />}
+        <AuthLoadingScreen />
+      </NavigationContainer>
+    );
+  }
 
-        Before: edges={["bottom"]} → top was unprotected → content behind status bar
-        After:  edges={["top","bottom"]} → status bar area is always clear
-      */}
-      <SafeAreaView
-        style={styles.container}
-        edges={["top", "bottom"]}
-      >
+  return (
+    <NavigationContainer ref={navigationRef}>
+      {!isConnected && <NoInternetBanner />}
+      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
         <MainAppContainer />
       </SafeAreaView>
     </NavigationContainer>
   );
 };
 
-/* ═══════════════ App Root ═══════════════ */
+/* App Root */
 const App = () => (
   <Provider store={store}>
     <PersistGate loading={null} persistor={persistor}>
@@ -396,16 +474,11 @@ const App = () => (
 
 export default App;
 
-/* ═══════════════ Styles ═══════════════ */
+/* Styles */
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#FFFFFF",
-    /*
-      ✅ White background ensures the status bar area
-      (the space SafeAreaView reserves at the top)
-      has a clean white background behind the dark status bar text.
-    */
   },
   mainContainer: {
     flex: 1,
@@ -413,6 +486,46 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
+  },
+  offlineContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 32,
+    backgroundColor: "#B91C1C",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 999,
+  },
+  offlineText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  authLoadingContainer: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  authLoadingContent: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  authLoadingLogo: {
+    width: 100,
+    height: 100,
+    marginBottom: 30,
+    opacity: 0.8,
+  },
+  authLoadingIndicator: {
+    marginBottom: 20,
+  },
+  authLoadingText: {
+    fontSize: 16,
+    color: "#4B5563",
+    fontWeight: "500",
+    textAlign: "center",
   },
   welcomeWrapper: {
     flex: 1,
@@ -423,11 +536,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     position: "relative",
     overflow: "hidden",
-    /*
-      ✅ Removed paddingTop from here.
-      It's now on contentWrapper so the gradient
-      fills the entire screen including behind the status bar.
-    */
   },
   backgroundPattern: {
     position: "absolute",
@@ -446,10 +554,6 @@ const styles = StyleSheet.create({
   contentWrapper: {
     alignItems: "center",
     zIndex: 1,
-    /*
-      ✅ paddingTop is set dynamically via insets.top + 20
-      in the component's style prop.
-    */
   },
   logoContainer: {
     marginBottom: 30,
