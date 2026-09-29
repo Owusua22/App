@@ -2,15 +2,18 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { View, StyleSheet } from "react-native";
 import Swiper from "react-native-swiper";
 import { useDispatch, useSelector } from "react-redux";
-import { Image } from "expo-image";
 import { getBannerPageAdvertisment } from "../redux/slice/advertismentSlice";
+import CachedImage from "./CachedImage";
+import { preloadImageUrls } from "../utils/ImageCache";
 
 const backendBaseURL = "https://testing.frankotrading.com";
 const PLACEHOLDER = require("../assets/kumasi.jpg");
+const MAX_PREFETCH_IMAGES = 5;
+const PREFETCH_CONCURRENCY = 3;
 
 function buildAdUri(fileName) {
   if (!fileName) return null;
-  const justName = String(fileName).split(/[/\\]/).pop();
+  const justName = String(fileName).split(/[\\/]/).pop();
   if (!justName) return null;
   const encodedName = encodeURIComponent(justName);
   return `${backendBaseURL.replace(/\/$/, "")}/Media/Ads/${encodedName}`;
@@ -46,23 +49,34 @@ const CarouselComponent = () => {
     });
   }, [advertisments]);
 
-  // Preload first few images into cache
   useEffect(() => {
-    const uris = adsWithUri.map((x) => x.uri).filter(Boolean);
-    if (!uris.length) return;
+    let mounted = true;
+    const uris = adsWithUri.map((ad) => ad.uri).filter(Boolean);
 
-    (async () => {
-      try {
-        await Image.prefetch(uris.slice(0, 5));
-      } finally {
-        setPrefetched(true);
-      }
-    })();
+    if (!uris.length) {
+      setPrefetched(true);
+      return () => {
+        mounted = false;
+      };
+    }
+
+    setPrefetched(false);
+    // Use the shared native image-cache utility, which deduplicates URLs and
+    // limits prefetching to five ads with three concurrent requests.
+    void preloadImageUrls(uris, {
+      maxImages: MAX_PREFETCH_IMAGES,
+      concurrency: PREFETCH_CONCURRENCY,
+    }).finally(() => {
+      if (mounted) setPrefetched(true);
+    });
+
+    return () => {
+      mounted = false;
+    };
   }, [adsWithUri]);
 
-  const onImgError = useCallback((key, uri, e) => {
-    console.log("AD IMAGE FAILED:", { key, uri, error: e?.nativeEvent });
-    setFailed((prev) => ({ ...prev, [key]: true }));
+  const onImgError = useCallback((key) => {
+    setFailed((previous) => ({ ...previous, [key]: true }));
   }, []);
 
   const showPlaceholder = loading || !prefetched || adsWithUri.length === 0;
@@ -70,7 +84,11 @@ const CarouselComponent = () => {
   return (
     <View style={styles.container}>
       {showPlaceholder ? (
-        <Image source={PLACEHOLDER} style={styles.image} contentFit="cover" />
+        <CachedImage
+          source={PLACEHOLDER}
+          style={styles.image}
+          resizeMode="cover"
+        />
       ) : (
         <Swiper
           autoplay={adsWithUri.length > 1}
@@ -85,13 +103,11 @@ const CarouselComponent = () => {
 
             return (
               <View key={String(key)} style={styles.slide}>
-                <Image
+                <CachedImage
                   source={shouldFallback ? PLACEHOLDER : { uri }}
                   style={styles.image}
-                  contentFit="cover"
-                  cachePolicy="disk"     // important for speed after first load
-                  transition={150}       // smooth
-                  onError={(e) => onImgError(key, uri, e)}
+                  resizeMode="cover"
+                  onError={() => onImgError(key)}
                 />
               </View>
             );
@@ -103,11 +119,36 @@ const CarouselComponent = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { width: "100%", alignItems: "center", justifyContent: "center", height: 160 },
-  slide: { width: "100%", justifyContent: "center", alignItems: "center" },
-  image: { width: "100%", height: 160 },
-  dot: { backgroundColor: "#ccc", width: 8, height: 8, borderRadius: 4, margin: 3, marginTop: 105 },
-  activeDot: { backgroundColor: "#10B981", width: 10, height: 10, borderRadius: 5, marginTop: 105 },
+  container: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 160,
+  },
+  slide: {
+    width: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  image: {
+    width: "100%",
+    height: 160,
+  },
+  dot: {
+    backgroundColor: "#ccc",
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    margin: 3,
+    marginTop: 105,
+  },
+  activeDot: {
+    backgroundColor: "#10B981",
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 105,
+  },
 });
 
 export default CarouselComponent;

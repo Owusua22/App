@@ -3,7 +3,6 @@ import {
   View,
   Text,
   FlatList,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
@@ -13,6 +12,7 @@ import {
   Alert,
   ScrollView,
 } from "react-native";
+import CachedImage from "../../components/CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import { fetchProductsByCategory } from "../../redux/slice/productSlice";
 import { addToCart } from "../../redux/slice/cartSlice"; // Import addToCart action
@@ -168,7 +168,7 @@ const MachineScreen = () => {
 
   const getValidImageURL = (imagePath) => {
     if (!imagePath) {
-      return "https://via.placeholder.com/150";
+      return null;
     }
     return `https://testing.frankotrading.com/Media/Products_Images/${imagePath
       .split("\\")
@@ -305,7 +305,11 @@ const MachineScreen = () => {
         activeOpacity={0.9}
       >
         <View style={styles.imageContainer}>
-          <Image source={{ uri: productImageURL }} style={styles.productImage} />
+          <CachedImage
+            source={{ uri: productImageURL }}
+            style={styles.productImage}
+            recyclingKey={item.productID}
+          />
           
           {isNew && (
             <View style={styles.newBadge}>
@@ -503,7 +507,7 @@ const MachineScreen = () => {
         removeClippedSubviews={false}
         initialNumToRender={10}
         maxToRenderPerBatch={10}
-        windowSize={10}
+        windowSize={5}
       />
 
       {/* Sort Modal */}

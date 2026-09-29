@@ -7,7 +7,7 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import {
   createCustomer, loginCustomer, setCurrentCustomer, getCustomerById,
-  updateCustomerPassword, updateAccountStatus, selectCurrentCustomer,
+  updateCustomerPassword, selectCurrentCustomer,
 } from '../redux/slice/customerSlice';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-get-random-values';
@@ -171,7 +171,17 @@ const SuccessBanner = ({ title, message, isVisible }) => {
   );
 };
 
-/* ─── Update Password Modal ─── */
+/* ─── Update Password Modal ───
+   Mirrors the website's ForceChangePasswordModal flow exactly:
+   1. dispatch(updateCustomerPassword(...)) — this also reactivates the
+      account status server-side (handled inside the thunk itself, just
+      like on web, so we don't call an account-status action here).
+   2. dispatch(getCustomerById({ contactNumber, accessToken })) — explicitly
+      re-fetch the canonical, fresh profile using the still-valid access
+      token, rather than trusting whatever updateCustomerPassword returned.
+   3. Merge the original session's accessToken/refreshToken onto that fresh
+      profile, persist it, and set it as the current customer.
+*/
 const UpdatePasswordModal = ({ customer, onSuccess, onClose }) => {
   const dispatch = useDispatch();
   const [form, setForm] = useState({ newPassword: '', confirmPassword: '' });
@@ -189,7 +199,9 @@ const UpdatePasswordModal = ({ customer, onSuccess, onClose }) => {
 
     setLoading(true);
     try {
-      const updatedCustomer = await dispatch(
+      // Step 1: update the password (this also reactivates the account
+      // status behind the scenes, same as the website flow).
+      await dispatch(
         updateCustomerPassword({
           contactNumber: customer.contactNumber,
           newPassword: form.newPassword,
@@ -206,10 +218,24 @@ const UpdatePasswordModal = ({ customer, onSuccess, onClose }) => {
         })
       ).unwrap();
 
+      // Step 2: explicitly re-fetch the fresh profile with the existing
+      // access token — exactly what the website's ForceChangePasswordModal
+      // does after a password update, instead of relying on whatever the
+      // update call itself returned.
+      const updatedProfile = await dispatch(
+        getCustomerById({
+          contactNumber: customer.contactNumber,
+          accessToken: customer.accessToken,
+        })
+      ).unwrap();
+
+      // Step 3: merge tokens from the current session onto the fresh
+      // profile and persist/activate it.
       const completeCustomer = {
-        ...updatedCustomer,
-        accessToken: customer.accessToken || updatedCustomer.accessToken,
-        refreshToken: customer.refreshToken || updatedCustomer.refreshToken,
+        ...updatedProfile,
+        accessToken: customer.accessToken,
+        refreshToken: customer.refreshToken,
+        contactNumber: customer.contactNumber,
         loginStatus: true,
       };
 

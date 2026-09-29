@@ -3,7 +3,6 @@ import {
   View,
   Text,
   FlatList,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
@@ -15,6 +14,7 @@ import {
   ScrollView,
   TextInput,
 } from "react-native";
+import CachedImage from "../components/CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import { fetchPaginatedProducts } from "../redux/slice/productSlice";
 import { addToCart } from "../redux/slice/cartSlice";
@@ -184,7 +184,7 @@ const ProductsScreen = () => {
 
   const getValidImageURL = (imagePath) => {
     if (!imagePath) {
-      return "https://via.placeholder.com/150";
+      return null;
     }
 
     const fileName = imagePath.split(/[\\/]/).pop();
@@ -332,7 +332,11 @@ const ProductsScreen = () => {
         activeOpacity={0.9}
       >
         <View style={styles.imageContainer}>
-          <Image source={{ uri: productImageURL }} style={styles.productImage} />
+          <CachedImage
+            source={{ uri: productImageURL }}
+            style={styles.productImage}
+            recyclingKey={item.productID}
+          />
           
           {isNew && (
             <View style={styles.newBadge}>
@@ -507,7 +511,7 @@ const ProductsScreen = () => {
         removeClippedSubviews={false}
         initialNumToRender={10}
         maxToRenderPerBatch={10}
-        windowSize={10}
+        windowSize={5}
         onEndReached={handleLoadMore}
         onEndReachedThreshold={0.1}
         ListFooterComponent={

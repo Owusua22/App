@@ -23,3 +23,25 @@ export const reset = (routeName) => {
     });
   }
 };
+
+let pendingAuthRedirect = false;
+
+const resetAuthRoute = () => {
+  if (!navigationRef.isReady()) return false;
+  navigationRef.reset({
+    index: 0,
+    routes: [{ name: 'SignIn' }],
+  });
+  return true;
+};
+
+export const requestAuthRedirect = () => {
+  pendingAuthRedirect = true;
+  if (resetAuthRoute()) pendingAuthRedirect = false;
+};
+
+export const flushAuthRedirect = () => {
+  if (pendingAuthRedirect && resetAuthRoute()) {
+    pendingAuthRedirect = false;
+  }
+};

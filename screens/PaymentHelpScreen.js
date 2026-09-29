@@ -13,6 +13,7 @@ import {
   ScrollView,
   Vibration,
 } from "react-native";
+import CachedImage from "../components/CachedImage";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useDispatch } from "react-redux";
@@ -753,7 +754,7 @@ const PaymentHelpScreen = ({ navigation, route }) => {
                   return (
                     <View key={idx} style={[styles.cartItem, idx < itemCount - 1 && styles.cartItemBorder]}>
                       <View style={styles.cartImgWrap}>
-                        {uri ? <Image source={{ uri }} style={styles.cartImg} /> : <Ionicons name="cube-outline" size={16} color={C.textMuted} />}
+                        {uri ? <CachedImage source={{ uri }} style={styles.cartImg} recyclingKey={item.productId} /> : <Ionicons name="cube-outline" size={16} color={C.textMuted} />}
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.cartName} numberOfLines={1}>{item.productName || "Item"}</Text>

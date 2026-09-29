@@ -9,7 +9,6 @@ import {
   View,
   Text,
   FlatList,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
@@ -20,6 +19,7 @@ import {
   
   ScrollView,
 } from "react-native";
+import CachedImage from "../../components/CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -58,7 +58,7 @@ const formatCurrency = (amount) => {
 
 const getValidImageURL = (imagePath) => {
   if (!imagePath) {
-    return "https://via.placeholder.com/150";
+    return null;
   }
   return `https://testing.frankotrading.com/Media/Products_Images/${imagePath
     .split("\\")
@@ -378,7 +378,11 @@ const FridgeScreen = () => {
         onPress={() => handleProductPress(item.productID)}
       >
         <View style={styles.imageContainer}>
-          <Image source={{ uri: imageUri }} style={styles.productImage} />
+          <CachedImage
+            source={{ uri: imageUri }}
+            style={styles.productImage}
+            recyclingKey={item.productID}
+          />
 
           {isNew && (
             <View style={styles.newBadge}>
@@ -604,7 +608,7 @@ const FridgeScreen = () => {
         removeClippedSubviews={false}
         initialNumToRender={10}
         maxToRenderPerBatch={10}
-        windowSize={10}
+        windowSize={5}
       />
 
       {/* Sort Modal */}

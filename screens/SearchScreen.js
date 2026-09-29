@@ -6,10 +6,10 @@ import {
   StyleSheet,
   TouchableOpacity,
   FlatList,
-  Image,
   ActivityIndicator,
   ScrollView,
 } from "react-native";
+import CachedImage from "../components/CachedImage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Icon from "react-native-vector-icons/MaterialIcons";
 import { useNavigation } from "@react-navigation/native";
@@ -234,7 +234,11 @@ export default function SearchScreen() {
       >
         <View style={styles.resultLeft}>
           {imageURL ? (
-            <Image source={{ uri: imageURL }} style={styles.resultImage} />
+            <CachedImage
+              source={{ uri: imageURL }}
+              style={styles.resultImage}
+              recyclingKey={item.productID}
+            />
           ) : (
             <View style={styles.resultImageFallback}>
               <Icon name="image-not-supported" size={18} color="#9CA3AF" />

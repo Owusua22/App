@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Modal, TextInput, FlatList, TouchableOpacity, StyleSheet, Image, ActivityIndicator, View, Text } from 'react-native';
+import { Modal, TextInput, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, View, Text } from 'react-native';
+import CachedImage from './CachedImage';
+import { resolveProductImageUri } from '../utils/ImageCache';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchProducts } from '../redux/slice/productSlice'; // Import fetchProducts action
 import { useNavigation } from '@react-navigation/native'; // For navigation
 import { Ionicons } from '@expo/vector-icons';
 import { debounce } from 'lodash'; // For debouncing the search
-
-const backendBaseURL = 'https://ct002.frankotrading.com:444';
 
 const SearchModal = ({ visible, onClose }) => {
   const dispatch = useDispatch();
@@ -98,16 +98,19 @@ const SearchModal = ({ visible, onClose }) => {
                 <FlatList
                   data={filteredProducts}
                   keyExtractor={(item) => item.productID.toString()}
+                  initialNumToRender={8}
+                  maxToRenderPerBatch={8}
+                  windowSize={7}
+                  removeClippedSubviews
                   renderItem={({ item }) => (
                     <TouchableOpacity
                       style={styles.itemContainer}
                       onPress={() => navigateToProduct(item.productID)}
                     >
-                      <Image
-                        source={{
-                          uri: `${backendBaseURL}/Media/Products_Images/${item.productImage.split('\\').pop()}`,
-                        }}
+                      <CachedImage
+                        source={{ uri: resolveProductImageUri(item.productImage) }}
                         style={styles.itemImage}
+                        recyclingKey={item.productID}
                       />
                       <View style={styles.itemDetails}>
                         <Text style={styles.itemTitle}>

@@ -1,27 +1,33 @@
 // src/redux/slice/axiosInstance.js (React Native)
 import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { navigate, reset } from "../../services/navigationService";
+import { reset } from "../../services/navigationService";
 
 const LAMBDA_BASE_URL =
   "https://02yo3gbfxe.execute-api.us-east-1.amazonaws.com/default/FrankoAPI";
-
 const LAMBDA_HEADER_NAME = "Identifier";
 const LAMBDA_HEADER_VALUE = "Franko";
 
-// 3 days in milliseconds
 const INACTIVITY_TIMEOUT = 3 * 24 * 60 * 60 * 1000;
 const LAST_ACTIVITY_KEY = "lastActivityTimestamp";
 
-// Login flow flag
 let isLoginFlow = false;
-
-// Refresh in progress flag to prevent multiple simultaneous refreshes
 let isRefreshing = false;
 let refreshPromise = null;
+let authExpiredHandler = null;
+let logoutInFlightPromise = null;
 
 export const setLoginFlow = (value) => {
-  isLoginFlow = value;
+  isLoginFlow = Boolean(value);
+};
+
+// Register a Redux-side session cleanup callback without importing the store
+// here (which would create a circular dependency through customerSlice).
+export const registerAuthExpiredHandler = (handler) => {
+  authExpiredHandler = typeof handler === "function" ? handler : null;
+  return () => {
+    if (authExpiredHandler === handler) authExpiredHandler = null;
+  };
 };
 
 /* ─── Storage helpers ─── */
@@ -30,10 +36,12 @@ const safeGetFromStorage = async (key) => {
   try {
     const raw = await AsyncStorage.getItem(key);
     if (!raw) return null;
+
     if (raw === "[object Object]") {
       await AsyncStorage.removeItem(key);
       return null;
     }
+
     try {
       return JSON.parse(raw);
     } catch {
@@ -45,25 +53,28 @@ const safeGetFromStorage = async (key) => {
 };
 
 const cleanupCorruptedEntries = async () => {
-  const keys = ["customer", "user"];
-  for (const key of keys) {
+  for (const key of ["customer", "user"]) {
     try {
       const value = await AsyncStorage.getItem(key);
       if (value === "[object Object]") {
         await AsyncStorage.removeItem(key);
       }
-    } catch {}
+    } catch {
+      // Storage cleanup is best-effort and intentionally quiet.
+    }
   }
 };
 
 cleanupCorruptedEntries();
 
-/* ─── Activity Tracking ─── */
+/* ─── Activity tracking ─── */
 
 export const updateLastActivity = async () => {
   try {
     await AsyncStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
-  } catch {}
+  } catch {
+    // Activity tracking must not fail a request.
+  }
 };
 
 export const getLastActivity = async () => {
@@ -79,21 +90,57 @@ export const checkInactivityTimeout = async () => {
   try {
     const lastActivity = await getLastActivity();
     if (!lastActivity) return false;
-
-    const elapsed = Date.now() - lastActivity;
-    const isExpired = elapsed > INACTIVITY_TIMEOUT;
-
-    if (isExpired) {
-      console.log("[Auth] Inactivity timeout reached:", Math.floor(elapsed / (1000 * 60 * 60)), "hours");
-    }
-
-    return isExpired;
+    return Date.now() - lastActivity > INACTIVITY_TIMEOUT;
   } catch {
     return false;
   }
 };
 
-/* ─── Axios Instance ─── */
+/* ─── Error-only HTTP logging ─── */
+
+const getRequestUrl = (config) => {
+  const url = config?.url || "";
+  if (/^https?:\/\//i.test(url)) return url;
+
+  const baseURL = (config?.baseURL || LAMBDA_BASE_URL).replace(/\/$/, "");
+  return `${baseURL}/${url.replace(/^\//, "")}`;
+};
+
+const logRequestError = (error) => {
+  const config = error?.config || error?.response?.config;
+  const response = error?.response;
+
+  console.error("[HTTP error] Request failed", {
+    method: config?.method?.toUpperCase(),
+    url: getRequestUrl(config),
+    endpoint: config?.params?.endpoint,
+    status: response?.status,
+    code: error?.code,
+    message: error?.message || "Request failed without an error message.",
+    params: config?.params,
+    responseBody: response?.data,
+  });
+};
+
+const markAuthExpired = (error) => {
+  if (error && typeof error === "object") {
+    error.isAuthError = true;
+    error.authExpired = true;
+    error.authMessage = "Your session expired. Please sign in again.";
+  }
+  return error;
+};
+
+const isUnauthenticatedCredentialRequest = (config) => {
+  const endpoint = String(config?.params?.endpoint || "").toLowerCase();
+  const hasAuthorization = Boolean(config?.headers?.Authorization);
+  return (
+    endpoint.includes("customerlogin") ||
+    (endpoint.includes("customer-post") && !hasAuthorization)
+  );
+};
+
+/* ─── Axios instance ─── */
 
 const axiosInstance = axios.create({
   baseURL: LAMBDA_BASE_URL,
@@ -103,27 +150,41 @@ const axiosInstance = axios.create({
   },
 });
 
-/* ─── Auth Utilities ─── */
+/* ─── Auth utilities ─── */
 
 export const silentLogout = async () => {
   try {
-    console.log("[Auth] Clearing customer data");
     await AsyncStorage.removeItem("customer");
     await AsyncStorage.removeItem(LAST_ACTIVITY_KEY);
   } catch (error) {
-    console.error("[Auth] Error during logout:", error);
+    console.error("[Auth error] Could not clear customer data:", error?.message || error);
   }
 };
 
 export const logoutAndRedirect = async () => {
-  try {
-    console.log("[Auth] Logging out and redirecting to home");
-    await AsyncStorage.removeItem("customer");
-    await AsyncStorage.removeItem(LAST_ACTIVITY_KEY);
-    reset("Home");
-  } catch (error) {
-    console.error("[Auth] Error during logout and redirect:", error);
-  }
+  if (logoutInFlightPromise) return logoutInFlightPromise;
+
+  logoutInFlightPromise = (async () => {
+    await clearAuth();
+
+    try {
+      await authExpiredHandler?.();
+    } catch (error) {
+      console.error("[Auth error] Could not clear Redux auth state:", error?.message || error);
+    }
+
+    try {
+      // Signup is the app's login/register screen. It is reset as the root so
+      // an expired checkout cannot continue with the stale customer session.
+      reset("Signup");
+    } catch (error) {
+      console.error("[Auth error] Could not open the sign-in screen:", error?.message || error);
+    }
+  })().finally(() => {
+    logoutInFlightPromise = null;
+  });
+
+  return logoutInFlightPromise;
 };
 
 export const checkCustomerTokenValidity = async () => {
@@ -132,16 +193,15 @@ export const checkCustomerTokenValidity = async () => {
     if (!customer) {
       return { hasCustomer: false, hasValidToken: true, shouldLogout: false };
     }
-    if (!customer.accessToken) {
-      await silentLogout();
-      return { hasCustomer: true, hasValidToken: false, shouldLogout: true };
-    }
+
     if (typeof customer.accessToken !== "string" || !customer.accessToken.trim()) {
       await silentLogout();
       return { hasCustomer: true, hasValidToken: false, shouldLogout: true };
     }
+
     return { hasCustomer: true, hasValidToken: true, shouldLogout: false };
   } catch (error) {
+    console.error("[Auth error] Token validation failed:", error?.message || error);
     await silentLogout();
     return { hasCustomer: false, hasValidToken: false, shouldLogout: true };
   }
@@ -157,17 +217,14 @@ export const getCurrentToken = async () => {
 
     if (customer?.accessToken?.trim()) return customer.accessToken;
     if (user?.accessToken?.trim()) return user.accessToken;
-
     return null;
-  } catch {
+  } catch (error) {
+    console.error("[Auth error] Could not read the current token:", error?.message || error);
     return null;
   }
 };
 
-export const hasValidAuth = async () => {
-  const token = await getCurrentToken();
-  return Boolean(token);
-};
+export const hasValidAuth = async () => Boolean(await getCurrentToken());
 
 export const getCurrentAuth = async () => {
   try {
@@ -179,84 +236,91 @@ export const getCurrentAuth = async () => {
 
     if (customer?.accessToken?.trim()) return { type: "customer", data: customer };
     if (user?.accessToken?.trim()) return { type: "user", data: user };
-
     return { type: null, data: null };
-  } catch {
+  } catch (error) {
+    console.error("[Auth error] Could not read the current auth state:", error?.message || error);
     return { type: null, data: null };
   }
 };
 
 export const clearAuth = async () => {
   try {
-    await AsyncStorage.multiRemove(["customer", "user", "loginTime", LAST_ACTIVITY_KEY]);
-  } catch {}
+    await AsyncStorage.multiRemove([
+      "customer",
+      "customers",
+      "user",
+      "loginTime",
+      LAST_ACTIVITY_KEY,
+    ]);
+  } catch (error) {
+    console.error("[Auth error] Could not clear auth storage:", error?.message || error);
+  }
 };
 
 export const forceCleanupStorage = async () => {
   await cleanupCorruptedEntries();
 };
 
-/* ─── Silent Token Refresh ─── */
+/* ─── Silent token refresh ─── */
+
+const resetRefreshState = () => {
+  isRefreshing = false;
+  refreshPromise = null;
+};
 
 const silentRefreshToken = async () => {
-  // If already refreshing, wait for the existing refresh to complete
-  if (isRefreshing && refreshPromise) {
-    console.log("[Auth] Refresh already in progress, waiting...");
-    return refreshPromise;
-  }
+  if (isRefreshing && refreshPromise) return refreshPromise;
 
   isRefreshing = true;
-
   refreshPromise = (async () => {
     try {
       const customer = await safeGetFromStorage("customer");
-
       if (!customer?.refreshToken) {
-        console.log("[Auth] No refresh token available");
-        isRefreshing = false;
-        refreshPromise = null;
+        resetRefreshState();
         return null;
       }
 
-      console.log("[Auth] Silently refreshing token...");
+      const refreshConfig = {
+        params: {
+          endpoint: "/Users/CustomerRefreshToken",
+          client: "app",
+        },
+        headers: {
+          [LAMBDA_HEADER_NAME]: LAMBDA_HEADER_VALUE,
+          "Content-Type": "application/json",
+        },
+        timeout: 15000,
+      };
 
-      // Call refresh token endpoint directly (not through interceptor)
+      // Use plain axios to avoid running the refresh request through this
+      // instance's 401 interceptor.
       const response = await axios.post(
         LAMBDA_BASE_URL,
         { refreshToken: customer.refreshToken },
-        {
-          params: {
-            endpoint: "/Users/CustomerRefreshToken",
-            client: "website",
-          },
-          headers: {
-            [LAMBDA_HEADER_NAME]: LAMBDA_HEADER_VALUE,
-            "Content-Type": "application/json",
-          },
-          timeout: 15000,
-        }
+        refreshConfig
       );
 
       let data = response.data;
       if (typeof data === "string") {
         try {
           data = JSON.parse(data);
-        } catch {}
+        } catch {
+          // The validation below reports a missing access token.
+        }
       }
 
       const newAccessToken = data?.accessToken || data?.AccessToken;
       const newRefreshToken = data?.refreshToken || data?.RefreshToken;
-
       if (!newAccessToken) {
-        console.log("[Auth] Refresh failed - no new token received");
-        isRefreshing = false;
-        refreshPromise = null;
+        console.error("[Auth error] Refresh response did not contain an access token", {
+          endpoint: refreshConfig.params.endpoint,
+          status: response.status,
+          responseBody: response.data,
+        });
+        resetRefreshState();
         return null;
       }
 
-      console.log("[Auth] Token refreshed successfully");
-
-      // Update stored customer with new tokens
       const updatedCustomer = {
         ...customer,
         accessToken: newAccessToken,
@@ -265,15 +329,11 @@ const silentRefreshToken = async () => {
 
       await AsyncStorage.setItem("customer", JSON.stringify(updatedCustomer));
       await updateLastActivity();
-
-      isRefreshing = false;
-      refreshPromise = null;
-
+      resetRefreshState();
       return newAccessToken;
     } catch (error) {
-      console.error("[Auth] Token refresh failed:", error?.message || error);
-      isRefreshing = false;
-      refreshPromise = null;
+      logRequestError(error);
+      resetRefreshState();
       return null;
     }
   })();
@@ -281,38 +341,31 @@ const silentRefreshToken = async () => {
   return refreshPromise;
 };
 
-/* ─── Request Interceptor ─── */
+/* ─── Request interceptor ─── */
 
 axiosInstance.interceptors.request.use(
   async (config) => {
     config.params = {
       ...(config.params || {}),
-      client: "website",
+      client: "app",
     };
-
     config.headers = config.headers || {};
 
-    // Skip token handling if Authorization is already set
-    if (!config.headers.Authorization) {
-      if (isLoginFlow) {
-        // Skip during login flow
-      } else {
-        // Check for 3-day inactivity first
-        const isInactive = await checkInactivityTimeout();
-        if (isInactive) {
-          console.log("[Auth] User inactive for 3+ days - logging out");
-          await logoutAndRedirect();
-          return Promise.reject(new axios.Cancel("Session expired due to inactivity"));
-        }
+    if (!config.headers.Authorization && !isLoginFlow) {
+      const inactive = await checkInactivityTimeout();
+      if (inactive) {
+        await logoutAndRedirect();
+        return Promise.reject(
+          new axios.Cancel("Session expired due to inactivity.")
+        );
+      }
 
-        const tokenCheck = await checkCustomerTokenValidity();
-        if (!tokenCheck.shouldLogout) {
-          const token = await getCurrentToken();
-          if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
-            // Update last activity on every authenticated request
-            await updateLastActivity();
-          }
+      const tokenCheck = await checkCustomerTokenValidity();
+      if (!tokenCheck.shouldLogout) {
+        const token = await getCurrentToken();
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+          await updateLastActivity();
         }
       }
     }
@@ -321,104 +374,58 @@ axiosInstance.interceptors.request.use(
       config.headers["Content-Type"] = "application/json";
     }
 
+    // Intentionally no outgoing-request log: successful calls stay silent.
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    logRequestError(error);
+    return Promise.reject(error);
+  }
 );
 
-/* ─── Response Interceptor with Silent Refresh ─── */
+/* ─── Response interceptor ─── */
 
 axiosInstance.interceptors.response.use(
   (response) => {
-    // Update activity on successful responses
+    // Intentionally no success log.
     updateLastActivity().catch(() => {});
     return response;
   },
   async (error) => {
-    const { response, config } = error;
+    if (axios.isCancel(error)) return Promise.reject(error);
 
-    if (!response) {
+    logRequestError(error);
+    const response = error?.response;
+    const config = error?.config || response?.config;
+    if (!response) return Promise.reject(error);
+
+    if (response.status !== 401) return Promise.reject(error);
+    // Invalid credentials during login/signup are normal form errors. A 401 on
+    // any authenticated request (including checkout/password update) must run
+    // refresh and then clear the session if refresh is rejected.
+    if (isUnauthenticatedCredentialRequest(config)) {
       return Promise.reject(error);
     }
 
-    const { status } = response;
-
-    switch (status) {
-      case 401: {
-        // Skip during login flow
-        if (isLoginFlow) {
-          console.log("[Auth] 401 during login flow - skipping");
-          break;
-        }
-
-        // Prevent infinite retry loops
-        if (config._retried) {
-          console.log("[Auth] 401 after retry - checking inactivity");
-          
-          // Check if inactive for 3 days
-          const isInactive = await checkInactivityTimeout();
-          if (isInactive) {
-            console.log("[Auth] Inactive for 3+ days - logging out");
-            await logoutAndRedirect();
-          } else {
-            console.log("[Auth] Token refresh failed but user is active - logging out");
-            await logoutAndRedirect();
-          }
-          break;
-        }
-
-        // Try silent token refresh
-        console.log("[Auth] 401 received - attempting silent token refresh...");
-
-        const newToken = await silentRefreshToken();
-
-        if (newToken) {
-          console.log("[Auth] Token refreshed - retrying original request");
-
-          // Mark as retried to prevent infinite loops
-          config._retried = true;
-
-          // Update the Authorization header with new token
-          config.headers.Authorization = `Bearer ${newToken}`;
-
-          // Retry the original request
-          return axiosInstance(config);
-        }
-
-        // Refresh failed - check inactivity before logging out
-        console.log("[Auth] Token refresh failed");
-        const isInactive = await checkInactivityTimeout();
-        if (isInactive) {
-          console.log("[Auth] User inactive for 3+ days - logging out");
-          await logoutAndRedirect();
-        } else {
-          // User is active but refresh failed - still logout
-          // This means the refresh token itself is invalid
-          console.log("[Auth] Refresh token invalid - logging out");
-          await logoutAndRedirect();
-        }
-        break;
-      }
-
-      case 403:
-        console.warn("Forbidden - insufficient permissions");
-        break;
-
-      case 429:
-        console.warn("Too many requests - rate limited");
-        break;
-
-      case 500:
-      case 502:
-      case 503:
-      case 504:
-        console.error("Server error:", status);
-        break;
-
-      default:
-        break;
+    if (config?._retried) {
+      markAuthExpired(error);
+      await logoutAndRedirect();
+      return Promise.reject(error);
     }
 
+    const newToken = await silentRefreshToken();
+    if (newToken && config) {
+      config._retried = true;
+      config.headers = config.headers || {};
+      config.headers.Authorization = `Bearer ${newToken}`;
+      return axiosInstance(config);
+    }
+
+    // The access token was rejected and the refresh token could not renew it.
+    // Mark the original error for thunks/screens, clear Redux + storage, and
+    // send the user to the login form before checkout can continue.
+    markAuthExpired(error);
+    await logoutAndRedirect();
     return Promise.reject(error);
   }
 );

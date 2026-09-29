@@ -1,87 +1,102 @@
-import React, { useEffect, useState, useCallback, memo, useMemo } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  Image,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
   Alert,
-  Dimensions,
   FlatList,
   Platform,
-} from 'react-native';
-import { useDispatch, useSelector } from 'react-redux';
-import { fetchProducts, resetProducts } from '../redux/slice/productSlice';
-import { addToCart } from '../redux/slice/cartSlice';
-import { addToWishlist } from '../redux/wishlistSlice';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { AntDesign } from '@expo/vector-icons';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import frankoLogo from '../assets/frankoIcon.png';
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  useWindowDimensions,
+} from "react-native";
+import CachedImage from "./CachedImage";
+import { useDispatch, useSelector } from "react-redux";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 
-/* ─── Responsive Layout ───────────────────────────────── */
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+import { fetchProducts, resetProducts } from "../redux/slice/productSlice";
+import { addToCart } from "../redux/slice/cartSlice";
+import { addToWishlist } from "../redux/wishlistSlice";
+import frankoLogo from "../assets/frankoIcon.png";
+import {
+  preloadProductImages,
+  resolveProductImageUri,
+} from "../utils/ImageCache";
 
-// Device size buckets
-const isSmall  = SCREEN_W < 360;   // e.g. iPhone SE 1st gen
-const isMedium = SCREEN_W >= 360 && SCREEN_W < 414; // most phones
-const isLarge  = SCREEN_W >= 414;  // Plus / Pro Max / tablets
-
-const SPACING = {
-  xs:  isSmall ? 3  : 4,
-  sm:  isSmall ? 6  : 8,
-  md:  isSmall ? 10 : 12,
-  lg:  isSmall ? 14 : 16,
-  xl:  isSmall ? 18 : 20,
-  xxl: isSmall ? 20 : 24,
+const MAX_GRID_WIDTH = 1000;
+const CARD_WIDTH = 120;
+const MIN_CARD_WIDTH = 120;
+const CARD_MARGIN = 6;
+const ROW_GAP = 12;
+const CARD_HEIGHT = 262;
+const IMAGE_HEIGHT = 150;
+const COLORS = {
+  green: "#16A34A",
+  greenDark: "#166534",
+  greenDeep: "#14532D",
+  greenLight: "#DCFCE7",
+  greenTint: "#F0FDF4",
+  greenBorder: "#BBF7D0",
+  ink: "#111827",
+  muted: "#64748B",
+  line: "#E2E8F0",
+  surface: "#FFFFFF",
+  canvas: "#F7FAF7",
 };
 
-// Container padding scales with screen width
-const CONTAINER_PADDING = isSmall ? 10 : isMedium ? 12 : 16;
-// Gap between the two columns
-const COLUMN_GAP = isSmall ? 8 : 10;
-// Each card takes exactly half the available space
-const CARD_WIDTH =
-  (SCREEN_W - CONTAINER_PADDING * 2 - COLUMN_GAP) / 2;
-
-// Image height proportional to card width
-const IMAGE_H = Math.round(CARD_WIDTH * 0.95);
-
-/* ─── Price Formatter ─────────────────────────────────── */
-/**
- * Formats a number as a price string with thousand separators.
- * e.g.  2000     → "2,000.00"
- *       12500.5  → "12,500.50"
- *       null/0   → "0.00"
- */
 const formatPrice = (price) => {
-  const n = Number(price) || 0;
-  return n.toLocaleString('en-US', {
+  const value = Number(price) || 0;
+  return value.toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 };
 
-/* ─── Loading Skeleton Card ───────────────────────────── */
-const LoadingCard = memo(() => (
-  <View style={[styles.productCard, { width: CARD_WIDTH }]}>
-    <View style={[styles.imageContainer, { height: IMAGE_H }]}>
-      <Image source={frankoLogo} style={styles.frankoLogo} />
-    </View>
-    <View style={styles.productInfo}>
-      <View style={styles.loadingTitle} />
-      <View style={styles.loadingTitleShort} />
-      <View style={styles.loadingPrice} />
-    </View>
-  </View>
-));
+const getErrorMessage = (error) => {
+  if (typeof error === "string") return error;
+  return (
+    error?.message ??
+    error?.response?.data?.message ??
+    error?.responseMessage ??
+    "Please try again."
+  );
+};
 
-/* ─── Product Card ────────────────────────────────────── */
+const LoadingCard = memo(
+  ({
+    cardWidth = CARD_WIDTH,
+    cardHeight = CARD_HEIGHT,
+    imageHeight = IMAGE_HEIGHT,
+  }) => (
+    <View
+      style={[
+        styles.productCard,
+        styles.loadingCard,
+        { width: cardWidth, height: cardHeight },
+      ]}
+      accessible
+      accessibilityLabel="Loading product"
+    >
+      <View style={[styles.loadingImage, { height: imageHeight }]}>
+        <CachedImage
+          source={frankoLogo}
+          style={styles.frankoLogo}
+          accessibilityLabel="Franko Trading logo"
+        />
+      </View>
+      <View style={styles.loadingContent}>
+        <View style={styles.loadingTitle} />
+        <View style={styles.loadingTitleShort} />
+        <View style={styles.loadingPrice} />
+      </View>
+    </View>
+  )
+);
+
 const ProductCard = memo(
   ({
     product,
-    index,
     onPress,
     onAddToCart,
     isAddingToCart,
@@ -90,313 +105,490 @@ const ProductCard = memo(
     imageUri,
     discount,
     isNew,
+    cardWidth = CARD_WIDTH,
+    cardHeight = CARD_HEIGHT,
+    imageHeight = IMAGE_HEIGHT,
   }) => {
-    const [imageLoading, setImageLoading] = useState(true);
+    const [imageStatus, setImageStatus] = useState(imageUri ? "loading" : "error");
+    const imageSource = useMemo(
+      () => (imageUri ? { uri: imageUri } : null),
+      [imageUri]
+    );
 
-    const handleImageLoad  = useCallback(() => setImageLoading(false), []);
-    const handleImageError = useCallback(() => setImageLoading(false), []);
+    React.useEffect(() => {
+      setImageStatus(imageUri ? "loading" : "error");
+    }, [imageUri]);
+
+    const handleImageLoad = useCallback(() => setImageStatus("loaded"), []);
+    const handleImageError = useCallback(() => setImageStatus("error"), []);
 
     const handleCartPress = useCallback(
-      (e) => { e.stopPropagation(); onAddToCart(product); },
+      (event) => {
+        event?.stopPropagation?.();
+        onAddToCart(product);
+      },
       [onAddToCart, product]
     );
-
     const handleWishlistPress = useCallback(
-      (e) => { e.stopPropagation(); onToggleWishlist(product, isInWishlist); },
-      [onToggleWishlist, product, isInWishlist]
+      (event) => {
+        event?.stopPropagation?.();
+        onToggleWishlist(product, isInWishlist);
+      },
+      [isInWishlist, onToggleWishlist, product]
     );
 
-    // Font sizes scale with screen
-    const nameFontSize  = isSmall ? 11 : isMedium ? 12 : 13;
-    const priceFontSize = isSmall ? 12 : isMedium ? 13 : 14;
-
     return (
-      <TouchableOpacity
-        style={[styles.productCard, { width: CARD_WIDTH }]}
-        onPress={onPress}
-        activeOpacity={0.88}
-      >
-        {/* ── Image ── */}
-        <View style={[styles.imageContainer, { height: IMAGE_H }]}>
-          {imageLoading && (
-            <View style={styles.imageLoadingContainer}>
-              <ActivityIndicator size="small" color="#FF6347" />
-            </View>
-          )}
-
-          <Image
-            source={{ uri: imageUri }}
-            style={[styles.productImage, imageLoading && styles.hiddenImage]}
-            onLoad={handleImageLoad}
-            onError={handleImageError}
-          />
-
-          {/* Badges */}
-          {isNew && (
-            <View style={styles.newBadge}>
-              <Text style={styles.newBadgeText}>NEW</Text>
-            </View>
-          )}
-          {discount > 0 && (
-            <View style={styles.discountBadge}>
-              <Text style={styles.discountText}>SALE</Text>
-            </View>
-          )}
-
-          {/* Wishlist */}
-          <TouchableOpacity
-            style={styles.wishlistButton}
-            onPress={handleWishlistPress}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          >
-            <FontAwesome
-              name={isInWishlist ? 'heart' : 'heart-o'}
-              size={isSmall ? 13 : 15}
-              color={isInWishlist ? '#E63946' : '#888'}
-            />
-          </TouchableOpacity>
-        </View>
-
-        {/* ── Info ── */}
-        <View style={styles.productInfo}>
-          <Text
-            style={[styles.productName, { fontSize: nameFontSize }]}
-            numberOfLines={2}
-          >
-            {product.productName}
-          </Text>
-
-          <View style={styles.priceContainer}>
-            <Text style={[styles.productPrice, { fontSize: priceFontSize }]}>
-              ₵{formatPrice(product.price)}
-            </Text>
-            {product.oldPrice > 0 && (
-              <Text style={styles.oldPrice}>
-                ₵{formatPrice(product.oldPrice)}
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {/* ── Add-to-cart FAB ── */}
+      <View style={[styles.productCard, { width: cardWidth, height: cardHeight }]}>
         <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={`View ${product.productName ?? "product"}`}
+          activeOpacity={0.9}
+          onPress={() => onPress(product)}
+          style={styles.cardTouchable}
+        >
+          <View style={[styles.imageContainer, { height: imageHeight }]}>
+            {imageUri ? (
+              <CachedImage
+                source={imageSource}
+                style={[styles.productImage, imageStatus !== "loaded" && styles.hiddenImage]}
+                resizeMode="contain"
+                resizeMethod="resize"
+                onLoad={handleImageLoad}
+                onError={handleImageError}
+              />
+            ) : null}
+
+            {imageStatus !== "loaded" && (
+              <View pointerEvents="none" style={styles.imageLoadingContainer}>
+                <CachedImage
+                  source={frankoLogo}
+                  style={styles.frankoLogo}
+                  accessibilityLabel="Franko Trading logo"
+                />
+                {imageStatus === "loading" && (
+                  <ActivityIndicator
+                    size="large"
+                    color={COLORS.green}
+                    style={styles.imageSpinner}
+                  />
+                )}
+              </View>
+            )}
+
+            {isNew && (
+              <View style={styles.newBadge}>
+                <Text style={styles.badgeText}>NEW</Text>
+              </View>
+            )}
+            {discount > 0 && (
+              <View style={styles.discountBadge}>
+                <Text style={styles.badgeText}>SALE</Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={
+                isInWishlist ? "Already in wishlist" : `Add ${product.productName} to wishlist`
+              }
+              style={styles.wishlistButton}
+              onPress={handleWishlistPress}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <FontAwesome
+                name={isInWishlist ? "heart" : "heart-o"}
+                size={16}
+                color={isInWishlist ? COLORS.green : COLORS.muted}
+              />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.productInfo}>
+            <Text style={styles.productName} numberOfLines={2}>
+              {product.productName ?? "Product"}
+            </Text>
+            <View style={styles.priceContainer}>
+              <Text
+                style={styles.productPrice}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
+                GH₵ {formatPrice(product.price)}
+              </Text>
+              {Number(product.oldPrice) > 0 && (
+                <Text style={styles.oldPrice}>GH₵ {formatPrice(product.oldPrice)}</Text>
+              )}
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={`Add ${product.productName ?? "product"} to cart`}
           style={[
             styles.addToCartButton,
             isAddingToCart && styles.addToCartButtonDisabled,
           ]}
           onPress={handleCartPress}
           disabled={isAddingToCart}
-          hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
         >
           {isAddingToCart ? (
-            <ActivityIndicator size={12} color="#fff" />
+            <ActivityIndicator size="small" color={COLORS.greenDeep} />
           ) : (
-           <AntDesign name="shopping-cart" size={14} color="white" />
+            <FontAwesome name="shopping-cart" size={14} color={COLORS.surface} />
           )}
         </TouchableOpacity>
-      </TouchableOpacity>
+      </View>
     );
-  },
-  // Custom comparator — only re-render when relevant props change
-  (prev, next) =>
-    prev.product.productID === next.product.productID &&
-    prev.isAddingToCart    === next.isAddingToCart    &&
-    prev.isInWishlist      === next.isInWishlist      &&
-    prev.imageUri          === next.imageUri
+  }
 );
 
-/* ═══════════════════════════════════════════════════════
-   MAIN COMPONENT
-   ═══════════════════════════════════════════════════════ */
 const ComboComponent = () => {
-  const dispatch      = useDispatch();
-  const navigation    = useNavigation();
-  const { products, loading } = useSelector((s) => s.products);
-  const cartId        = useSelector((s) => s.cart.cartId);
-  const wishlistItems = useSelector((s) => s.wishlist.items);
+  const dispatch = useDispatch();
+  const navigation = useNavigation();
+  const { width: windowWidth } = useWindowDimensions();
+
+  const productsState = useSelector((state) => state.products ?? {});
+  const products = Array.isArray(productsState.products) ? productsState.products : [];
+  const reduxLoading = Boolean(productsState.loading);
+  const reduxError = productsState.error;
+  const cartId = useSelector((state) => state.cart?.cartId);
+  const wishlistItems = useSelector((state) =>
+    Array.isArray(state.wishlist?.items) ? state.wishlist.items : []
+  );
 
   const [addingToCart, setAddingToCart] = useState({});
+  const [requestComplete, setRequestComplete] = useState(products.length > 0);
+  const [requestError, setRequestError] = useState(false);
+  const [listWidth, setListWidth] = useState(0);
+  const productsRequestedRef = useRef(products.length > 0);
+  const productsRequestInFlightRef = useRef(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      dispatch(resetProducts());
-      dispatch(fetchProducts());
-    }, [dispatch])
+  useEffect(() => {
+    if (products.length > 0) productsRequestedRef.current = true;
+  }, [products.length]);
+
+  // Measure the actual list width as well as the window width so grids also fit
+  // correctly inside split-screen layouts and parent containers with padding.
+  const gridWidth = Math.min(listWidth || windowWidth, MAX_GRID_WIDTH);
+  // Keep the card rails aligned to a single inset on phones; use a wider inset only on tablets.
+  const horizontalPadding = gridWidth < 600 ? 12 : 20;
+  const columnGap = CARD_MARGIN;
+  const availableGridWidth = gridWidth - horizontalPadding * 2;
+  const fitColumns = Math.floor(
+    (availableGridWidth + columnGap) / (MIN_CARD_WIDTH + columnGap)
   );
-
-  /* ── Derived data ── */
-  const recentProducts = useMemo(() => {
-    if (!products?.length) return [];
-    return [...products]
-      .sort((a, b) => {
-        const da = new Date(b.dateCreated || b.createdAt || 0);
-        const db = new Date(a.dateCreated || a.createdAt || 0);
-        return da - db;
-      })
-      .slice(0, 10);
-  }, [products]);
-
-  const wishlistSet = useMemo(
-    () => new Set(wishlistItems.map((i) => i.productID)),
-    [wishlistItems]
+  const numColumns = Math.max(
+    gridWidth < 300 ? 1 : 2,
+    Math.min(4, fitColumns)
   );
+  const cardWidth = Math.max(
+    0,
+    (gridWidth - horizontalPadding * 2 - columnGap * (numColumns - 1)) / numColumns
+  );
+  const imageHeight = IMAGE_HEIGHT;
+  const cardHeight = CARD_HEIGHT;
+  const isSmall = gridWidth < 360;
+  const titleFontSize = isSmall ? 22 : gridWidth >= 700 ? 30 : 25;
 
-  const dataSource = useMemo(() => {
-    if (loading || recentProducts.length === 0) {
-      return Array.from({ length: 10 }, (_, idx) => ({
-        isLoading: true,
-        id: idx,
-      }));
-    }
-    return recentProducts;
-  }, [loading, recentProducts]);
+  const loadProducts = useCallback(
+    (force = false) => {
+      if (productsRequestInFlightRef.current) return;
+      // Home regains focus frequently. Reuse the Redux product list instead of
+      // clearing and downloading it again on every return to the screen.
+      if (!force && productsRequestedRef.current) return;
 
-  /* ── Handlers ── */
-  const handleAddToCart = useCallback(
-    (product) => {
-      setAddingToCart((prev) => ({ ...prev, [product.productID]: true }));
-      dispatch(
-        addToCart({
-          cartId,
-          productId: product.productID,
-          price: product.price,
-          quantity: 1,
-        })
-      )
-        .then(() =>
-          Alert.alert('Added to Cart', `${product.productName} added to cart!`)
-        )
-        .catch((err) =>
-          Alert.alert('Error', err.message || 'Failed to add product')
-        )
-        .finally(() =>
-          setAddingToCart((prev) => {
-            const next = { ...prev };
-            delete next[product.productID];
-            return next;
+      productsRequestedRef.current = true;
+      productsRequestInFlightRef.current = true;
+      setRequestComplete(false);
+      setRequestError(false);
+      if (force) dispatch(resetProducts());
+
+      try {
+        const request = dispatch(fetchProducts());
+        Promise.resolve(request)
+          .then((result) => {
+            if (result?.error) setRequestError(true);
           })
-        );
-    },
-    [dispatch, cartId]
-  );
-
-  const handleToggleWishlist = useCallback(
-    (product, isInWishlist) => {
-      if (isInWishlist) {
-        Alert.alert('Info', `${product.productName} is already in your wishlist.`);
-      } else {
-        dispatch(addToWishlist(product));
-        Alert.alert('Wishlist', `${product.productName} added to wishlist ❤️`);
+          .catch(() => setRequestError(true))
+          .finally(() => {
+            productsRequestInFlightRef.current = false;
+            setRequestComplete(true);
+          });
+      } catch (_error) {
+        productsRequestInFlightRef.current = false;
+        setRequestError(true);
+        setRequestComplete(true);
       }
     },
     [dispatch]
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      loadProducts();
+    }, [loadProducts])
+  );
+
+  const recentProducts = useMemo(() => {
+    if (!products.length) return [];
+    return [...products]
+      .sort((a, b) => {
+        const dateA = new Date(a.dateCreated || a.createdAt || 0).getTime();
+        const dateB = new Date(b.dateCreated || b.createdAt || 0).getTime();
+        return dateB - dateA;
+      })
+      .slice(0, 10);
+  }, [products]);
+
+  useEffect(() => {
+    if (!recentProducts.length) return;
+    // Warm the first visible products in the native cache without blocking UI.
+    void preloadProductImages(recentProducts.slice(0, 8), {
+      maxImages: 8,
+      concurrency: 3,
+    });
+  }, [recentProducts]);
+
+  const wishlistSet = useMemo(
+    () => new Set(wishlistItems.map((item) => item?.productID).filter(Boolean)),
+    [wishlistItems]
+  );
+
+  const hasNetworkError = Boolean(reduxError || requestError);
+  const hasProducts = recentProducts.length > 0;
+  // Keep cached products visible during refreshes/errors instead of unmounting
+  // the cards and forcing their remote images to load again.
+  const isLoading = !hasProducts && (reduxLoading || !requestComplete);
+  const showSkeletons = !hasProducts;
+  const showStatusNotice = !isLoading && (hasNetworkError || !hasProducts);
+
+  const dataSource = useMemo(() => {
+    if (!showSkeletons) return recentProducts;
+    return Array.from({ length: numColumns * 2 }, (_, id) => ({
+      isLoading: true,
+      id,
+    }));
+  }, [numColumns, recentProducts, showSkeletons]);
+
+  const handleAddToCart = useCallback(
+    async (product) => {
+      const productId = product?.productID;
+      if (!productId || addingToCart[productId]) return;
+      if (!cartId) {
+        Alert.alert("Cart unavailable", "Please refresh your cart and try again.");
+        return;
+      }
+
+      setAddingToCart((previous) => ({ ...previous, [productId]: true }));
+      try {
+        await dispatch(
+          addToCart({
+            cartId,
+            productId,
+            price: product.price,
+            quantity: 1,
+          })
+        ).unwrap();
+        Alert.alert("Added to Cart", `${product.productName} added to cart.`);
+      } catch (error) {
+        Alert.alert("Couldn’t add item", getErrorMessage(error));
+      } finally {
+        setAddingToCart((previous) => {
+          const next = { ...previous };
+          delete next[productId];
+          return next;
+        });
+      }
+    },
+    [addingToCart, cartId, dispatch]
+  );
+
+  const handleToggleWishlist = useCallback(
+    (product, isInWishlist) => {
+      if (isInWishlist) {
+        Alert.alert("Wishlist", `${product.productName} is already saved.`);
+        return;
+      }
+      dispatch(addToWishlist(product));
+      Alert.alert("Wishlist", `${product.productName} added to your wishlist.`);
+    },
+    [dispatch]
+  );
+
   const handleProductPress = useCallback(
-    (product) =>
-      navigation.navigate('ProductDetails', {
+    (product) => {
+      navigation.navigate("ProductDetails", {
         productID: product.productID,
-        productId:  product.productID,
-      }),
+        productId: product.productID,
+      });
+    },
     [navigation]
   );
 
-  const handleViewAll = useCallback(
-    () => navigation.navigate('Products'),
-    [navigation]
-  );
+  const handleViewAll = useCallback(() => navigation.navigate("Products"), [navigation]);
 
-  /* ── FlatList helpers ── */
   const keyExtractor = useCallback(
-    (item) => (item.isLoading ? `loading-${item.id}` : String(item.productID)),
+    (item, index) => (item.isLoading ? `loading-${item.id}` : String(item.productID ?? index)),
     []
   );
 
   const renderItem = useCallback(
     ({ item: product, index }) => {
+      const itemWrapperStyle = [
+        styles.cardWrapper,
+        {
+          width: cardWidth,
+          marginBottom: numColumns === 1 ? ROW_GAP : 0,
+        },
+      ];
+
       if (product.isLoading) {
         return (
-          <View style={styles.cardWrapper}>
-            <LoadingCard />
+          <View style={itemWrapperStyle}>
+            <LoadingCard
+              cardWidth={cardWidth}
+              cardHeight={cardHeight}
+              imageHeight={imageHeight}
+            />
           </View>
         );
       }
 
-      const imageUri = `https://testing.frankotrading.com/Media/Products_Images/${product.productImage
-        ?.split('\\')
-        .pop()}`;
+      const imageUri = resolveProductImageUri(product.productImage);
+      const oldPrice = Number(product.oldPrice) || 0;
+      const currentPrice = Number(product.price) || 0;
       const discount =
-        product.oldPrice > 0
-          ? Math.round(
-              ((product.oldPrice - product.price) / product.oldPrice) * 100
-            )
+        oldPrice > currentPrice && oldPrice > 0
+          ? Math.round(((oldPrice - currentPrice) / oldPrice) * 100)
           : 0;
 
       return (
-        <View style={styles.cardWrapper}>
+        <View style={itemWrapperStyle}>
           <ProductCard
             product={product}
-            index={index}
-            onPress={() => handleProductPress(product)}
+            onPress={handleProductPress}
             onAddToCart={handleAddToCart}
-            isAddingToCart={!!addingToCart[product.productID]}
+            isAddingToCart={Boolean(addingToCart[product.productID])}
             isInWishlist={wishlistSet.has(product.productID)}
             onToggleWishlist={handleToggleWishlist}
             imageUri={imageUri}
             discount={discount}
             isNew={index < 3}
+            cardWidth={cardWidth}
+            cardHeight={cardHeight}
+            imageHeight={imageHeight}
           />
         </View>
       );
     },
     [
-      wishlistSet,
       addingToCart,
-      handleProductPress,
+      cardHeight,
+      cardWidth,
       handleAddToCart,
+      handleProductPress,
       handleToggleWishlist,
+      imageHeight,
+      numColumns,
+      wishlistSet,
+      ROW_GAP,
     ]
   );
 
-  /* ── List Header ── */
   const ListHeader = useMemo(
     () => (
-      <View style={styles.header}>
-        {/* Title block */}
-        <View style={styles.titleContainer}>
-          <Text style={styles.title}>New Arrivals</Text>
-          <View style={styles.titleUnderline} />
-          <Text style={styles.subtitle}>Fresh picks just for you</Text>
+      <>
+        <View style={styles.header}>
+          <View style={styles.titleContainer}>
+            <View style={styles.eyebrow}>
+              <View style={styles.eyebrowDot} />
+              <Text style={styles.eyebrowText}>JUST LANDED</Text>
+            </View>
+            <Text style={[styles.title, { fontSize: titleFontSize }]}>New Arrivals</Text>
+            <View style={styles.titleUnderline} />
+            <Text style={[styles.subtitle, { fontSize: isSmall ? 12 : 13 }]}>
+              Fresh picks, just for you
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Shop all products"
+            activeOpacity={0.85}
+            style={[styles.viewAllButton, isSmall && styles.viewAllButtonSmall]}
+            onPress={handleViewAll}
+          >
+            <Text style={styles.viewAllText}>Shop all</Text>
+            <View style={styles.arrowContainer}>
+              <FontAwesome name="arrow-right" size={12} color={COLORS.greenDark} />
+            </View>
+          </TouchableOpacity>
         </View>
 
-        {/* View-all button */}
-        <TouchableOpacity style={styles.viewAllButton} onPress={handleViewAll}>
-          <Text style={styles.viewAllText}>Shop All</Text>
-          <View style={styles.arrowContainer}>
-            <Text style={styles.arrow}>→</Text>
+        {showStatusNotice && (
+          <View style={styles.statusNotice}>
+            <View style={styles.statusLogoWrap}>
+              <CachedImage source={frankoLogo} style={styles.statusLogo} />
+            </View>
+            <View style={styles.statusCopy}>
+              <Text style={styles.statusTitle}>
+                {hasNetworkError ? "Connection issue" : "No new arrivals yet"}
+              </Text>
+              <Text style={styles.statusSubtitle}>
+                {hasNetworkError
+                  ? "Check your connection and try again."
+                  : "We’ll check again for fresh products."}
+              </Text>
+            </View>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading products"
+              activeOpacity={0.82}
+              style={styles.retryButton}
+              onPress={() => loadProducts(true)}
+            >
+              <FontAwesome name="refresh" size={12} color={COLORS.surface} />
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
           </View>
-        </TouchableOpacity>
-      </View>
+        )}
+      </>
     ),
-    [handleViewAll]
+    [
+      handleViewAll,
+      hasNetworkError,
+      isSmall,
+      loadProducts,
+      showStatusNotice,
+      titleFontSize,
+    ]
   );
 
-  /* ── Render ── */
   return (
     <View style={styles.container}>
       <FlatList
+        key={`new-arrivals-${numColumns}`}
+        style={styles.list}
+        onLayout={(event) => setListWidth(event.nativeEvent.layout.width)}
+        contentContainerStyle={[styles.gridContent, { paddingHorizontal: horizontalPadding }]}
         data={dataSource}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        numColumns={2}
+        numColumns={numColumns}
         ListHeaderComponent={ListHeader}
-        // Column wrapper just handles horizontal distribution
-        columnWrapperStyle={styles.columnWrapper}
+        columnWrapperStyle={
+          numColumns > 1
+            ? [styles.columnWrapper, { marginBottom: ROW_GAP }]
+            : undefined
+        }
         showsVerticalScrollIndicator={false}
-        removeClippedSubviews
-        maxToRenderPerBatch={6}
+        removeClippedSubviews={Platform.OS === "android"}
+        maxToRenderPerBatch={numColumns * 3}
         updateCellsBatchingPeriod={50}
-        initialNumToRender={6}
+        initialNumToRender={numColumns * 2}
         windowSize={5}
         scrollEventThrottle={16}
       />
@@ -404,268 +596,333 @@ const ComboComponent = () => {
   );
 };
 
-/* ─── Styles ──────────────────────────────────────────── */
+export default ComboComponent;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    width: "100%",
+    backgroundColor: COLORS.canvas,
+    paddingHorizontal: 16,
   },
-
-  /* Header */
+  list: {
+    width: "100%",
+    maxWidth: MAX_GRID_WIDTH,
+    alignSelf: "center",
+  },
+  gridContent: {
+    paddingTop: 0,
+    paddingBottom: 28,
+  },
   header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    paddingHorizontal: CONTAINER_PADDING,
-    paddingTop: SPACING.lg,
-    paddingBottom: SPACING.xl,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 20,
+    paddingBottom: 18,
   },
   titleContainer: {
     flex: 1,
-    alignItems: 'flex-start',
+    minWidth: 0,
+    alignItems: "flex-start",
+    paddingRight: 8,
+  },
+  eyebrow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 5,
+  },
+  eyebrowDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: COLORS.green,
+  },
+  eyebrowText: {
+    color: COLORS.greenDark,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 1.1,
   },
   title: {
-    fontSize: isSmall ? 20 : isMedium ? 22 : 24,
-    fontWeight: '800',
-    color: '#111827',
+    color: COLORS.ink,
+    fontWeight: "800",
     letterSpacing: -0.5,
-    marginBottom: SPACING.xs,
   },
   titleUnderline: {
-    width: isSmall ? 56 : 72,
+    width: 54,
     height: 3,
-    backgroundColor: '#FF6347',
+    marginTop: 5,
+    marginBottom: 5,
     borderRadius: 2,
-    marginBottom: SPACING.xs,
+    backgroundColor: COLORS.green,
   },
   subtitle: {
-    fontSize: isSmall ? 12 : 13,
-    color: '#6B7280',
-    fontWeight: '500',
+    color: COLORS.muted,
+    fontWeight: "500",
   },
   viewAllButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FF6347',
-    paddingHorizontal: isSmall ? SPACING.md : SPACING.lg,
-    paddingVertical: isSmall ? SPACING.xs + 2 : SPACING.sm,
-    borderRadius: 20,
-    shadowColor: '#FF6347',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 3,
-    marginLeft: SPACING.md,
-    alignSelf: 'center',
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderRadius: 24,
+    backgroundColor: COLORS.green,
+    ...Platform.select({
+      ios: {
+        shadowColor: COLORS.greenDark,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 6,
+      },
+      android: { elevation: 3 },
+      default: {},
+    }),
+  },
+  viewAllButtonSmall: {
+    minHeight: 38,
+    gap: 6,
+    paddingHorizontal: 10,
   },
   viewAllText: {
-    fontSize: isSmall ? 12 : 13,
-    fontWeight: '700',
-    color: '#fff',
-    marginRight: SPACING.xs,
+    color: COLORS.surface,
+    fontSize: 12,
+    fontWeight: "800",
   },
   arrowContainer: {
-    backgroundColor: '#fff',
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: COLORS.surface,
   },
-  arrow: {
-    fontSize: 11,
-    color: '#FF6347',
-    fontWeight: 'bold',
-    lineHeight: 13,
+  statusNotice: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 14,
+    padding: 11,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.greenBorder,
+    backgroundColor: COLORS.surface,
   },
-
-  /* Column layout */
-  columnWrapper: {
-    paddingHorizontal: CONTAINER_PADDING,
-    justifyContent: 'space-between',
-    marginBottom: SPACING.md,
+  statusLogoWrap: {
+    width: 42,
+    height: 42,
+    marginRight: 10,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.greenTint,
   },
-
-  /* Wrapper gives each card consistent spacing */
-  cardWrapper: {
+  statusLogo: {
+    width: 29,
+    height: 29,
+    resizeMode: "contain",
+  },
+  statusCopy: {
     flex: 1,
-    // Ensures the two cards share the row evenly without needing
-    // explicit margins that might overflow on small screens
-    maxWidth: CARD_WIDTH,
+    minWidth: 0,
+    paddingRight: 8,
   },
-
+  statusTitle: {
+    color: COLORS.ink,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  statusSubtitle: {
+    marginTop: 3,
+    color: COLORS.muted,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  retryButton: {
+    minHeight: 34,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    borderRadius: 11,
+    backgroundColor: COLORS.greenDark,
+  },
+  retryText: {
+    color: COLORS.surface,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  columnWrapper: {
+    justifyContent: "space-between",
+  },
+  cardWrapper: {
+    flexShrink: 0,
+  },
   productCard: {
-    backgroundColor: "#fff",
+    position: "relative",
     padding: 2,
-    borderRadius: 12,
-    width: 150,
-    marginRight: 8,
-    marginLeft: 2,
+    borderRadius: 14,
+    backgroundColor: COLORS.surface,
+    shadowColor: "#000000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.9,
     shadowRadius: 2,
     elevation: 5,
-    marginBottom: 20,
-    height: 240
   },
-
-  /* Image area */
+  loadingCard: {
+    borderRadius: 14,
+  },
+  cardTouchable: {
+    flex: 1,
+  },
   imageContainer: {
-    position: 'relative',
-    backgroundColor: '#F9FAFB',
-    overflow: 'hidden',
+    position: "relative",
+    height: IMAGE_HEIGHT,
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: "#F3F4F6",
   },
-  imageLoadingContainer: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    zIndex: 2,
+  loadingImage: {
+    height: IMAGE_HEIGHT,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: COLORS.greenTint,
+  },
+  loadingContent: {
+    flex: 1,
+    padding: 12,
   },
   productImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'contain',
+    width: "100%",
+    height: "100%",
   },
   hiddenImage: {
     opacity: 0,
   },
-
-  /* Badges */
-  newBadge: {
-    position: 'absolute',
-    top: SPACING.sm,
-    left: SPACING.sm,
-    backgroundColor: '#EF4444',
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 2,
-    borderRadius: 10,
-    zIndex: 3,
-  },
-  newBadgeText: {
-    color: '#fff',
-    fontSize: isSmall ? 8 : 9,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-  },
-  discountBadge: {
-    position: 'absolute',
-    top: SPACING.sm,
-    right: SPACING.sm,
-    backgroundColor: '#F97316',
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 2,
-    borderRadius: 8,
-    zIndex: 3,
-  },
-  discountText: {
-    color: '#fff',
-    fontSize: isSmall ? 8 : 9,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-  },
-
-  /* Wishlist button */
-  wishlistButton: {
-    position: 'absolute',
-    bottom: SPACING.sm,
-    right: SPACING.sm,
-    backgroundColor: '#fff',
-    padding: SPACING.sm,
-    borderRadius: 20,
-    zIndex: 3,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.15,
-        shadowRadius: 3,
-      },
-      android: { elevation: 3 },
-    }),
-  },
-
-  /* Text info */
-  productInfo: {
-    padding: 12,
-    paddingBottom: 8,
-  },
-  
-  productName: {
-    fontSize: 13,
-    color: "#333",
-    fontWeight: "500",
-    lineHeight: 18,
-    marginBottom: 6,
-    minHeight: 36,
-  },
-  
-  priceContainer: {
-    flexDirection: "column",
-    gap: 2,
-    marginBottom: 8,
-  },
-  
-  productPrice: {
-    fontSize: 14,
-    color: "#2d3436",
-    fontWeight: "bold",
-  },
-  
-  oldPrice: {
-    fontSize: 10,
-    color: "#636e72",
-    textDecorationLine: "line-through",
-  },
-  
-  addToCartButton: {
-    position: "absolute",
-    bottom: 2,
-    right: 8,
-    backgroundColor: "#E63946",
-    padding: 8,
-    borderRadius: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  
-  addToCartButtonDisabled: {
-    backgroundColor: "#f8a5aa",
-  },
-  addToCartButtonDisabled: {
-    backgroundColor: '#93C5CB',
-  },
-
-  /* Loading skeleton */
-  loadingTitle: {
-    height: 13,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 4,
-    marginBottom: SPACING.xs,
-  },
-  loadingTitleShort: {
-    height: 13,
-    width: '65%',
-    backgroundColor: '#E5E7EB',
-    borderRadius: 4,
-    marginBottom: SPACING.sm,
-  },
-  loadingPrice: {
-    height: 11,
-    width: '45%',
-    backgroundColor: '#E5E7EB',
-    borderRadius: 4,
+  imageLoadingContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(240,253,244,0.96)",
   },
   frankoLogo: {
-    width: CARD_WIDTH * 0.45,
-    height: CARD_WIDTH * 0.45,
-    resizeMode: 'contain',
-    opacity: 0.08,
-    tintColor: '#9CA3AF',
+    width: 60,
+    height: 60,
+    resizeMode: "contain",
+    opacity: 0.78,
+  },
+  imageSpinner: {
+    position: "absolute",
+    bottom: 8,
+  },
+  newBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: COLORS.green,
+    zIndex: 2,
+  },
+  discountBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: COLORS.greenDark,
+    zIndex: 2,
+  },
+  badgeText: {
+    color: COLORS.surface,
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  wishlistButton: {
+    position: "absolute",
+    bottom: 8,
+    right: 8,
+    padding: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.surface,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+    zIndex: 3,
+  },
+  productInfo: {
+    flex: 1,
+    padding: 12,
+  },
+  productName: {
+    minHeight: 36,
+    marginBottom: 8,
+    color: COLORS.ink,
+    fontSize: 13,
+    fontWeight: "500",
+    lineHeight: 18,
+  },
+  priceContainer: {
+    minHeight: 31,
+    flexDirection: "column",
+    gap: 2,
+  },
+  productPrice: {
+    color: COLORS.ink,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  oldPrice: {
+    color: COLORS.muted,
+    fontSize: 10,
+    textDecorationLine: "line-through",
+  },
+  addToCartButton: {
+    position: "absolute",
+    bottom: 8,
+    right: 8,
+    padding: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.green,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+    zIndex: 4,
+  },
+  addToCartButtonDisabled: {
+    backgroundColor: COLORS.greenLight,
+  },
+  loadingTitle: {
+    width: "92%",
+    height: 16,
+    marginBottom: 8,
+    borderRadius: 4,
+    backgroundColor: "#E7EFE8",
+  },
+  loadingTitleShort: {
+    width: "66%",
+    height: 12,
+    marginBottom: 12,
+    borderRadius: 4,
+    backgroundColor: "#E7EFE8",
+  },
+  loadingPrice: {
+    width: "60%",
+    height: 12,
+    borderRadius: 4,
+    backgroundColor: "#DCE9DE",
   },
 });
-
-export default ComboComponent;

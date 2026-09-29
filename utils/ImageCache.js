@@ -1,106 +1,85 @@
-// utils/imageCache.js
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as FileSystem from "expo-file-system/legacy";
-import * as Crypto from "expo-crypto";
-import { getLambdaHeaders } from "./lambdaClient";
+import { Image as NativeImage } from "react-native";
 
-const INDEX_KEY = "PRODUCT_IMG_CACHE_INDEX_V1";
-const CACHE_DIR = `${FileSystem.cacheDirectory}product-images/`;
+const PRODUCT_IMAGE_BASE_URL =
+  "https://testing.frankotrading.com/Media/Products_Images";
+const prefetchedUrls = new Set();
+const prefetchingUrls = new Map();
 
-let memIndex = null;
-const inflight = new Map();
+export const resolveProductImageUri = (imagePath) => {
+  if (typeof imagePath !== "string" || !imagePath.trim()) return null;
+  const normalizedPath = imagePath.trim().replace(/\\/g, "/");
+  if (/^https?:\/\//i.test(normalizedPath)) return normalizedPath;
+  const imageName = normalizedPath.split("/").pop();
+  return imageName ? `${PRODUCT_IMAGE_BASE_URL}/${imageName}` : null;
+};
 
-async function ensureDir() {
-  const info = await FileSystem.getInfoAsync(CACHE_DIR);
-  if (!info.exists) await FileSystem.makeDirectoryAsync(CACHE_DIR, { intermediates: true });
-}
-
-async function loadIndex() {
-  if (memIndex) return memIndex;
-  const raw = await AsyncStorage.getItem(INDEX_KEY);
-  memIndex = raw ? JSON.parse(raw) : {};
-  return memIndex;
-}
-
-async function saveIndex(next) {
-  memIndex = next;
-  await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(next));
-}
-
-async function sha1(text) {
-  return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA1, text);
-}
-
-function extFromContentType(ct) {
-  const v = String(ct || "").toLowerCase();
-  if (v.includes("image/png")) return "png";
-  if (v.includes("image/webp")) return "webp";
-  if (v.includes("image/gif")) return "gif";
-  if (v.includes("image/jpeg") || v.includes("image/jpg")) return "jpg";
-  return "jpg";
-}
-
-export async function getLocalUriIfCached(remoteUri) {
-  if (!remoteUri) return null;
-
-  await ensureDir();
-  const idx = await loadIndex();
-
-  const key = await sha1(remoteUri);
-  const entry = idx[key];
-  if (!entry?.localUri) return null;
-
-  const info = await FileSystem.getInfoAsync(entry.localUri);
-  return info.exists ? entry.localUri : null;
-}
-
-export async function ensureImageCached(remoteUri) {
-  if (!remoteUri) return null;
-
-  await ensureDir();
-  const idx = await loadIndex();
-
-  if (inflight.has(remoteUri)) return inflight.get(remoteUri);
-
-  const p = (async () => {
-    const headers = getLambdaHeaders(); // ✅ derived from imported api
-    const key = await sha1(remoteUri);
-
-    const existing = idx[key]?.localUri;
-    if (existing) {
-      const info = await FileSystem.getInfoAsync(existing);
-      if (info.exists) return existing;
-    }
-
-    const tmpUri = `${CACHE_DIR}${key}.tmp`;
-    const res = await FileSystem.downloadAsync(remoteUri, tmpUri, { headers });
-
-    if (res?.status >= 400) {
-      console.log("CACHE DOWNLOAD HTTP ERROR:", { remoteUri, status: res.status });
-      throw new Error(`HTTP ${res.status}`);
-    }
-
-    const ct = res?.headers?.["Content-Type"] || res?.headers?.["content-type"];
-    const ext = extFromContentType(ct);
-    const finalUri = `${CACHE_DIR}${key}.${ext}`;
-
-    await FileSystem.moveAsync({ from: tmpUri, to: finalUri });
-
-    const next = { ...idx, [key]: { remoteUri, localUri: finalUri, ts: Date.now() } };
-    await saveIndex(next);
-
-    return finalUri;
-  })();
-
-  inflight.set(remoteUri, p);
-  try {
-    return await p;
-  } finally {
-    inflight.delete(remoteUri);
+/** Prefetch one remote image into React Native's native image cache. */
+export const preloadImage = (url) => {
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+    return Promise.resolve(false);
   }
-}
+  if (prefetchedUrls.has(url)) return Promise.resolve(true);
+  if (prefetchingUrls.has(url)) return prefetchingUrls.get(url);
+  if (typeof NativeImage.prefetch !== "function") return Promise.resolve(false);
 
-export async function preCacheImages(remoteUris) {
-  const uris = (remoteUris || []).filter(Boolean);
-  return Promise.allSettled(uris.map((u) => ensureImageCached(u)));
-}
+  const request = NativeImage.prefetch(url)
+    .then((success) => {
+      if (success) prefetchedUrls.add(url);
+      return Boolean(success);
+    })
+    .catch(() => false)
+    .finally(() => prefetchingUrls.delete(url));
+
+  prefetchingUrls.set(url, request);
+  return request;
+};
+
+/**
+ * Warm a small, prioritized batch without flooding the network. Call after the
+ * product data is available; this intentionally does not block rendering.
+ */
+export const preloadImageUrls = async (
+  urls,
+  { maxImages = 8, concurrency = 3 } = {}
+) => {
+  const queue = [...new Set((Array.isArray(urls) ? urls : []).filter(Boolean))]
+    .filter((url) => !prefetchedUrls.has(url))
+    .slice(0, Math.max(0, maxImages));
+
+  if (!queue.length) return [];
+
+  const results = new Array(queue.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(
+    queue.length,
+    Math.max(1, Number(concurrency) || 1)
+  );
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < queue.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await preloadImage(queue[index]);
+      }
+    })
+  );
+
+  return results;
+};
+
+export const preloadProductImages = (products, options) => {
+  const urls = (Array.isArray(products) ? products : [])
+    .map((product) =>
+      resolveProductImageUri(
+        product?.productImage ??
+          product?.imagePath ??
+          product?.imageUrl ??
+          product?.imageURL ??
+          product?.image
+      )
+    )
+    .filter(Boolean);
+
+  return preloadImageUrls(urls, options);
+};

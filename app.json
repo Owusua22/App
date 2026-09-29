@@ -2,7 +2,7 @@
   "expo": {
     "name": "FrankoTrading",
     "slug": "Franko",
-    "version": "60.0.4",
+    "version": "60.0.6",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
@@ -30,7 +30,6 @@
         "backgroundColor": "#ffffff"
       }
     },
-
     "web": {
       "favicon": "./assets/logo.png"
     },
@@ -48,7 +47,11 @@
     },
     "owner": "franko_dev-2",
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      "@react-native-community/datetimepicker",
+      "expo-image",
+      "expo-status-bar",
+      "expo-sharing"
     ]
   }
 }

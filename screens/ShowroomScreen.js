@@ -9,7 +9,6 @@ import {
   View,
   Text,
   FlatList,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
@@ -20,6 +19,7 @@ import {
   ScrollView,
   Platform,
 } from "react-native";
+import CachedImage from "../components/CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import {
   useNavigation,
@@ -64,7 +64,7 @@ const formatCurrency = (amount) => {
 
 const getValidImageURL = (imagePath) => {
   if (!imagePath) {
-    return "https://via.placeholder.com/150";
+    return null;
   }
   return `https://testing.frankotrading.com/Media/Products_Images/${imagePath
     .split("\\")
@@ -409,9 +409,10 @@ const ShowroomScreen = () => {
         activeOpacity={0.9}
       >
         <View style={styles.imageContainer}>
-          <Image
+          <CachedImage
             source={{ uri: productImageURL }}
             style={styles.productImage}
+            recyclingKey={item.productID}
           />
 
           {isNew && (
@@ -531,7 +532,7 @@ const ShowroomScreen = () => {
             <Octicons name="share" size={20} color="#111827" />
           </TouchableOpacity>
           {showRoomLogo ? (
-            <Image
+            <CachedImage
               source={{ uri: showRoomLogo }}
               style={{
                 width: 28,
@@ -670,7 +671,7 @@ const ShowroomScreen = () => {
         removeClippedSubviews={Platform.OS === "android"}
         initialNumToRender={10}
         maxToRenderPerBatch={10}
-        windowSize={10}
+        windowSize={5}
       />
 
       {/* Sort Modal */}

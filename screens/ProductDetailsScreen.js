@@ -2,7 +2,6 @@ import React, { useEffect, useState, useMemo, useRef } from "react";
 import {
   View,
   Text,
-  Image,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
@@ -16,6 +15,7 @@ import {
   Platform,
   Pressable,
 } from "react-native";
+import CachedImage from "../components/CachedImage";
 
 import { useDispatch, useSelector } from "react-redux";
 import { useRoute, useNavigation } from "@react-navigation/native";
@@ -25,6 +25,7 @@ import Icon from "react-native-vector-icons/MaterialIcons";
 
 import { fetchProductById, fetchProducts } from "../redux/slice/productSlice";
 import { addToCart, getCartById, updateCartItem } from "../redux/slice/cartSlice";
+import { preloadImage } from "../utils/ImageCache";
 
 import { OptimizedProductList } from "../components/ProductCard";
 
@@ -430,6 +431,10 @@ const ProductDetailsScreen = () => {
 
   const imageUrl = useMemo(() => getValidImageUrl(product?.productImage), [product]);
 
+  useEffect(() => {
+    if (imageUrl) void preloadImage(imageUrl);
+  }, [imageUrl]);
+
   const discountPercent = useMemo(() => {
     const oldP = Number(product?.oldPrice || 0);
     const newP = Number(product?.price || 0);
@@ -704,7 +709,12 @@ const ProductDetailsScreen = () => {
                 <TouchableOpacity activeOpacity={0.9} onPress={() => setIsImageModalVisible(true)}>
                   <View style={styles.imageOuter}>
                     {imageUrl ? (
-                      <Image source={{ uri: imageUrl }} style={styles.mainImage} resizeMode="contain" />
+                      <CachedImage
+                        source={{ uri: imageUrl }}
+                        style={styles.mainImage}
+                        resizeMode="contain"
+                        recyclingKey={imageUrl}
+                      />
                     ) : (
                       <View style={styles.imagePlaceholder}>
                         <Icon name="image-not-supported" size={40} color={palette.muted} />
@@ -921,7 +931,14 @@ const ProductDetailsScreen = () => {
         >
           <View style={styles.imageModalOverlay}>
             <View style={styles.imageModalContent}>
-              {imageUrl ? <Image source={{ uri: imageUrl }} style={styles.imageModalImage} resizeMode="contain" /> : null}
+              {imageUrl ? (
+                <CachedImage
+                  source={{ uri: imageUrl }}
+                  style={styles.imageModalImage}
+                  resizeMode="contain"
+                  recyclingKey={imageUrl}
+                />
+              ) : null}
               <TouchableOpacity style={styles.imageModalClose} onPress={() => setIsImageModalVisible(false)}>
                 <View style={styles.imageModalCloseInner}>
                   <Icon name="close" size={24} color="#ffffff" />

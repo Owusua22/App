@@ -6,6 +6,7 @@ import {
   FlatList,
   StyleSheet,
   Alert,
+  InteractionManager,
 } from "react-native";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigation } from "@react-navigation/native";
@@ -13,6 +14,7 @@ import { fetchProductByShowroomAndRecord } from "../redux/slice/productSlice";
 import { addToCart } from "../redux/slice/cartSlice";
 import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 import { ProductCard, LoadingCard } from "./ProductCard";
+import { preloadProductImages } from "../utils/ImageCache";
 
 const DEALS_SHOWROOM_ID = "1e93aeb7-bba7-4bd4-b017-ea3267047d46";
 const CARD_MARGIN = 8;
@@ -31,15 +33,15 @@ const WeeklyTimer = React.memo(() => {
       const nextSunday = new Date(now);
       nextSunday.setDate(now.getDate() + daysUntilSunday);
       nextSunday.setHours(23, 59, 59, 999);
-      
+
       const difference = nextSunday.getTime() - now.getTime();
-      
+
       if (difference > 0) {
         setTimeLeft({
           days: Math.floor(difference / (1000 * 60 * 60 * 24)),
           hours: Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
           minutes: Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60)),
-          seconds: Math.floor((difference % (1000 * 60)) / 1000)
+          seconds: Math.floor((difference % (1000 * 60)) / 1000),
         });
       }
     };
@@ -66,7 +68,7 @@ const WeeklyTimer = React.memo(() => {
 const TimeUnit = React.memo(({ value, label }) => (
   <View style={styles.timeUnit}>
     <View style={styles.timeValueContainer}>
-      <Text style={styles.timeValue}>{value.toString().padStart(2, '0')}</Text>
+      <Text style={styles.timeValue}>{value.toString().padStart(2, "0")}</Text>
     </View>
     <Text style={styles.timeLabel}>{label}</Text>
   </View>
@@ -76,16 +78,6 @@ const TimeUnit = React.memo(({ value, label }) => (
 const DealsHeader = React.memo(({ onViewMore }) => (
   <View style={styles.showroomHeader}>
     <View style={styles.gradientOverlay} />
-    
-    <View style={styles.floatingElement1}>
-      <Text style={styles.floatingEmoji}>✨</Text>
-    </View>
-    <View style={styles.floatingElement2}>
-      <Text style={styles.floatingEmoji}>💫</Text>
-    </View>
-    <View style={styles.floatingElement3}>
-      <Text style={styles.floatingEmoji}>🎯</Text>
-    </View>
 
     <View style={styles.headerContent}>
       <View style={styles.headerTop}>
@@ -96,11 +88,10 @@ const DealsHeader = React.memo(({ onViewMore }) => (
           </View>
           <View style={styles.headerTextContainer}>
             <Text style={styles.showroomTitle}>Deals of the Week</Text>
-            <Text style={styles.showroomSubtitle}>⚡ Limited Time Offers</Text>
           </View>
         </View>
-        
-        <TouchableOpacity 
+
+        <TouchableOpacity
           style={styles.viewMoreButton}
           onPress={onViewMore}
           activeOpacity={0.8}
@@ -177,6 +168,22 @@ const Deals = () => {
     }
   }, [dispatch, products.length]);
 
+  useEffect(() => {
+    // Let the first visible cards start loading at high priority. Then warm the
+    // next cards in the same Expo memory/disk cache without competing with them.
+    const upcomingProducts = displayProducts.slice(3, 8);
+    if (!upcomingProducts.length) return undefined;
+
+    const task = InteractionManager.runAfterInteractions(() => {
+      void preloadProductImages(upcomingProducts, {
+        maxImages: 5,
+        concurrency: 2,
+      });
+    });
+
+    return () => task.cancel?.();
+  }, [displayProducts]);
+
   const handleAddToCart = useCallback((product) => {
     setAddingToCart((prev) => ({ ...prev, [product.productID]: true }));
 
@@ -202,16 +209,17 @@ const Deals = () => {
   }, [cartId, dispatch]);
 
   const handleProductPress = useCallback((productId) => {
-    navigation.navigate('ProductDetails', { productId });
+    navigation.navigate("ProductDetails", { productId });
   }, [navigation]);
 
   const handleViewMore = useCallback(() => {
     navigation.navigate("showroom", { showRoomID: DEALS_SHOWROOM_ID });
   }, [navigation]);
 
-  const renderProduct = useCallback(({ item }) => (
+  const renderProduct = useCallback(({ item, index }) => (
     <ProductCard
       product={item}
+      index={index}
       onPress={handleProductPress}
       onAddToCart={handleAddToCart}
       isAddingToCart={addingToCart[item.productID]}
@@ -277,34 +285,34 @@ const styles = StyleSheet.create({
     marginBottom: 1,
   },
   showroomHeader: {
-    backgroundColor: '#10b981',
+    backgroundColor: "#10b981",
     borderRadius: 16,
     padding: 16,
     marginHorizontal: 16,
     marginBottom: 16,
-    overflow: 'hidden',
-    position: 'relative',
+    overflow: "hidden",
+    position: "relative",
   },
   gradientOverlay: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.1)',
+    backgroundColor: "rgba(0,0,0,0.1)",
   },
   floatingElement1: {
-    position: 'absolute',
+    position: "absolute",
     top: 10,
     right: 20,
   },
   floatingElement2: {
-    position: 'absolute',
+    position: "absolute",
     top: 40,
     right: 60,
   },
   floatingElement3: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 20,
     right: 30,
   },
@@ -316,29 +324,29 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
   },
   headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     flex: 1,
   },
   iconContainer: {
-    position: 'relative',
+    position: "relative",
     marginRight: 12,
   },
   fireIcon: {
     fontSize: 32,
   },
   pulseRing: {
-    position: 'absolute',
+    position: "absolute",
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: "rgba(255,255,255,0.2)",
     top: -4,
     left: -4,
   },
@@ -347,26 +355,26 @@ const styles = StyleSheet.create({
   },
   showroomTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontWeight: "bold",
+    color: "#fff",
     marginBottom: 2,
   },
   showroomSubtitle: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.9)',
+    color: "rgba(255,255,255,0.9)",
   },
   viewMoreButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.2)",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
   },
   viewMoreText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: "600",
     marginRight: 4,
   },
   timerSection: {
@@ -376,40 +384,40 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   timerLabel: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   timerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
   },
   timeUnit: {
-    alignItems: 'center',
+    alignItems: "center",
   },
   timeValueContainer: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: "rgba(255,255,255,0.2)",
     paddingHorizontal: 8,
     paddingVertical: 6,
     borderRadius: 8,
     minWidth: 40,
-    alignItems: 'center',
+    alignItems: "center",
   },
   timeValue: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   timeLabel: {
-    color: 'rgba(255,255,255,0.8)',
+    color: "rgba(255,255,255,0.8)",
     fontSize: 10,
     marginTop: 4,
   },
   timeSeparator: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginHorizontal: 4,
   },
   productList: {
@@ -418,17 +426,17 @@ const styles = StyleSheet.create({
   viewAllCard: {
     width: CARD_WIDTH,
     height: 200,
-    backgroundColor: '#f0fdf4',
+    backgroundColor: "#f0fdf4",
     borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: CARD_MARGIN,
     borderWidth: 2,
-    borderColor: '#10b981',
-    borderStyle: 'dashed',
+    borderColor: "#10b981",
+    borderStyle: "dashed",
   },
   viewAllContent: {
-    alignItems: 'center',
+    alignItems: "center",
   },
   fireIconLarge: {
     fontSize: 48,
@@ -436,12 +444,12 @@ const styles = StyleSheet.create({
   },
   viewAllText: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#10b981',
+    fontWeight: "bold",
+    color: "#10b981",
     marginBottom: 4,
   },
   viewMoreSubtext: {
     fontSize: 12,
-    color: '#059669',
+    color: "#059669",
   },
 });

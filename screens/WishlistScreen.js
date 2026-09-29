@@ -3,7 +3,6 @@ import {
   View,
   Text,
   FlatList,
-  Image,
   TouchableOpacity,
   StyleSheet,
   Dimensions,
@@ -12,6 +11,7 @@ import {
   Platform,
   Share,
 } from "react-native";
+import CachedImage from "../components/CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigation } from "@react-navigation/native";
 import { AntDesign } from "@expo/vector-icons";
@@ -46,7 +46,7 @@ const WishlistScreen = () => {
 
     const getValidImageURL = (imagePath) => {
     if (!imagePath) {
-      return "https://via.placeholder.com/150";
+      return null;
     }
     return `https://testing.frankotrading.com/Media/Products_Images/${imagePath.split("\\").pop()}`;
   };
@@ -116,7 +116,11 @@ const WishlistScreen = () => {
         activeOpacity={0.9}
       >
         <View style={styles.imageContainer}>
-          <Image source={{ uri: productImageURL }} style={styles.productImage} />
+          <CachedImage
+            source={{ uri: productImageURL }}
+            style={styles.productImage}
+            recyclingKey={item.productID}
+          />
 
           {isNew && (
             <View style={styles.newBadge}>
@@ -224,7 +228,7 @@ const WishlistScreen = () => {
           removeClippedSubviews={false}
           initialNumToRender={10}
           maxToRenderPerBatch={10}
-          windowSize={10}
+          windowSize={5}
         />
       )}
     </View>

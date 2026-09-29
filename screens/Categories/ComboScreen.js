@@ -3,7 +3,6 @@ import {
   View,
   Text,
   FlatList,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
@@ -13,6 +12,8 @@ import {
   Alert,
   ScrollView,
 } from "react-native";
+import CachedImage from "../../components/CachedImage";
+import { resolveProductImageUri } from "../../utils/ImageCache";
 import { useDispatch, useSelector } from "react-redux";
 import { fetchProductsByCategory } from "../../redux/slice/productSlice";
 import { addToCart } from "../../redux/slice/cartSlice"; // Import addToCart action
@@ -162,15 +163,6 @@ const ComboScreen = () => {
       maximumFractionDigits: 2,
     });
 
-  const getValidImageURL = (imagePath) => {
-    if (!imagePath) {
-      return "https://via.placeholder.com/150";
-    }
-    return `https://smfteapi.salesmate.app/Media/Products_Images/${imagePath
-      .split("\\")
-      .pop()}`;
-  };
-
   // Add to cart functionality
   const handleAddToCart = (product) => {
     const cartData = {
@@ -212,7 +204,6 @@ const ComboScreen = () => {
     Alert.alert("Added", `${product.productName} added to wishlist ❤️`);
   }
 };
-
 
   // Handle product press with scroll position saving
   const handleProductPress = async (productId) => {
@@ -285,7 +276,7 @@ const ComboScreen = () => {
   }
 
   const renderItem = ({ item, index }) => {
-    const productImageURL = getValidImageURL(item.productImage);
+    const productImageURL = resolveProductImageUri(item.productImage);
     const discount =
       item.oldPrice > 0
         ? Math.round(((item.oldPrice - item.price) / item.oldPrice) * 100)
@@ -301,7 +292,11 @@ const ComboScreen = () => {
         activeOpacity={0.9}
       >
         <View style={styles.imageContainer}>
-          <Image source={{ uri: productImageURL }} style={styles.productImage} />
+          <CachedImage
+            source={{ uri: productImageURL }}
+            style={styles.productImage}
+            recyclingKey={item.productID}
+          />
           
           {isNew && (
             <View style={styles.newBadge}>
@@ -499,7 +494,7 @@ const ComboScreen = () => {
         removeClippedSubviews={false}
         initialNumToRender={10}
         maxToRenderPerBatch={10}
-        windowSize={10}
+        windowSize={5}
       />
 
       {/* Sort Modal */}

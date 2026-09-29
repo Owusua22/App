@@ -3,7 +3,6 @@ import {
   View,
   Text,
   FlatList,
-  Image,
   ActivityIndicator,
   StyleSheet,
   TouchableOpacity,
@@ -13,6 +12,7 @@ import {
   RefreshControl,
   SafeAreaView,
 } from "react-native";
+import CachedImage from "../components/CachedImage";
 
 import { useDispatch, useSelector } from "react-redux";
 import {
@@ -360,7 +360,11 @@ const CartScreen = () => {
       >
         <View style={styles.productImageContainer}>
           {imageUrl ? (
-            <Image source={{ uri: imageUrl }} style={styles.productImage} />
+            <CachedImage
+              source={{ uri: imageUrl }}
+              style={styles.productImage}
+              recyclingKey={item.productId}
+            />
           ) : (
             <View style={styles.productImagePlaceholder}>
               <MaterialIcons name="image" size={30} color="#E5E7EB" />

@@ -3,7 +3,6 @@ import {
   View,
   Text,
   FlatList,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
@@ -12,6 +11,7 @@ import {
   Alert,
   Platform,
 } from "react-native";
+import CachedImage from "../components/CachedImage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation } from "@react-navigation/native";
 import { AntDesign } from "@expo/vector-icons";
@@ -55,7 +55,7 @@ const RecentlyViewedScreen = () => {
 
   const getValidImageURL = (imagePath) => {
     if (!imagePath) {
-      return "https://via.placeholder.com/150";
+      return null;
     }
     return `https://testing.frankotrading.com/Media/Products_Images/${imagePath.split("\\").pop()}`;
   };
@@ -117,7 +117,11 @@ const RecentlyViewedScreen = () => {
         activeOpacity={0.9}
       >
         <View style={styles.imageContainer}>
-          <Image source={{ uri: productImageURL }} style={styles.productImage} />
+          <CachedImage
+            source={{ uri: productImageURL }}
+            style={styles.productImage}
+            recyclingKey={item.productID}
+          />
           
           {isNew && (
             <View style={styles.newBadge}>
@@ -221,7 +225,7 @@ const RecentlyViewedScreen = () => {
           removeClippedSubviews={false}
           initialNumToRender={10}
           maxToRenderPerBatch={10}
-          windowSize={10}
+          windowSize={5}
         />
       )}
     </View>

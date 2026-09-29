@@ -1,7 +1,7 @@
 // src/redux/slice/customerSlice.js
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import api from "./axiosInstance";
+import api, { setLoginFlow } from "./axiosInstance";
 import { reset } from "../../services/navigationService";
 
 const CUSTOMER_KEY = "customer";
@@ -76,7 +76,55 @@ const extractResponseInfo = (data) => {
   };
 };
 
-// Check auth status
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const logRequestFailure = (label, error) => {
+  console.error(`[${label}] Request failed`);
+  console.error(`[${label}] Status:`, error?.response?.status);
+  console.error(`[${label}] Response body:`, JSON.stringify(error?.response?.data));
+  console.error(`[${label}] Response headers:`, JSON.stringify(error?.response?.headers));
+  console.error(`[${label}] Request URL:`, error?.config?.url);
+  console.error(`[${label}] Request params:`, JSON.stringify(error?.config?.params));
+  console.error(`[${label}] Request headers sent:`, JSON.stringify(error?.config?.headers));
+};
+
+const toErrorMessage = (error, fallback = "Something went wrong.") => {
+  if (!error) return fallback;
+  if (typeof error === "string") return error;
+  return (
+    error?.response?.data?.response?.responseMessage ||
+    error?.response?.data?.ResponseMessage ||
+    error?.response?.data?.message ||
+    error?.body?.message ||
+    error?.message ||
+    fallback
+  );
+};
+
+const isUsableCachedProfile = (cached, contactNumber) =>
+  Boolean(cached) &&
+  cached.contactNumber === contactNumber &&
+  Boolean(cached.firstName);
+
+/* ======================================================================= */
+/*  LOGOUT THUNK — now a real async thunk so .unwrap() is valid           */
+/* ======================================================================= */
+export const logoutCustomer = createAsyncThunk(
+  "customers/logoutCustomer",
+  async (_, { rejectWithValue }) => {
+    try {
+      await AsyncStorage.multiRemove([CUSTOMER_KEY, CUSTOMERS_KEY]);
+      reset("Home");
+      return true;
+    } catch (error) {
+      return rejectWithValue(toErrorMessage(error, "Failed to logout."));
+    }
+  }
+);
+
+/* ======================================================================= */
+/*  CHECK AUTH                                                           */
+/* ======================================================================= */
 export const checkAuthStatus = createAsyncThunk(
   "customers/checkAuthStatus",
   async () => {
@@ -95,7 +143,9 @@ export const checkAuthStatus = createAsyncThunk(
   }
 );
 
-// Create customer
+/* ======================================================================= */
+/*  CREATE CUSTOMER                                                       */
+/* ======================================================================= */
 export const createCustomer = createAsyncThunk(
   "customers/createCustomer",
   async (customerData, { rejectWithValue }) => {
@@ -106,12 +156,14 @@ export const createCustomer = createAsyncThunk(
       });
       return parseResponse(response.data);
     } catch (error) {
-      return rejectWithValue(error.response?.data || error.message || "An unknown error occurred.");
+      return rejectWithValue(toErrorMessage(error, "An unknown error occurred."));
     }
   }
 );
 
-// Fetch all customers
+/* ======================================================================= */
+/*  FETCH ALL CUSTOMERS                                                   */
+/* ======================================================================= */
 export const fetchCustomers = createAsyncThunk(
   "customers/fetchCustomers",
   async (_, { rejectWithValue }) => {
@@ -123,30 +175,30 @@ export const fetchCustomers = createAsyncThunk(
     } catch (error) {
       const cached = await loadCustomersFromStorage();
       if (cached.length > 0) return cached;
-      return rejectWithValue(error.response?.data || error.message || "An unknown error occurred.");
+      return rejectWithValue(toErrorMessage(error, "An unknown error occurred."));
     }
   }
 );
 
-// Get customer by ID - accepts optional accessToken for auth
+/* ======================================================================= */
+/*  GET CUSTOMER BY ID                                                    */
+/* ======================================================================= */
 export const getCustomerById = createAsyncThunk(
   "customers/getCustomerById",
   async (contactNumberOrObj, { rejectWithValue }) => {
+    let contactNumber;
+    let accessToken;
+
+    if (typeof contactNumberOrObj === "string") {
+      contactNumber = contactNumberOrObj;
+    } else {
+      contactNumber = contactNumberOrObj.contactNumber;
+      accessToken = contactNumberOrObj.accessToken;
+    }
+
     try {
-      // Accept either a string or { contactNumber, accessToken }
-      let contactNumber;
-      let accessToken;
-
-      if (typeof contactNumberOrObj === "string") {
-        contactNumber = contactNumberOrObj;
-      } else {
-        contactNumber = contactNumberOrObj.contactNumber;
-        accessToken = contactNumberOrObj.accessToken;
-      }
-
       console.log("[getCustomerById] Fetching for:", contactNumber, "hasToken:", !!accessToken);
 
-      // Build request config with optional Authorization header
       const config = {
         params: {
           endpoint: "/Users/GetCustomerById",
@@ -154,7 +206,6 @@ export const getCustomerById = createAsyncThunk(
         },
       };
 
-      // If token is passed directly, set it on this specific request
       if (accessToken) {
         config.headers = {
           Authorization: `Bearer ${accessToken}`,
@@ -174,30 +225,43 @@ export const getCustomerById = createAsyncThunk(
       console.log("[getCustomerById] Customer found:", data.contactNumber, "accountStatus:", data.accountStatus);
       return data;
     } catch (error) {
-      console.error("[getCustomerById] Error:", error?.message || error);
-
-      // Try cached data on failure
-      const contactNumber = typeof contactNumberOrObj === "string" 
-        ? contactNumberOrObj 
-        : contactNumberOrObj?.contactNumber;
+      logRequestFailure("getCustomerById", error);
 
       const cached = await loadCustomerFromStorage();
-      if (cached && cached.contactNumber === contactNumber) {
+
+      if (isUsableCachedProfile(cached, contactNumber)) {
         console.log("[getCustomerById] Using cached customer data");
         return cached;
       }
 
-      return rejectWithValue(
-        error?.response?.data || error?.message || "Failed to fetch customer."
-      );
+      console.log("[getCustomerById] No usable cached profile - surfacing the real error");
+
+      return rejectWithValue(toErrorMessage(error, "Failed to fetch customer."));
     }
   }
 );
 
-// Customer login
+/* ======================================================================= */
+/*  FETCH CUSTOMER AFTER AUTH (with retry)                                */
+/* ======================================================================= */
+const fetchCustomerAfterAuth = async (dispatch, { contactNumber, accessToken }) => {
+  try {
+    return await dispatch(getCustomerById({ contactNumber, accessToken })).unwrap();
+  } catch (err) {
+    console.log("[fetchCustomerAfterAuth] First attempt failed - retrying once...", err);
+    await wait(600);
+    return dispatch(getCustomerById({ contactNumber, accessToken })).unwrap();
+  }
+};
+
+/* ======================================================================= */
+/*  LOGIN CUSTOMER                                                        */
+/* ======================================================================= */
 export const loginCustomer = createAsyncThunk(
   "customers/loginCustomer",
   async ({ contactNumber, password }, { dispatch, rejectWithValue }) => {
+    setLoginFlow(true);
+
     try {
       console.log("[loginCustomer] Calling API with:", { contactNumber });
 
@@ -213,38 +277,28 @@ export const loginCustomer = createAsyncThunk(
       const { code, message, status, accessToken, refreshToken } = extractResponseInfo(loginData);
       console.log("[loginCustomer] Extracted - code:", code, "status:", status, "hasToken:", !!accessToken);
 
-      const isSuccess = code === "1" || code === "0" || status === true;
+      const isSuccess = status === true && Boolean(accessToken);
 
       if (!isSuccess) {
+        console.log("[loginCustomer] Login rejected by backend:", message || "(no message)");
         return rejectWithValue(message || "Login failed. Invalid credentials.");
       }
 
-      // IMPORTANT: Save token to storage BEFORE calling getCustomerById
-      // so the axios interceptor can pick it up
-      if (accessToken) {
-        console.log("[loginCustomer] Saving token to storage before fetching customer...");
-        await AsyncStorage.setItem(
-          CUSTOMER_KEY,
-          JSON.stringify({
-            contactNumber,
-            accessToken,
-            refreshToken,
-          })
-        );
-      }
-
-      // Get full customer details - pass the token directly
-      console.log("[loginCustomer] Fetching customer details...");
-      const customer = await dispatch(
-        getCustomerById({
+      console.log("[loginCustomer] Saving token to storage before fetching customer...");
+      await AsyncStorage.setItem(
+        CUSTOMER_KEY,
+        JSON.stringify({
           contactNumber,
           accessToken,
+          refreshToken,
         })
-      ).unwrap();
+      );
+
+      console.log("[loginCustomer] Fetching customer details...");
+      const customer = await fetchCustomerAfterAuth(dispatch, { contactNumber, accessToken });
 
       console.log("[loginCustomer] Customer fetched, accountStatus:", customer?.accountStatus);
 
-      // Merge tokens into customer
       const customerWithTokens = {
         ...customer,
         accessToken: accessToken || customer.accessToken,
@@ -255,19 +309,16 @@ export const loginCustomer = createAsyncThunk(
       return customerWithTokens;
     } catch (error) {
       console.error("[loginCustomer] Error:", error);
-
-      const errMsg =
-        error?.response?.data?.response?.responseMessage ||
-        error?.response?.data?.ResponseMessage ||
-        error?.message ||
-        "An unknown error occurred during login.";
-
-      return rejectWithValue(errMsg);
+      return rejectWithValue(toErrorMessage(error, "An unknown error occurred during login."));
+    } finally {
+      setLoginFlow(false);
     }
   }
 );
 
-// Update account status
+/* ======================================================================= */
+/*  UPDATE ACCOUNT STATUS                                                 */
+/* ======================================================================= */
 export const updateAccountStatus = createAsyncThunk(
   "customers/updateAccountStatus",
   async ({ accountNumber, accountStatus }, { getState, rejectWithValue }) => {
@@ -303,19 +354,22 @@ export const updateAccountStatus = createAsyncThunk(
 
       return data;
     } catch (error) {
-      return rejectWithValue(error.response?.data || error.message || "Failed to update account status.");
+      return rejectWithValue(toErrorMessage(error, "Failed to update account status."));
     }
   }
 );
 
-// Update customer password
+/* ======================================================================= */
+/*  UPDATE CUSTOMER PASSWORD                                              */
+/* ======================================================================= */
 export const updateCustomerPassword = createAsyncThunk(
   "customers/updateCustomerPassword",
   async ({ contactNumber, newPassword, customerData }, { dispatch, getState, rejectWithValue }) => {
+    setLoginFlow(true);
+
     try {
       console.log("[updateCustomerPassword] Updating for:", contactNumber);
 
-      // Get current token for authenticated requests
       const state = getState();
       const currentToken = state.customer?.currentCustomer?.accessToken;
       const storedCustomer = await loadCustomerFromStorage();
@@ -328,7 +382,6 @@ export const updateCustomerPassword = createAsyncThunk(
         headers: { "Content-Type": "application/json" },
       };
 
-      // Add token if available
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -337,7 +390,6 @@ export const updateCustomerPassword = createAsyncThunk(
       const data = parseResponse(response.data);
       console.log("[updateCustomerPassword] Response:", JSON.stringify(data));
 
-      // Reactivate account
       if (customerData?.customerAccountNumber) {
         try {
           await dispatch(updateAccountStatus({
@@ -350,22 +402,20 @@ export const updateCustomerPassword = createAsyncThunk(
         }
       }
 
-      // Fetch updated customer with token
-      const updatedCustomer = await dispatch(
-        getCustomerById({
-          contactNumber,
-          accessToken: token,
-        })
-      ).unwrap();
+      const updatedCustomer = await fetchCustomerAfterAuth(dispatch, { contactNumber, accessToken: token });
 
       return updatedCustomer;
     } catch (error) {
-      return rejectWithValue(error.response?.data || error.message || "Failed to update password.");
+      return rejectWithValue(toErrorMessage(error, "Failed to update password."));
+    } finally {
+      setLoginFlow(false);
     }
   }
 );
 
-// Refresh token
+/* ======================================================================= */
+/*  REFRESH TOKEN                                                         */
+/* ======================================================================= */
 export const refreshCustomerToken = createAsyncThunk(
   "customers/refreshToken",
   async (_, { getState, rejectWithValue }) => {
@@ -390,12 +440,14 @@ export const refreshCustomerToken = createAsyncThunk(
       await saveCustomerToStorage(updatedCustomer);
       return updatedCustomer;
     } catch (error) {
-      return rejectWithValue(error.response?.data || error.message || "Failed to refresh token.");
+      return rejectWithValue(toErrorMessage(error, "Failed to refresh token."));
     }
   }
 );
 
-// Slice
+/* ======================================================================= */
+/*  SLICE                                                                 */
+/* ======================================================================= */
 const initialState = {
   currentCustomer: null,
   customerList: [],
@@ -410,13 +462,6 @@ const customerSlice = createSlice({
   name: "customer",
   initialState,
   reducers: {
-    logoutCustomer: (state) => {
-      state.currentCustomer = null;
-      state.selectedCustomer = null;
-      state.isAuthenticated = false;
-      AsyncStorage.multiRemove(["customer", "customers"]).catch(() => {});
-      reset("Home");
-    },
     silentLogoutAction: (state) => {
       state.currentCustomer = null;
       state.selectedCustomer = null;
@@ -457,8 +502,6 @@ const customerSlice = createSlice({
       .addCase(getCustomerById.pending, (s) => { s.loading = true; s.error = null; })
       .addCase(getCustomerById.fulfilled, (s, a) => {
         s.loading = false; s.error = null;
-        // Don't overwrite currentCustomer if it already has tokens
-        // Only set if not already authenticated or if this is a fresh fetch
         if (!s.currentCustomer || !s.isAuthenticated) {
           s.currentCustomer = a.payload;
           s.isAuthenticated = true;
@@ -487,12 +530,29 @@ const customerSlice = createSlice({
 
       .addCase(refreshCustomerToken.pending, (s) => { s.loading = true; s.error = null; })
       .addCase(refreshCustomerToken.fulfilled, (s, a) => { s.loading = false; s.currentCustomer = a.payload; s.error = null; })
-      .addCase(refreshCustomerToken.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; });
+      .addCase(refreshCustomerToken.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
+
+      /* ====== LOGOUT THUNK STATES ====== */
+      .addCase(logoutCustomer.pending, (s) => { s.loading = true; s.error = null; })
+      .addCase(logoutCustomer.fulfilled, (s) => {
+        s.loading = false;
+        s.currentCustomer = null;
+        s.selectedCustomer = null;
+        s.isAuthenticated = false;
+        s.error = null;
+      })
+      .addCase(logoutCustomer.rejected, (s, a) => {
+        s.loading = false;
+        s.error = a.payload || a.error?.message || "Failed to logout.";
+        s.currentCustomer = null;
+        s.selectedCustomer = null;
+        s.isAuthenticated = false;
+      });
   },
 });
 
 export const {
-  logoutCustomer, silentLogoutAction, setCurrentCustomer,
+  silentLogoutAction, setCurrentCustomer,
   clearCustomers, setCustomer, clearSelectedCustomer, setAuthenticated, clearError,
 } = customerSlice.actions;
 

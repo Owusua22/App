@@ -9,7 +9,6 @@ import {
   View,
   Text,
   FlatList,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
@@ -20,6 +19,7 @@ import {
   ScrollView,
   Platform,
 } from "react-native";
+import CachedImage from "../../components/CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -60,7 +60,7 @@ const formatCurrency = (amount) => {
 };
 
 const getValidImageURL = (imagePath) => {
-  if (!imagePath) return "https://via.placeholder.com/150";
+  if (!imagePath) return null;
   return `https://testing.frankotrading.com/Media/Products_Images/${imagePath
     .split("\\")
     .pop()}`;
@@ -374,7 +374,11 @@ const TelevisionScreen = () => {
         activeOpacity={0.92}
       >
         <View style={styles.imageContainer}>
-          <Image source={{ uri: imageURL }} style={styles.productImage} />
+          <CachedImage
+            source={{ uri: imageURL }}
+            style={styles.productImage}
+            recyclingKey={item.productID}
+          />
 
           {isNew && (
             <View style={styles.newBadge}>
@@ -597,7 +601,7 @@ const TelevisionScreen = () => {
         removeClippedSubviews={false}
         initialNumToRender={10}
         maxToRenderPerBatch={10}
-        windowSize={10}
+        windowSize={5}
       />
 
       {/* Sort Modal */}

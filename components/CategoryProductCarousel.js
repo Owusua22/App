@@ -1,43 +1,52 @@
-import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  ScrollView,
-  StyleSheet,
   Alert,
   FlatList,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigation } from "@react-navigation/native";
-import { fetchProductByShowroomAndRecord } from "../redux/slice/productSlice";
-import { addToCart } from "../redux/slice/cartSlice";
+import Feather from "@expo/vector-icons/Feather";
 import Icon from "react-native-vector-icons/MaterialCommunityIcons";
+import { fetchProductsByCategory } from "../redux/slice/productSlice";
+import { addToCart } from "../redux/slice/cartSlice";
 import { ProductCard, LoadingCard } from "./ProductCard";
 import { preloadProductImages } from "../utils/ImageCache";
 
-const DEALS_SHOWROOM_ID = "fca9d386-2904-4e13-a0cb-4f183aa274af";
 const CARD_MARGIN = 8;
 const CARD_WIDTH = 170;
 const MAX_DISPLAY_PRODUCTS = 10;
 const EMPTY_PRODUCTS = [];
 
-// Optimized BestSellers Component
-const BestSellers = () => {
+const CategoryProductCarousel = ({
+  categoryId,
+  title,
+  headerIcon,
+  headerIconFamily = "material",
+  footerIcon,
+  viewAllRoute,
+  footerRoute = viewAllRoute,
+  moreLabel,
+}) => {
   const dispatch = useDispatch();
   const navigation = useNavigation();
-  const productsByShowroom = useSelector(
-    (state) => state.products?.productsByShowroom
+  const productsByCategory = useSelector(
+    (state) => state.products?.productsByCategory
   );
   const loading = useSelector((state) => Boolean(state.products?.loading));
   const cartId = useSelector((state) => state.cart?.cartId);
   const [addingToCart, setAddingToCart] = useState({});
-  const hasRequestedRef = useRef(false);
+  const requestedCategoryRef = useRef(null);
 
   const products = useMemo(() => {
-    const showroomProducts = productsByShowroom?.[DEALS_SHOWROOM_ID];
-    return Array.isArray(showroomProducts) ? showroomProducts : EMPTY_PRODUCTS;
-  }, [productsByShowroom]);
+    const categoryProducts = productsByCategory?.[categoryId];
+    return Array.isArray(categoryProducts) ? categoryProducts : EMPTY_PRODUCTS;
+  }, [productsByCategory, categoryId]);
+
   const displayProducts = useMemo(
     () => products.slice(0, MAX_DISPLAY_PRODUCTS),
     [products]
@@ -45,53 +54,54 @@ const BestSellers = () => {
 
   useEffect(() => {
     if (products.length > 0) {
-      hasRequestedRef.current = true;
+      requestedCategoryRef.current = categoryId;
       return;
     }
-    if (loading || hasRequestedRef.current) return;
+    if (loading || requestedCategoryRef.current === categoryId) return;
 
-    hasRequestedRef.current = true;
-    dispatch(
-      fetchProductByShowroomAndRecord({
-        showRoomCode: DEALS_SHOWROOM_ID,
-        recordNumber: 10,
-      })
-    );
-  }, [dispatch, loading, products.length]);
+    requestedCategoryRef.current = categoryId;
+    dispatch(fetchProductsByCategory(categoryId));
+  }, [categoryId, dispatch, loading, products.length]);
 
   useEffect(() => {
     if (!displayProducts.length) return;
-    // Preload the first cards in the horizontal list into the native image cache.
+    // Warm the native image cache for the first products before they are swiped into view.
     void preloadProductImages(displayProducts, {
       maxImages: 8,
       concurrency: 3,
     });
   }, [displayProducts]);
 
-  // Memoized callbacks for better performance
   const handleAddToCart = useCallback((product) => {
-    const cartData = {
+    setAddingToCart((previous) => ({
+      ...previous,
+      [product.productID]: true,
+    }));
+
+    dispatch(addToCart({
       cartId,
       productId: product.productID,
       price: product.price,
       quantity: 1,
-    };
-
-    setAddingToCart((prev) => ({ ...prev, [product.productID]: true }));
-
-    dispatch(addToCart(cartData))
+    }))
       .unwrap()
       .then(() => {
-        Alert.alert("Success", `${product.productName} added to cart successfully!`);
+        Alert.alert(
+          "Success",
+          `${product.productName} added to cart successfully!`
+        );
       })
       .catch((error) => {
-        Alert.alert("Error", `Failed to add product to cart: ${error.message}`);
+        Alert.alert(
+          "Error",
+          `Failed to add product to cart: ${error?.message || "Please try again."}`
+        );
       })
       .finally(() => {
-        setAddingToCart((prev) => {
-          const newState = { ...prev };
-          delete newState[product.productID];
-          return newState;
+        setAddingToCart((previous) => {
+          const next = { ...previous };
+          delete next[product.productID];
+          return next;
         });
       });
   }, [cartId, dispatch]);
@@ -100,11 +110,14 @@ const BestSellers = () => {
     navigation.navigate("ProductDetails", { productId });
   }, [navigation]);
 
-  const handleViewMore = useCallback(() => {
-    navigation.navigate("showroom", { showRoomID: DEALS_SHOWROOM_ID });
-  }, [navigation]);
+  const handleViewAll = useCallback(() => {
+    navigation.navigate(viewAllRoute);
+  }, [navigation, viewAllRoute]);
 
-  // Render item function for FlatList (memoized)
+  const handleFooterPress = useCallback(() => {
+    navigation.navigate(footerRoute);
+  }, [navigation, footerRoute]);
+
   const renderProduct = useCallback(({ item, index }) => (
     <ProductCard
       product={item}
@@ -112,39 +125,35 @@ const BestSellers = () => {
       onPress={handleProductPress}
       onAddToCart={handleAddToCart}
       isAddingToCart={addingToCart[item.productID]}
-      showBestSeller
+      showHotDeal
     />
-  ), [handleProductPress, handleAddToCart, addingToCart]);
+  ), [addingToCart, handleAddToCart, handleProductPress]);
 
-  // Key extractor for FlatList
-  const keyExtractor = useCallback((item) => String(item.productID), []);
+  const keyExtractor = useCallback(
+    (item) => String(item.productID),
+    []
+  );
 
-  // Get item layout for better performance
-  const getItemLayout = useCallback((data, index) => ({
+  const getItemLayout = useCallback((_, index) => ({
     length: CARD_WIDTH + CARD_MARGIN,
     offset: (CARD_WIDTH + CARD_MARGIN) * index,
     index,
   }), []);
 
-  const shouldShowViewMore = () => {
-    if (loading) return false;
-    return products.length > MAX_DISPLAY_PRODUCTS;
-  };
+  const shouldShowViewMore = !loading && products.length > MAX_DISPLAY_PRODUCTS;
 
-  // Render loading cards
   const renderLoadingCards = () => (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.productList}
     >
-      {Array.from({ length: 6 }, (_, idx) => (
-        <LoadingCard key={`loading-${idx}`} />
+      {Array.from({ length: 6 }, (_, index) => (
+        <LoadingCard key={`loading-${index}`} />
       ))}
     </ScrollView>
   );
 
-  // Render main product list
   const renderMainProducts = () => (
     <View>
       <FlatList
@@ -163,19 +172,20 @@ const BestSellers = () => {
         maxToRenderPerBatch={6}
         windowSize={10}
         updateCellsBatchingPeriod={50}
-        ListFooterComponent={() =>
-          shouldShowViewMore() ? (
-            <TouchableOpacity style={styles.viewAllCard} onPress={handleViewMore}>
-              <View style={styles.viewAllContent}>
-                <Icon name="trending-up" size={32} color="#10B981" />
-                <Text style={styles.viewAllText}>View More</Text>
-                <Text style={styles.viewMoreSubtext}>
-                  {products.length - MAX_DISPLAY_PRODUCTS}+ more products
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ) : null
-        }
+        ListFooterComponent={shouldShowViewMore ? (
+          <TouchableOpacity
+            style={styles.viewAllCard}
+            onPress={handleFooterPress}
+          >
+            <View style={styles.viewAllContent}>
+              <Icon name={footerIcon} size={32} color="#10B981" />
+              <Text style={styles.viewAllText}>View More</Text>
+              <Text style={styles.viewMoreSubtext}>
+                {products.length - MAX_DISPLAY_PRODUCTS}+ {moreLabel}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
       />
     </View>
   );
@@ -183,28 +193,30 @@ const BestSellers = () => {
   return (
     <View style={styles.container}>
       <View style={styles.showroomContainer}>
-        {/* Modern E-commerce Header */}
         <View style={styles.showroomHeader}>
           <View style={styles.headerContent}>
             <View style={styles.headerLeft}>
               <View style={styles.iconContainer}>
                 <View style={styles.iconGlow} />
-                <Icon name="trending-up" size={20} color="#fff" />
+                <View style={styles.iconInner}>
+                  {headerIconFamily === "feather" ? (
+                    <Feather name={headerIcon} size={22} color="#fff" />
+                  ) : (
+                    <Icon name={headerIcon} size={24} color="#fff" />
+                  )}
+                </View>
               </View>
               <View style={styles.headerTextContainer}>
                 <View style={styles.titleRow}>
-                  <Text style={styles.showroomTitle}>Best Selling</Text>
-                  <View style={styles.hotBadge}>
-                    <Text style={styles.hotBadgeText}>HOT</Text>
-                  </View>
+                  <Text style={styles.showroomTitle}>{title}</Text>
                 </View>
-                <Text style={styles.showroomSubtitle}>⚡ Trending now </Text>
+                <Text style={styles.showroomSubtitle}>Latest models &amp; deals</Text>
               </View>
             </View>
 
             <TouchableOpacity
               style={styles.viewMoreButton}
-              onPress={handleViewMore}
+              onPress={handleViewAll}
               activeOpacity={0.7}
             >
               <Text style={styles.viewMoreText}>View All</Text>
@@ -214,7 +226,6 @@ const BestSellers = () => {
             </TouchableOpacity>
           </View>
 
-          {/* Animated Background Elements */}
           <View style={styles.backgroundPattern}>
             <View style={[styles.floatingDot, styles.dot1]} />
             <View style={[styles.floatingDot, styles.dot2]} />
@@ -222,7 +233,6 @@ const BestSellers = () => {
           </View>
         </View>
 
-        {/* Enhanced Product List with Performance Optimization */}
         {(loading && products.length === 0) || products.length === 0
           ? renderLoadingCards()
           : renderMainProducts()}
@@ -231,20 +241,19 @@ const BestSellers = () => {
   );
 };
 
+export default React.memo(CategoryProductCarousel);
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F8FAFC",
   },
-
   showroomContainer: {
     backgroundColor: "#fff",
     borderRadius: 16,
     overflow: "hidden",
-    shadowColor: "#000",
     marginVertical: 8,
   },
-
   showroomHeader: {
     backgroundColor: "#fff",
     paddingHorizontal: 20,
@@ -253,8 +262,6 @@ const styles = StyleSheet.create({
     position: "relative",
     overflow: "hidden",
   },
-
-  // Background Pattern
   backgroundPattern: {
     position: "absolute",
     top: 0,
@@ -263,7 +270,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     zIndex: 0,
   },
-
   floatingDot: {
     position: "absolute",
     width: 4,
@@ -272,7 +278,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#10B981",
     opacity: 0.1,
   },
-
   dot1: {
     top: 15,
     right: 80,
@@ -280,13 +285,11 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 3,
   },
-
   dot2: {
     top: 35,
     right: 60,
     opacity: 0.08,
   },
-
   dot3: {
     top: 25,
     right: 100,
@@ -295,7 +298,6 @@ const styles = StyleSheet.create({
     borderRadius: 1.5,
     opacity: 0.06,
   },
-
   headerContent: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -303,13 +305,11 @@ const styles = StyleSheet.create({
     zIndex: 1,
     position: "relative",
   },
-
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
     flex: 1,
   },
-
   iconContainer: {
     width: 40,
     height: 40,
@@ -325,7 +325,6 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 6,
   },
-
   iconGlow: {
     position: "absolute",
     width: 44,
@@ -334,17 +333,18 @@ const styles = StyleSheet.create({
     backgroundColor: "#10B981",
     opacity: 0.2,
   },
-
+  iconInner: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
   headerTextContainer: {
     flex: 1,
   },
-
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 4,
   },
-
   showroomTitle: {
     color: "#111827",
     fontWeight: "800",
@@ -352,29 +352,12 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
     marginRight: 8,
   },
-
-  hotBadge: {
-    backgroundColor: "#EF4444",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    transform: [{ rotate: "-2deg" }],
-  },
-
-  hotBadgeText: {
-    color: "#fff",
-    fontSize: 9,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-  },
-
   showroomSubtitle: {
     color: "#6B7280",
     fontSize: 12,
     fontWeight: "500",
     letterSpacing: 0.2,
   },
-
   viewMoreButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -390,7 +373,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-
   viewMoreText: {
     color: "#059669",
     fontSize: 12,
@@ -398,7 +380,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     marginRight: 4,
   },
-
   arrowContainer: {
     width: 16,
     height: 16,
@@ -407,13 +388,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-
   productList: {
     paddingRight: 10,
     paddingVertical: 20,
   },
-
-  // View More Card
   viewAllCard: {
     width: CARD_WIDTH,
     height: 240,
@@ -425,14 +403,12 @@ const styles = StyleSheet.create({
     borderColor: "#BBF7D0",
     borderStyle: "dashed",
   },
-
   viewAllContent: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 12,
   },
-
   viewAllText: {
     color: "#10B981",
     fontSize: 16,
@@ -440,7 +416,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: "center",
   },
-
   viewMoreSubtext: {
     color: "#059669",
     fontSize: 12,
@@ -449,5 +424,3 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
-
-export default BestSellers;

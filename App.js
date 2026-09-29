@@ -1,5 +1,5 @@
 // App.js
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   StyleSheet,
   View,
@@ -8,8 +8,6 @@ import {
   Image,
   StatusBar as RNStatusBar,
   Animated,
-  Dimensions,
-  Platform,
   AppState,
 } from "react-native";
 
@@ -38,13 +36,13 @@ import {
   logoutAndRedirect,
 } from "./redux/slice/axiosInstance";
 import ForceUpdateGate from "./config/ForceUpdateGate";
+import { preloadProductImages } from "./utils/ImageCache";
 
 // Screens
 import HomeScreen from "./screens/HomeScreen";
 import ProductDetailsScreen from "./screens/ProductDetailsScreen";
 import CartScreen from "./screens/CartScreen";
 import SignupScreen from "./screens/SignupScreen";
-import LoginScreen from "./screens/LoginScreen";
 import CheckoutScreen from "./screens/CheckoutScreen";
 import AccountScreen from "./screens/AccountScreen";
 import CategoryScreen from "./screens/CategoryScreen";
@@ -85,7 +83,13 @@ import FloatingTawkChat from "./components/FloatingTawkChat";
 import PaymentHelpScreen from "./screens/PaymentHelpScreen";
 
 const Stack = createStackNavigator();
-const { width, height } = Dimensions.get("window");
+const EMPTY_PRODUCTS = [];
+const EMPTY_PRODUCT_GROUPS = {};
+const WELCOME_DOTS = Array.from({ length: 20 }, () => ({
+  left: `${Math.random() * 100}%`,
+  top: `${Math.random() * 100}%`,
+  opacity: 0.1 + Math.random() * 0.2,
+}));
 
 /* WelcomeScreen */
 const WelcomeScreen = ({ onReady }) => {
@@ -93,10 +97,10 @@ const WelcomeScreen = ({ onReady }) => {
   const dispatch = useDispatch();
   const insets = useSafeAreaInsets();
 
-  const fadeAnim = useState(new Animated.Value(0))[0];
-  const scaleAnim = useState(new Animated.Value(0.3))[0];
-  const slideAnim = useState(new Animated.Value(50))[0];
-  const pulseAnim = useState(new Animated.Value(1))[0];
+  const [fadeAnim] = useState(() => new Animated.Value(0));
+  const [scaleAnim] = useState(() => new Animated.Value(0.3));
+  const [slideAnim] = useState(() => new Animated.Value(50));
+  const [pulseAnim] = useState(() => new Animated.Value(1));
 
   useEffect(() => {
     dispatch(loadWishlistFromStorage());
@@ -106,7 +110,7 @@ const WelcomeScreen = ({ onReady }) => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 1000,
+        duration: 700,
         useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
@@ -117,8 +121,8 @@ const WelcomeScreen = ({ onReady }) => {
       }),
       Animated.timing(slideAnim, {
         toValue: 0,
-        duration: 800,
-        delay: 300,
+        duration: 550,
+        delay: 100,
         useNativeDriver: true,
       }),
     ]).start();
@@ -139,21 +143,24 @@ const WelcomeScreen = ({ onReady }) => {
     );
     pulseLoop.start();
 
-    const fetchData = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+    // Keep a brief branded transition, but don't hold the app behind a fixed
+    // three-second delay. Authentication continues independently in AppContent.
+    const readyTimer = setTimeout(() => {
       setLoading(false);
       onReady();
-    };
-    fetchData();
+    }, 600);
 
-    return () => pulseLoop.stop();
+    return () => {
+      clearTimeout(readyTimer);
+      pulseLoop.stop();
+    };
   }, [onReady, fadeAnim, scaleAnim, slideAnim, pulseAnim]);
 
   return (
     <View style={styles.welcomeWrapper}>
       <RNStatusBar
         barStyle="light-content"
-        translucent={true}
+        translucent
         backgroundColor="transparent"
       />
 
@@ -164,18 +171,8 @@ const WelcomeScreen = ({ onReady }) => {
         style={styles.welcomeContainer}
       >
         <View style={styles.backgroundPattern}>
-          {[...Array(20)].map((_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.patternDot,
-                {
-                  left: `${Math.random() * 100}%`,
-                  top: `${Math.random() * 100}%`,
-                  opacity: 0.1 + Math.random() * 0.2,
-                },
-              ]}
-            />
+          {WELCOME_DOTS.map((dot, index) => (
+            <View key={index} style={[styles.patternDot, dot]} />
           ))}
         </View>
 
@@ -202,10 +199,7 @@ const WelcomeScreen = ({ onReady }) => {
           </Animated.View>
 
           <Animated.View
-            style={[
-              styles.textContainer,
-              { transform: [{ translateY: slideAnim }] },
-            ]}
+            style={[styles.textContainer, { transform: [{ translateY: slideAnim }] }]}
           >
             <Text style={styles.welcomeTitle}>Welcome to</Text>
             <Text style={styles.companyName}>Franko Trading Ent</Text>
@@ -242,31 +236,49 @@ const ScreenWithFooter = ({ children }) => (
 );
 
 const HomeScreenWithFooter = () => (
-  <ScreenWithFooter><HomeScreen /></ScreenWithFooter>
+  <ScreenWithFooter>
+    <HomeScreen />
+  </ScreenWithFooter>
 );
 const CategoryScreenWithFooter = () => (
-  <ScreenWithFooter><CategoryScreen /></ScreenWithFooter>
+  <ScreenWithFooter>
+    <CategoryScreen />
+  </ScreenWithFooter>
 );
 const AccountScreenWithFooter = () => (
-  <ScreenWithFooter><AccountScreen /></ScreenWithFooter>
+  <ScreenWithFooter>
+    <AccountScreen />
+  </ScreenWithFooter>
 );
 const ProductsScreenWithFooter = () => (
-  <ScreenWithFooter><ProductsScreen /></ScreenWithFooter>
+  <ScreenWithFooter>
+    <ProductsScreen />
+  </ScreenWithFooter>
 );
 const ShopScreenWithFooter = () => (
-  <ScreenWithFooter><ShopScreen /></ScreenWithFooter>
+  <ScreenWithFooter>
+    <ShopScreen />
+  </ScreenWithFooter>
 );
 const RecentlyViewedScreenWithFooter = () => (
-  <ScreenWithFooter><RecentlyViewedScreen /></ScreenWithFooter>
+  <ScreenWithFooter>
+    <RecentlyViewedScreen />
+  </ScreenWithFooter>
 );
 const CustomerServiceScreenWithFooter = () => (
-  <ScreenWithFooter><CustomerServiceScreen /></ScreenWithFooter>
+  <ScreenWithFooter>
+    <CustomerServiceScreen />
+  </ScreenWithFooter>
 );
 const InviteScreenWithFooter = () => (
-  <ScreenWithFooter><InviteScreen /></ScreenWithFooter>
+  <ScreenWithFooter>
+    <InviteScreen />
+  </ScreenWithFooter>
 );
 const AddressManagementScreenWithFooter = () => (
-  <ScreenWithFooter><AddressManagementScreen /></ScreenWithFooter>
+  <ScreenWithFooter>
+    <AddressManagementScreen />
+  </ScreenWithFooter>
 );
 
 /* App Stack */
@@ -276,7 +288,6 @@ const AppStack = () => (
     <Stack.Screen name="ProductDetails" component={ProductDetailsScreen} />
     <Stack.Screen name="cart" component={CartScreen} />
     <Stack.Screen name="Signup" component={SignupScreen} />
-    <Stack.Screen name="SignIn" component={LoginScreen} />
     <Stack.Screen name="Checkout" component={CheckoutScreen} />
     <Stack.Screen name="Category" component={CategoryScreenWithFooter} />
     <Stack.Screen name="Account" component={AccountScreenWithFooter} />
@@ -299,14 +310,20 @@ const AppStack = () => (
     <Stack.Screen name="Fridge" component={FridgeScreen} />
     <Stack.Screen name="Fan" component={FanScreen} />
     <Stack.Screen name="AirCondition" component={AirConditionScreen} />
-    <Stack.Screen name="OrderCancellationScreen" component={OrderCancellationScreen} />
+    <Stack.Screen
+      name="OrderCancellationScreen"
+      component={OrderCancellationScreen}
+    />
     <Stack.Screen name="terms" component={TermsScreen} />
     <Stack.Screen name="Combo" component={ComboScreen} />
     <Stack.Screen name="Appliances" component={ApplianceScreen} />
     <Stack.Screen name="RecentlyViewed" component={RecentlyViewedScreenWithFooter} />
     <Stack.Screen name="CustomerService" component={CustomerServiceScreenWithFooter} />
     <Stack.Screen name="Invite" component={InviteScreenWithFooter} />
-    <Stack.Screen name="AddressManagement" component={AddressManagementScreenWithFooter} />
+    <Stack.Screen
+      name="AddressManagement"
+      component={AddressManagementScreenWithFooter}
+    />
     <Stack.Screen name="Search" component={SearchScreen} />
     <Stack.Screen name="HelpFAQ" component={FAQScreen} />
     <Stack.Screen name="Wishlist" component={WishlistScreen} />
@@ -331,7 +348,7 @@ const AuthLoadingScreen = () => {
     <View style={styles.authLoadingContainer}>
       <RNStatusBar
         barStyle="dark-content"
-        translucent={true}
+        translucent
         backgroundColor="transparent"
       />
       <View style={[styles.authLoadingContent, { paddingTop: insets.top + 50 }]}>
@@ -352,22 +369,31 @@ const AuthLoadingScreen = () => {
 };
 
 /* Main App Container */
-const MainAppContainer = () => {
-  return (
-    <View style={styles.mainContainer}>
-      <RNStatusBar
-        barStyle="dark-content"
-        translucent={true}
-        backgroundColor="#FFFFFF"
-      />
-      <Header />
-      <View style={styles.contentContainer}>
-        <AppStack />
-        <FloatingTawkChat />
-      </View>
+const MainAppContainer = () => (
+  <View style={styles.mainContainer}>
+    <RNStatusBar
+      barStyle="dark-content"
+      translucent
+      backgroundColor="#FFFFFF"
+    />
+    <Header />
+    <View style={styles.contentContainer}>
+      <AppStack />
+      <FloatingTawkChat />
     </View>
-  );
-};
+  </View>
+);
+
+const PersistLoadingScreen = () => (
+  <View style={styles.persistLoadingContainer}>
+    <Image
+      source={require("./assets/frankoIcon.png")}
+      style={styles.authLoadingLogo}
+      resizeMode="contain"
+    />
+    <ActivityIndicator size="large" color="#10B981" />
+  </View>
+);
 
 /* App Content */
 const AppContent = () => {
@@ -377,21 +403,45 @@ const AppContent = () => {
   const dispatch = useDispatch();
 
   const isAuthChecked = useSelector(selectIsAuthChecked);
+  const products = useSelector((state) =>
+    Array.isArray(state.products?.products) ? state.products.products : EMPTY_PRODUCTS
+  );
+  const productsByShowroom = useSelector((state) =>
+    state.products?.productsByShowroom &&
+    typeof state.products.productsByShowroom === "object"
+      ? state.products.productsByShowroom
+      : EMPTY_PRODUCT_GROUPS
+  );
 
-  const handleReady = () => setShowWelcome(false);
+  const productsToPreload = useMemo(() => {
+    const showroomProducts = Object.values(productsByShowroom).flatMap((rows) =>
+      Array.isArray(rows) ? rows.slice(0, 4) : []
+    );
+    // Prioritize the first cards in showroom carousels, then general products.
+    return [...showroomProducts, ...products.slice(0, 6)].slice(0, 12);
+  }, [products, productsByShowroom]);
 
-  // Monitor network connectivity
+  useEffect(() => {
+    if (!isConnected || !productsToPreload.length) return;
+    // If Redux Persist has product data from the last session, warm the native
+    // image cache while the short welcome/auth screens are still visible.
+    void preloadProductImages(productsToPreload, {
+      maxImages: 8,
+      concurrency: 3,
+    });
+  }, [isConnected, productsToPreload]);
+
+  const handleReady = useCallback(() => setShowWelcome(false), []);
+
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
       const hasInternet =
-        state.isConnected && (state.isInternetReachable !== false);
-      setIsConnected(!!hasInternet);
+        state.isConnected && state.isInternetReachable !== false;
+      setIsConnected(Boolean(hasInternet));
     });
-
     return () => unsubscribe();
   }, []);
 
-  // Check authentication status on app load
   useEffect(() => {
     const initializeAuth = async () => {
       try {
@@ -402,59 +452,41 @@ const AppContent = () => {
         setIsInitializing(false);
       }
     };
-
     initializeAuth();
   }, [dispatch]);
 
-  // Track activity and check inactivity on app state changes
   useEffect(() => {
-    // Set initial activity timestamp
     updateLastActivity();
 
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
       if (nextAppState === "active") {
-        // App came to foreground - check inactivity
         const isInactive = await checkInactivityTimeout();
         if (isInactive) {
           console.log("[App] User inactive for 3+ days - logging out");
           dispatch({ type: "customer/silentLogoutAction" });
           await logoutAndRedirect();
         } else {
-          // User is active - update timestamp
           await updateLastActivity();
         }
       }
     });
 
-    return () => {
-      subscription.remove();
-    };
+    return () => subscription.remove();
   }, [dispatch]);
 
-  if (showWelcome) {
-    return (
-      <NavigationContainer ref={navigationRef}>
-        {!isConnected && <NoInternetBanner />}
-        <WelcomeScreen onReady={handleReady} />
-      </NavigationContainer>
-    );
-  }
-
-  if (isInitializing || !isAuthChecked) {
-    return (
-      <NavigationContainer ref={navigationRef}>
-        {!isConnected && <NoInternetBanner />}
-        <AuthLoadingScreen />
-      </NavigationContainer>
-    );
-  }
-
+  // Keep one NavigationContainer mounted through welcome, auth, and app states.
   return (
     <NavigationContainer ref={navigationRef}>
       {!isConnected && <NoInternetBanner />}
-      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-        <MainAppContainer />
-      </SafeAreaView>
+      {showWelcome ? (
+        <WelcomeScreen onReady={handleReady} />
+      ) : isInitializing || !isAuthChecked ? (
+        <AuthLoadingScreen />
+      ) : (
+        <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+          <MainAppContainer />
+        </SafeAreaView>
+      )}
     </NavigationContainer>
   );
 };
@@ -462,7 +494,7 @@ const AppContent = () => {
 /* App Root */
 const App = () => (
   <Provider store={store}>
-    <PersistGate loading={null} persistor={persistor}>
+    <PersistGate loading={<PersistLoadingScreen />} persistor={persistor}>
       <SafeAreaProvider>
         <ForceUpdateGate>
           <AppContent />
@@ -526,6 +558,12 @@ const styles = StyleSheet.create({
     color: "#4B5563",
     fontWeight: "500",
     textAlign: "center",
+  },
+  persistLoadingContainer: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+    justifyContent: "center",
+    alignItems: "center",
   },
   welcomeWrapper: {
     flex: 1,

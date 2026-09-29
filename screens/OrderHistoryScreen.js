@@ -17,19 +17,22 @@ import {
 import { useDispatch, useSelector } from "react-redux";
 import moment from "moment";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import Icon from "react-native-vector-icons/MaterialIcons";
 import { useNavigation } from "@react-navigation/native";
 
 import noOrders from "../assets/noOrders.avif";
 import OrderModal from "../components/OrderDetailsModal";
-
 import {
+  cancelOrder,
   fetchOrdersByCustomer,
   selectOrders,
   selectOrdersError,
   selectOrdersLoading,
 } from "../redux/slice/orderSlice";
+import {
+  selectCurrentCustomer,
+  selectIsAuthenticated,
+} from "../redux/slice/customerSlice";
 
 const { width } = Dimensions.get("window");
 
@@ -60,14 +63,24 @@ function normalizeOrderCode(order, fallback) {
 }
 
 function normalizeOrderStatus(order) {
+  const cycle = order?.orderCycle ?? order?.OrderCycle;
   const status =
-    (typeof order?.orderCycle === "string" && order.orderCycle) ||
-    order?.orderCycle?.status ||
-    order?.orderCycle?.name ||
+    (typeof cycle === "string" && cycle) ||
+    cycle?.status ||
+    cycle?.name ||
+    cycle?.cycleName ||
+    cycle?.CycleName ||
     order?.status ||
+    order?.Status ||
+    order?.orderStatus ||
+    order?.OrderStatus ||
     "Pending";
 
-  return String(status);
+  return String(status).trim();
+}
+
+function isOrderPlacementStatus(order) {
+  return normalizeOrderStatus(order).trim().toLowerCase() === "order placement";
 }
 
 function normalizeOrderDate(order) {
@@ -81,7 +94,7 @@ function getStatusColor(status) {
   if (["delivered", "delivery", "completed"].includes(s)) return "#10B981";
   if (["pending", "processing", "order placement"].includes(s)) return "#F59E0B";
   if (["cancelled", "canceled", "wrong number", "unreachable"].includes(s)) return "#EF4444";
-  if (["Multiple Orders", "testing"].includes(s)) return "#9CA3AF";
+  if (["multiple orders", "testing"].includes(s)) return "#9CA3AF";
   return "#6B7280";
 }
 
@@ -92,55 +105,48 @@ export default function OrderHistoryScreen() {
   const orders = useSelector(selectOrders);
   const loading = useSelector(selectOrdersLoading);
   const error = useSelector(selectOrdersError);
+  const currentCustomer = useSelector(selectCurrentCustomer);
+  const isAuthenticated = useSelector(selectIsAuthenticated);
 
   const [customerId, setCustomerId] = useState(null);
-
-  const [dateRange, setDateRange] = useState([DEFAULT_FROM, DEFAULT_TO]);
-  const [tempDateRange, setTempDateRange] = useState([DEFAULT_FROM, DEFAULT_TO]);
+  const [dateRange, setDateRange] = useState([DEFAULT_FROM.clone(), DEFAULT_TO.clone()]);
+  const [tempDateRange, setTempDateRange] = useState([DEFAULT_FROM.clone(), DEFAULT_TO.clone()]);
   const [selectedPreset, setSelectedPreset] = useState("All Time");
-
   const [refreshing, setRefreshing] = useState(false);
-
+  const [cancellingOrderCode, setCancellingOrderCode] = useState(null);
   const [showDateRangeModal, setShowDateRangeModal] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [datePickerMode, setDatePickerMode] = useState("from");
-
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [selectedOrderCode, setSelectedOrderCode] = useState(null);
 
-  // Load customerId once
   useEffect(() => {
-    (async () => {
-      try {
-        const customerData = await AsyncStorage.getItem("customer");
-        if (!customerData) return;
-
-        const customer = JSON.parse(customerData);
-        const accountNumber = customer?.customerAccountNumber;
-        if (accountNumber) setCustomerId(accountNumber);
-      } catch (e) {
-        console.error("Failed to load customer from AsyncStorage:", e);
-      }
-    })();
-  }, []);
+    if (!isAuthenticated) {
+      setCustomerId(null);
+      return;
+    }
+    setCustomerId(currentCustomer?.customerAccountNumber || null);
+  }, [isAuthenticated, currentCustomer]);
 
   const fetchOrders = useCallback(async () => {
     if (!customerId) return;
-
-    const [from, to] = dateRange.map((d) => d.format("MM/DD/YYYY"));
+    const [from, to] = dateRange.map((date) => date.format("MM/DD/YYYY"));
     await dispatch(fetchOrdersByCustomer({ from, to, customerId })).unwrap();
   }, [dispatch, customerId, dateRange]);
 
-  // auto fetch when inputs change
   useEffect(() => {
     if (!customerId) return;
-    fetchOrders().catch((e) => console.error("Error fetching orders:", e));
+    fetchOrders().catch((fetchError) =>
+      console.error("Error fetching orders:", fetchError)
+    );
   }, [customerId, fetchOrders]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await fetchOrders();
+    } catch (refreshError) {
+      console.error("Error refreshing orders:", refreshError);
     } finally {
       setRefreshing(false);
     }
@@ -150,10 +156,10 @@ export default function OrderHistoryScreen() {
     const list = Array.isArray(orders) ? orders : [];
     return list
       .filter(Boolean)
-      .map((o, idx) => {
-        const code = normalizeOrderCode(o, idx);
-        const dateKey = o?.orderDate || o?.createdAt || Date.now();
-        return { ...o, __key: `${code}-${dateKey}-${idx}` };
+      .map((order, index) => {
+        const code = normalizeOrderCode(order, index);
+        const dateKey = order?.orderDate || order?.createdAt || Date.now();
+        return { ...order, __key: `${code}-${dateKey}-${index}` };
       })
       .sort((a, b) => {
         const da = moment(a?.orderDate || a?.createdAt || 0);
@@ -172,23 +178,69 @@ export default function OrderHistoryScreen() {
     setIsModalVisible(true);
   }, []);
 
+  const handleCancelOrder = useCallback(
+    (order) => {
+      const code = normalizeOrderCode(order, null);
+      if (!code || code === "null" || code === "undefined") {
+        Alert.alert("Error", "Unable to cancel this order. Order code not found.");
+        return;
+      }
+      if (!isOrderPlacementStatus(order)) return;
+
+      Alert.alert(
+        "Cancel Order",
+        `Are you sure you want to cancel order ${code}? This action cannot be undone.`,
+        [
+          { text: "Keep Order", style: "cancel" },
+          {
+            text: "Cancel Order",
+            style: "destructive",
+            onPress: async () => {
+              setCancellingOrderCode(code);
+              try {
+                await dispatch(cancelOrder(code)).unwrap();
+                // cancelOrder updates the Redux list immediately; refetch to
+                // make the server's final status the source of truth as well.
+                try {
+                  await fetchOrders();
+                } catch (refreshError) {
+                  console.warn("Order cancelled, but history refresh failed:", refreshError);
+                }
+                Alert.alert("Order Cancelled", `Order ${code} has been cancelled.`);
+              } catch (cancelError) {
+                const message =
+                  cancelError?.message ||
+                  (typeof cancelError === "string" ? cancelError : null) ||
+                  "The order could not be cancelled. Please try again.";
+                Alert.alert("Cancellation Failed", message);
+              } finally {
+                setCancellingOrderCode(null);
+              }
+            },
+          },
+        ]
+      );
+    },
+    [dispatch, fetchOrders]
+  );
+
   const handleModalClose = useCallback(() => {
     setIsModalVisible(false);
     setTimeout(() => setSelectedOrderCode(null), 250);
   }, []);
 
   const applyPreset = useCallback(
-    async (preset) => {
+    (preset) => {
       setSelectedPreset(preset.label);
 
-      // custom -> open modal
       if (preset.days === null && !preset.fromDate) {
         setTempDateRange([...dateRange]);
         setShowDateRangeModal(true);
         return;
       }
 
-      let fromDate, toDate;
+      let fromDate;
+      let toDate;
       if (preset.fromDate && preset.toDate) {
         fromDate = preset.fromDate.clone().startOf("day");
         toDate = preset.toDate.clone().endOf("day");
@@ -196,13 +248,16 @@ export default function OrderHistoryScreen() {
         fromDate = moment().subtract(preset.days, "days").startOf("day");
         toDate = moment().add(1, "day").endOf("day");
       }
-
       setDateRange([fromDate, toDate]);
     },
     [dateRange]
   );
 
   const applyCustomRange = useCallback(() => {
+    if (tempDateRange[0].isAfter(tempDateRange[1], "day")) {
+      Alert.alert("Invalid Date Range", "The start date must be before the end date.");
+      return;
+    }
     setSelectedPreset("Custom");
     setDateRange([...tempDateRange]);
     setShowDateRangeModal(false);
@@ -212,8 +267,8 @@ export default function OrderHistoryScreen() {
     (event, selectedDate) => {
       setShowDatePicker(false);
       if (!selectedDate) return;
-      setTempDateRange((prev) => {
-        const next = [...prev];
+      setTempDateRange((previous) => {
+        const next = [...previous];
         next[datePickerMode === "from" ? 0 : 1] = moment(selectedDate);
         return next;
       });
@@ -230,14 +285,16 @@ export default function OrderHistoryScreen() {
     const status = normalizeOrderStatus(item);
     const date = normalizeOrderDate(item);
     const code = normalizeOrderCode(item, index);
+    const canCancel = isOrderPlacementStatus(item);
+    const isCancelling = cancellingOrderCode === code;
 
     return (
-      <TouchableOpacity
-        style={[styles.orderCard, { marginTop: index === 0 ? 0 : 12 }]}
-        onPress={() => handleViewOrder(item)}
-        activeOpacity={0.95}
-      >
-        <View style={styles.orderCardContent}>
+      <View style={[styles.orderCard, { marginTop: index === 0 ? 0 : 12 }]}>
+        <TouchableOpacity
+          style={styles.orderCardContent}
+          onPress={() => handleViewOrder(item)}
+          activeOpacity={0.92}
+        >
           <View style={styles.orderHeader}>
             <View style={styles.orderIdContainer}>
               <View style={styles.receiptIconContainer}>
@@ -249,17 +306,11 @@ export default function OrderHistoryScreen() {
               </View>
             </View>
 
-            <TouchableOpacity
-              style={styles.viewOrderButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleViewOrder(item);
-              }}
-            >
+            <View style={styles.viewOrderButton}>
               <Icon name="visibility" size={16} color="#10B981" />
               <Text style={styles.viewOrderText}>View</Text>
               <Icon name="chevron-right" size={16} color="#10B981" />
-            </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.orderDetails}>
@@ -275,8 +326,27 @@ export default function OrderHistoryScreen() {
               </Text>
             </View>
           </View>
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+
+        {/* Only orders whose status is exactly "Order Placement" can be cancelled. */}
+        {canCancel && (
+          <TouchableOpacity
+            style={[styles.cancelOrderButton, isCancelling && styles.cancelOrderButtonDisabled]}
+            onPress={() => handleCancelOrder(item)}
+            disabled={Boolean(cancellingOrderCode)}
+            activeOpacity={0.8}
+          >
+            {isCancelling ? (
+              <ActivityIndicator size="small" color="#B91C1C" />
+            ) : (
+              <Icon name="cancel" size={17} color="#B91C1C" />
+            )}
+            <Text style={styles.cancelOrderText}>
+              {isCancelling ? "Cancelling…" : "Cancel Order"}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
     );
   };
 
@@ -313,14 +383,15 @@ export default function OrderHistoryScreen() {
         </View>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.presetsScroll}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.presetsScroll}
+      >
         {datePresets.map((preset) => (
           <TouchableOpacity
             key={preset.label}
-            style={[
-              styles.presetChip,
-              selectedPreset === preset.label && styles.presetChipActive,
-            ]}
+            style={[styles.presetChip, selectedPreset === preset.label && styles.presetChipActive]}
             onPress={() => applyPreset(preset)}
             activeOpacity={0.7}
           >
@@ -517,7 +588,6 @@ const styles = StyleSheet.create({
   headerContent: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   title: { fontSize: 24, fontWeight: "700", color: "#111827" },
   subtitle: { fontSize: 14, color: "#6B7280", marginTop: 4 },
-
   dateFilterContainer: {
     backgroundColor: "#FFFFFF",
     paddingVertical: 12,
@@ -557,7 +627,6 @@ const styles = StyleSheet.create({
   presetChipActive: { backgroundColor: "#059669" },
   presetChipText: { fontSize: 14, fontWeight: "500", color: "#059669" },
   presetChipTextActive: { color: "#FFFFFF" },
-
   listContainer: { padding: 16 },
   orderCard: {
     backgroundColor: "#FFFFFF",
@@ -573,44 +642,68 @@ const styles = StyleSheet.create({
   orderHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   orderIdContainer: { flexDirection: "row", alignItems: "center", gap: 12 },
   receiptIconContainer: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: "#D1FAE5", justifyContent: "center", alignItems: "center",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#D1FAE5",
+    justifyContent: "center",
+    alignItems: "center",
   },
   orderIdLabel: { fontSize: 12, color: "#6B7280" },
   orderId: { fontSize: 16, fontWeight: "600", color: "#111827" },
-
   viewOrderButton: {
-    flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
     backgroundColor: "#D1FAE5",
   },
   viewOrderText: { fontSize: 14, fontWeight: "500", color: "#10B981" },
-
   orderDetails: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   detailRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   orderDate: { fontSize: 14, color: "#6B7280" },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
   orderStatus: { fontSize: 14, fontWeight: "500" },
-
+  cancelOrderButton: {
+    alignSelf: "flex-end",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    minWidth: 132,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    backgroundColor: "#FEF2F2",
+  },
+  cancelOrderButtonDisabled: { opacity: 0.6 },
+  cancelOrderText: { color: "#B91C1C", fontSize: 13, fontWeight: "700" },
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", gap: 16 },
   loadingText: { fontSize: 16, color: "#6B7280" },
-
   errorContainer: { flex: 1, justifyContent: "center", alignItems: "center", gap: 16, padding: 32 },
   errorText: { fontSize: 18, fontWeight: "600", color: "#EF4444" },
   errorSubtext: { fontSize: 14, color: "#6B7280", textAlign: "center" },
   retryButton: {
-    flexDirection: "row", alignItems: "center", gap: 8,
-    backgroundColor: "#10B981", paddingHorizontal: 24, paddingVertical: 12,
-    borderRadius: 8, marginTop: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#10B981",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 16,
   },
   retryText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
-
   emptyStateContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 32 },
   emptyStateImageContainer: { width: 200, height: 200, marginBottom: 24 },
   emptyStateImage: { width: "100%", height: "100%", resizeMode: "contain" },
   emptyStateTitle: { fontSize: 20, fontWeight: "700", color: "#111827", marginBottom: 8 },
   emptyStateSubtitle: { fontSize: 14, color: "#6B7280", textAlign: "center", marginBottom: 24 },
-
   startShoppingButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -621,43 +714,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   startShoppingText: { fontSize: 15, fontWeight: "600", color: "#FFFFFF" },
-
-  modalOverlay: {
-    flex: 1, backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center", alignItems: "center",
-  },
-  modalContent: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    padding: 20,
-    width: width * 0.9,
-    maxHeight: "80%",
-  },
-  modalHeader: {
-    flexDirection: "row", justifyContent: "space-between",
-    alignItems: "center", marginBottom: 20,
-  },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" },
+  modalContent: { backgroundColor: "#FFFFFF", borderRadius: 20, padding: 20, width: width * 0.9, maxHeight: "80%" },
+  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
   modalTitle: { fontSize: 20, fontWeight: "700", color: "#111827" },
   modalBody: { marginBottom: 20 },
   dateInputsRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 16 },
-  dateInput: {
-    flex: 1, backgroundColor: "#F9FAFB",
-    padding: 12, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB",
-  },
+  dateInput: { flex: 1, backgroundColor: "#F9FAFB", padding: 12, borderRadius: 12, borderWidth: 1, borderColor: "#E5E7EB" },
   dateInputLabel: { fontSize: 12, color: "#6B7280", marginBottom: 8, fontWeight: "500" },
   dateInputValue: { flexDirection: "row", alignItems: "center", gap: 8 },
   dateInputText: { fontSize: 14, color: "#111827", fontWeight: "600" },
   dateArrow: { marginTop: 20 },
-
   modalFooter: { flexDirection: "row", gap: 12 },
-  cancelButton: {
-    flex: 1, backgroundColor: "#F3F4F6",
-    paddingVertical: 12, borderRadius: 12, alignItems: "center",
-  },
+  cancelButton: { flex: 1, backgroundColor: "#F3F4F6", paddingVertical: 12, borderRadius: 12, alignItems: "center" },
   cancelButtonText: { fontSize: 16, fontWeight: "600", color: "#6B7280" },
-  applyButton: {
-    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
-    gap: 8, backgroundColor: "#10B981", paddingVertical: 12, borderRadius: 12,
-  },
+  applyButton: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#10B981", paddingVertical: 12, borderRadius: 12 },
   applyButtonText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
 });

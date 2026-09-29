@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Dimensions,
 } from "react-native";
+import CachedImage from "./CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
@@ -46,7 +47,7 @@ export default function ProductsComponent() {
 
   const getValidImageURL = (imagePath) => {
     if (!imagePath) {
-      return "https://via.placeholder.com/150";
+      return null;
     }
     if (imagePath.startsWith("F:\\") || imagePath.startsWith("D:\\")) {
       return `https://testing.frankotrading.com/Media/Products_Images/${imagePath.split("\\").pop()}`;
@@ -81,7 +82,11 @@ export default function ProductsComponent() {
         onPress={() => navigation.navigate("ProductDetails", { productId: item.productID })}
       >
         <View style={styles.imageContainer}>
-          <Image source={{ uri: productImageURL }} style={styles.productImage} />
+          <CachedImage
+            source={{ uri: productImageURL }}
+            style={styles.productImage}
+            recyclingKey={item.productID}
+          />
           {discount > 0 && (
             <View style={styles.discountBadge}>
               <Text style={styles.discountText}>{`${discount}% OFF`}</Text>

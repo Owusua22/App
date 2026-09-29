@@ -1,4 +1,3 @@
-// src/screens/CheckoutScreen.jsx
 import React, {
   useEffect,
   useRef,
@@ -13,20 +12,24 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Image,
   Alert,
   StyleSheet,
   Modal,
   Animated,
-  Dimensions,
   Platform,
 } from "react-native";
+import CachedImage from "../components/CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { checkOutOrder, updateOrderDelivery } from "../redux/slice/orderSlice";
+import {
+  checkOutOrder,
+  validateCart,
+  updateOrderDelivery,
+  FRIENDLY_PRICE_UPDATE_MSG,
+} from "../redux/slice/orderSlice";
 import {
   validateAccount,
   getAccountHoldName,
@@ -35,13 +38,16 @@ import {
   dispatchToAllNetworks,
   resetPaymentState,
   clearError,
-  generateNewRefNo,
   setValidationStep,
   incrementRetryAttempts,
   isValidationSuccess,
   isDebitSubmitted,
 } from "../redux/slice/paymentSlice";
 import { clearCart } from "../redux/slice/cartSlice";
+import {
+  selectCurrentCustomer,
+  selectIsAuthenticated,
+} from "../redux/slice/customerSlice";
 import LocationsModal from "../components/Locations";
 
 /* ─── Assets ──────────────────────────────────────────── */
@@ -51,7 +57,7 @@ const airteltigoLogo = require("../assets/AT.png");
 const frankoLogo = require("../assets/frankoIcon.png");
 
 /* ─── Constants ───────────────────────────────────────── */
-const { width: SCREEN_W } = Dimensions.get("window");
+const HOME_ROUTE = "Home"; // Change this if your registered home route has a different name.
 
 const CART_KEYS_TO_CLEAR = [
   "cart",
@@ -216,12 +222,57 @@ const isFree = (fee) =>
 const isNA = (fee) =>
   fee == null || fee === "N/A" || fee === "n/a" || fee === 0 || fee === "0";
 
-/**
- * FIX #1: Corrected isPaymentSuccess to match exact API response:
- * { responseCode: "01", responseMessage: "Successfully processed transaction." }
- * - responseCode can be "01" or "1"
- * - responseMessage exact match (case-sensitive, includes period)
- */
+const getApiResponseCode = (value) => {
+  let response = value;
+  if (typeof response === "string") {
+    try {
+      response = JSON.parse(response);
+    } catch {
+      return response.trim();
+    }
+  }
+  if (Array.isArray(response)) response = response[0];
+  if (Array.isArray(response?.data)) response = response.data[0];
+  if (Array.isArray(response?.result)) response = response.result[0];
+  return String(
+    response?.responseCode ??
+      response?.response?.responseCode ??
+      response?.data?.responseCode ??
+      response?.code ??
+      ""
+  ).trim();
+};
+
+const getApiResponseMessage = (value) =>
+  value?.responseMessage ??
+  value?.response?.responseMessage ??
+  value?.data?.responseMessage ??
+  value?.message ??
+  "";
+
+const getFailureMessage = (error, fallback) => {
+  if (typeof error === "string") return error;
+  const payload = error?.payload ?? error;
+  return (
+    payload?.message ??
+    payload?.responseMessage ??
+    payload?.title ??
+    error?.response?.data?.message ??
+    error?.response?.data?.title ??
+    error?.message ??
+    fallback
+  );
+};
+
+// Only ValidateCart failures are price-update events. CheckOutDbCart is now
+// used to create an order, not to decide whether cart prices have changed.
+const isPriceUpdateFailure = (error) => {
+  const failure = error?.payload ?? error;
+  return (
+    failure?.isPriceUpdate === true || failure?.isCheckoutFailure === true
+  );
+};
+
 const isPaymentSuccess = (res) => {
   if (!res) return false;
   const codeMatch =
@@ -308,18 +359,11 @@ const Field = ({
           name={icon}
           size={17}
           color={error ? C.red : C.inkFaint}
-          style={[
-            { marginLeft: 14 },
-            rest.multiline && { marginTop: 13 },
-          ]}
+          style={[{ marginLeft: 14 }, rest.multiline && { marginTop: 13 }]}
         />
       )}
       <TextInput
-        style={[
-          s.fieldInput,
-          !icon && { paddingLeft: 16 },
-          inputStyle,
-        ]}
+        style={[s.fieldInput, !icon && { paddingLeft: 16 }, inputStyle]}
         placeholderTextColor={C.inkGhost}
         {...rest}
       />
@@ -345,29 +389,19 @@ const NetCard = ({ network, selected, onPick, disabled }) => {
         disabled && { opacity: 0.5 },
       ]}
     >
-      <Image
-        source={network.logo}
-        style={s.netLogo}
-        resizeMode="contain"
-      />
+      <CachedImage source={network.logo} style={s.netLogo} resizeMode="contain" />
       <View style={{ flex: 1, marginLeft: 12 }}>
         <Text style={s.netName}>{network.name}</Text>
         <Text style={s.netSub}>{network.name} Mobile Money</Text>
       </View>
       <View style={[s.radio, selected && { borderColor: pal.d }]}>
-        {selected && (
-          <View style={[s.radioDot, { backgroundColor: pal.d }]} />
-        )}
+        {selected && <View style={[s.radioDot, { backgroundColor: pal.d }]} />}
       </View>
     </TouchableOpacity>
   );
 };
 
-const ValidationStatusBanner = ({
-  validationState,
-  accountName,
-  onRetry,
-}) => {
+const ValidationStatusBanner = ({ validationState, accountName, onRetry }) => {
   if (validationState === "idle") return null;
   const configs = {
     validating: {
@@ -399,8 +433,7 @@ const ValidationStatusBanner = ({
       iconColor: C.red,
       textColor: C.red,
       title: "Validation failed",
-      subtitle:
-        "Please check your number and network, then retry",
+      subtitle: "Please check your number and network, then retry",
       showSpinner: false,
     },
   };
@@ -408,19 +441,10 @@ const ValidationStatusBanner = ({
   if (!cfg) return null;
 
   return (
-    <View
-      style={[
-        s.vBanner,
-        { backgroundColor: cfg.bg, borderColor: cfg.border },
-      ]}
-    >
+    <View style={[s.vBanner, { backgroundColor: cfg.bg, borderColor: cfg.border }]}>
       <View style={s.vBannerRow}>
         {cfg.showSpinner ? (
-          <ActivityIndicator
-            size="small"
-            color={C.blue}
-            style={{ marginRight: 10 }}
-          />
+          <ActivityIndicator size="small" color={C.blue} style={{ marginRight: 10 }} />
         ) : (
           <Ionicons
             name={cfg.iconName}
@@ -430,9 +454,7 @@ const ValidationStatusBanner = ({
           />
         )}
         <View style={{ flex: 1 }}>
-          <Text style={[s.vBannerTitle, { color: cfg.textColor }]}>
-            {cfg.title}
-          </Text>
+          <Text style={[s.vBannerTitle, { color: cfg.textColor }]}>{cfg.title}</Text>
           <Text style={s.vBannerSub}>{cfg.subtitle}</Text>
         </View>
         {validationState === "failed" && onRetry && (
@@ -457,14 +479,10 @@ const NetworkDispatchStatus = ({ dispatchData, dispatchStep, loading }) => {
         <View
           style={[
             s.dispatchSummaryBadge,
-            summary.successful === summary.total && {
-              backgroundColor: C.green,
-            },
+            summary.successful === summary.total && { backgroundColor: C.green },
             summary.successful === 0 && { backgroundColor: C.red },
             summary.successful > 0 &&
-              summary.successful < summary.total && {
-                backgroundColor: C.amber,
-              },
+              summary.successful < summary.total && { backgroundColor: C.amber },
           ]}
         >
           <Text style={s.dispatchSummaryText}>
@@ -475,7 +493,6 @@ const NetworkDispatchStatus = ({ dispatchData, dispatchStep, loading }) => {
       {loading.networkDispatch && (
         <View style={s.dispatchLoadingStatus}>
           <ActivityIndicator size="small" color={C.brand} />
-         
         </View>
       )}
       {results?.length > 0 && (
@@ -483,18 +500,14 @@ const NetworkDispatchStatus = ({ dispatchData, dispatchStep, loading }) => {
           {results.map((result, index) => (
             <View key={index} style={s.dispatchResultItem}>
               <View style={s.dispatchResultContent}>
-                <Text style={s.dispatchResultNetwork}>
-                  {result.network}
-                </Text>
+                <Text style={s.dispatchResultNetwork}>{result.network}</Text>
                 <Text style={s.dispatchResultTime}>
                   {new Date(result.timestamp).toLocaleTimeString()}
                 </Text>
               </View>
               <View style={s.dispatchResultStatus}>
                 <Ionicons
-                  name={
-                    result.success ? "checkmark-circle" : "close-circle"
-                  }
+                  name={result.success ? "checkmark-circle" : "close-circle"}
                   size={14}
                   color={result.success ? C.green : C.red}
                 />
@@ -507,9 +520,7 @@ const NetworkDispatchStatus = ({ dispatchData, dispatchStep, loading }) => {
                   {result.success ? "Success" : "Failed"}
                 </Text>
                 {result.duration && (
-                  <Text style={s.dispatchResultDuration}>
-                    ({result.duration}ms)
-                  </Text>
+                  <Text style={s.dispatchResultDuration}>({result.duration}ms)</Text>
                 )}
               </View>
             </View>
@@ -533,10 +544,12 @@ const CheckoutScreen = ({ navigation }) => {
     loading,
     error,
     authError,
-    validationStep,
     dispatchStep,
     retryAttempts,
   } = useSelector((state) => state.payment);
+
+  const currentCustomer = useSelector(selectCurrentCustomer);
+  const isAuthenticated = useSelector(selectIsAuthenticated);
 
   const doneRef = useRef(false);
   const payDoneRef = useRef(false);
@@ -547,9 +560,10 @@ const CheckoutScreen = ({ navigation }) => {
   const redirectTimeoutRef = useRef(null);
   const itemsRef = useRef([]);
   const autoValidateTimerRef = useRef(null);
+  const priceUpdateHandledRef = useRef(false);
+  const momoCartValidatedRef = useRef(false);
+  const closeModalInFlightRef = useRef(false);
 
-  // FIX #2: Refs to hold latest checkout/addr/network during polling
-  // so closures always have the current values
   const pCoRef = useRef(null);
   const pAddrRef = useRef(null);
   const selectedNetworkRef = useRef(null);
@@ -560,6 +574,7 @@ const CheckoutScreen = ({ navigation }) => {
   const [customer, setCustomer] = useState({});
   const [cartItems, setCartItems] = useState([]);
   const [payMethod, setPayMethod] = useState("");
+  const payMethodRef = useRef("");
   const [note, setNote] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -573,6 +588,10 @@ const CheckoutScreen = ({ navigation }) => {
   const [oid, setOid] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalPhase, setModalPhase] = useState("input");
+  const [priceUpdateOpen, setPriceUpdateOpen] = useState(false);
+  const [priceUpdateMessage, setPriceUpdateMessage] = useState(
+    FRIENDLY_PRICE_UPDATE_MSG
+  );
   const [inlineValidation, setInlineValidation] = useState("idle");
   const [tick, setTick] = useState(TIMER_SECONDS);
   const [momo, setMomo] = useState("233");
@@ -586,8 +605,7 @@ const CheckoutScreen = ({ navigation }) => {
   const subtotal = useMemo(
     () =>
       cartItems.reduce(
-        (sum, it) =>
-          sum + (Number(it.amount) || Number(it.total) || 0),
+        (sum, it) => sum + (Number(it.amount) || Number(it.total) || 0),
         0
       ),
     [cartItems]
@@ -623,8 +641,7 @@ const CheckoutScreen = ({ navigation }) => {
   );
 
   const displayTotal = useMemo(
-    () =>
-      payMethod === "Mobile Money" ? grandTotal : totalBeforeCharge,
+    () => (payMethod === "Mobile Money" ? grandTotal : totalBeforeCharge),
     [payMethod, grandTotal, totalBeforeCharge]
   );
 
@@ -650,20 +667,18 @@ const CheckoutScreen = ({ navigation }) => {
         desc: "MTN, Vodafone or AirtelTigo",
       },
     ];
-    if (canCOD)
+    if (canCOD) {
       list.unshift({
         key: "Cash on Delivery",
         icon: "cash-outline",
         desc: "Pay when you receive",
       });
+    }
     return list;
   }, [canCOD]);
 
   const momoOk = useCallback(() => isMomoValid(momo), [momo]);
-  const momoZero = useCallback(
-    () => momo.length > 3 && momo[3] === "0",
-    [momo]
-  );
+  const momoZero = useCallback(() => momo.length > 3 && momo[3] === "0", [momo]);
   const canPay = useMemo(
     () =>
       momoOk() &&
@@ -673,7 +688,12 @@ const CheckoutScreen = ({ navigation }) => {
     [momoOk, selectedNetwork, inlineValidation, modalPhase]
   );
 
-  // Keep refs in sync with state for use inside closures
+  const choosePayMethod = useCallback((method) => {
+    // Keep the ref in sync immediately so checkout never submits a stale method.
+    payMethodRef.current = method;
+    setPayMethod(method);
+  }, []);
+
   useEffect(() => {
     grandTotalRef.current = grandTotal;
   }, [grandTotal]);
@@ -698,9 +718,7 @@ const CheckoutScreen = ({ navigation }) => {
     pAddrRef.current = pAddr;
   }, [pAddr]);
 
-  /* ══════════════════════════════════════════════════════
-     AUTO-VALIDATION LOGIC
-     ═══════════════════════════════════════════════════════ */
+  /* ── Auto-validation ─────────────────────────────────── */
   const runValidation = useCallback(
     async (momoNumber, network) => {
       if (!isMomoValid(momoNumber) || !network) return;
@@ -708,10 +726,7 @@ const CheckoutScreen = ({ navigation }) => {
 
       try {
         const result = await dispatch(
-          validateAccount({
-            msisdn: momoNumber,
-            network: network.apiCode,
-          })
+          validateAccount({ msisdn: momoNumber, network: network.apiCode })
         ).unwrap();
 
         if (!mountedRef.current) return;
@@ -725,26 +740,21 @@ const CheckoutScreen = ({ navigation }) => {
               network: network.apiCode,
             })
           );
+        } else if (
+          network.code !== "mtn" &&
+          String(result?.responseCode) === "100"
+        ) {
+          console.warn("[Validation] 100 General Failure for non-MTN. Bypassing.");
+          setInlineValidation("success");
+          dispatch(setValidationStep("success"));
         } else {
-          // Bypass strict validation for non-MTN networks on code 100
-          if (
-            network.code !== "mtn" &&
-            String(result?.responseCode) === "100"
-          ) {
-            console.warn(
-              "[Validation] 100 General Failure for non-MTN. Bypassing."
-            );
-            setInlineValidation("success");
-            dispatch(setValidationStep("success"));
-          } else {
-            console.warn(
-              "[Validation] gateway returned non-success:",
-              result?.responseCode,
-              result?.responseMessage
-            );
-            setInlineValidation("failed");
-            dispatch(setValidationStep("failed"));
-          }
+          console.warn(
+            "[Validation] gateway returned non-success:",
+            result?.responseCode,
+            result?.responseMessage
+          );
+          setInlineValidation("failed");
+          dispatch(setValidationStep("failed"));
         }
       } catch (err) {
         if (!mountedRef.current) return;
@@ -753,9 +763,7 @@ const CheckoutScreen = ({ navigation }) => {
           err?.responseCode || err?.gatewayCode || err?.code || ""
         );
         if (network.code !== "mtn" && errCode === "100") {
-          console.warn(
-            "[Validation] 100 Error thrown for non-MTN. Bypassing."
-          );
+          console.warn("[Validation] 100 Error thrown for non-MTN. Bypassing.");
           setInlineValidation("success");
           dispatch(setValidationStep("success"));
         } else {
@@ -765,8 +773,7 @@ const CheckoutScreen = ({ navigation }) => {
           if (err?.isAuthError) {
             Alert.alert(
               "Authentication Error",
-              err.message ||
-                "Authentication failed. Please contact support."
+              err.message || "Authentication failed. Please contact support."
             );
           }
         }
@@ -797,9 +804,7 @@ const CheckoutScreen = ({ navigation }) => {
     [dispatch, runValidation]
   );
 
-  /* ══════════════════════════════════════════════════════
-     TIMER HELPERS
-     ═══════════════════════════════════════════════════════ */
+  /* ── Timer helpers ───────────────────────────────────── */
   const killAllTimers = useCallback(() => {
     clearInterval(tickIntervalRef.current);
     clearInterval(pollIntervalRef.current);
@@ -829,6 +834,110 @@ const CheckoutScreen = ({ navigation }) => {
     }, 500);
   }, []);
 
+  /* ── Price-update handling ───────────────────────────── */
+  const handlePriceUpdateFailure = useCallback(
+    async (failure) => {
+      const alreadyHandled = priceUpdateHandledRef.current;
+      priceUpdateHandledRef.current = true;
+
+      doneRef.current = true;
+      payDoneRef.current = true;
+      killAllTimers();
+      setBusy(false);
+      setPayBusy(false);
+      setModalOpen(false);
+      setModalPhase("input");
+      momoCartValidatedRef.current = false;
+      setPCo(null);
+      pCoRef.current = null;
+      setPAddr(null);
+      pAddrRef.current = null;
+      setOid(null);
+      oidRef.current = null;
+      setCartItems([]);
+      itemsRef.current = [];
+      dispatch(clearCart());
+
+      const message =
+        typeof failure === "string" ? failure : failure?.message;
+      setPriceUpdateMessage(
+        typeof message === "string" && message.trim()
+          ? message
+          : FRIENDLY_PRICE_UPDATE_MSG
+      );
+      // Open immediately, including when this handler is invoked again by the
+      // checkout catch after ValidateCart has already identified a price change.
+      if (mountedRef.current) setPriceUpdateOpen(true);
+
+      if (alreadyHandled) return;
+      AsyncStorage.multiRemove(CART_KEYS_TO_CLEAR).catch((storageError) => {
+        console.warn("[Checkout] Could not clear persisted cart:", storageError);
+      });
+    },
+    [dispatch, killAllTimers]
+  );
+
+  const validateCartBeforeOrder = useCallback(
+    async (cartIdValue) => {
+      const cartId = String(cartIdValue ?? "").trim();
+      if (!cartId) {
+        throw new Error("Your cart ID is missing. Please refresh your cart.");
+      }
+
+      // ValidateCart is a POST with cartId as a query parameter, not a body array.
+      const validation = await dispatch(validateCart({ cartId })).unwrap();
+      const responseCode = getApiResponseCode(validation);
+
+      if (responseCode === "1") return validation;
+
+      if (responseCode === "0") {
+        const failure = {
+          message: FRIENDLY_PRICE_UPDATE_MSG,
+          responseCode,
+          isPriceUpdate: true,
+          isCheckoutFailure: true,
+          isCartValidationFailure: true,
+          raw: validation,
+        };
+        await handlePriceUpdateFailure(failure);
+        throw failure;
+      }
+
+      const message = getApiResponseMessage(validation);
+      const error = new Error(
+        message || "We couldn't validate your cart. Please try again."
+      );
+      error.responseCode = responseCode;
+      error.isCartValidationFailure = true;
+      throw error;
+    },
+    [dispatch, handlePriceUpdateFailure]
+  );
+
+  const clearMomoDraft = useCallback(async () => {
+    momoCartValidatedRef.current = false;
+    setModalOpen(false);
+    setModalPhase("input");
+    setPayBusy(false);
+    setInlineValidation("idle");
+    setMomo("233");
+    setSelectedNetwork(null);
+    selectedNetworkRef.current = null;
+    setOid(null);
+    oidRef.current = null;
+    setPCo(null);
+    pCoRef.current = null;
+    setPAddr(null);
+    pAddrRef.current = null;
+    dispatch(clearError());
+    dispatch(setValidationStep("idle"));
+    await AsyncStorage.multiRemove([
+      "checkoutDetails",
+      "orderDeliveryDetails",
+      "pendingOrderId",
+    ]).catch(() => {});
+  }, [dispatch]);
+
   /* ── Bootstrap ───────────────────────────────────────── */
   useEffect(() => {
     mountedRef.current = true;
@@ -841,18 +950,29 @@ const CheckoutScreen = ({ navigation }) => {
 
     (async () => {
       try {
-        const [cJ, dJ, cJson, lJ, iJ] = await Promise.all([
-          AsyncStorage.getItem("customer"),
+        const [dJ, cJson, lJ, iJ] = await Promise.all([
           AsyncStorage.getItem("cartDetails"),
           AsyncStorage.getItem("cart"),
           AsyncStorage.getItem("selectedLocation"),
           AsyncStorage.getItem("usedOrderIds"),
         ]);
         if (!mountedRef.current) return;
-        const c = cJ ? JSON.parse(cJ) : null;
-        setCustomer(c || {});
-        setName(c ? `${c.firstName} ${c.lastName}` : "");
-        setPhone(c?.contactNumber || "");
+
+        const c = isAuthenticated ? currentCustomer : null;
+        if (!c || !c.contactNumber) {
+          Alert.alert("Sign in required", "Please sign in before checking out.", [
+            {
+              text: "OK",
+              onPress: () =>
+                navigation.reset({ index: 0, routes: [{ name: "SignIn" }] }),
+            },
+          ]);
+          return;
+        }
+
+        setCustomer(c);
+        setName(c.firstName ? `${c.firstName} ${c.lastName || ""}`.trim() : "");
+        setPhone(c.contactNumber || "");
         const raw = dJ
           ? JSON.parse(dJ)?.cartItems || []
           : cJson
@@ -860,6 +980,7 @@ const CheckoutScreen = ({ navigation }) => {
           : [];
         setCartItems(raw);
         itemsRef.current = raw;
+
         if (lJ) {
           const l = JSON.parse(lJ);
           setLoc(l);
@@ -875,14 +996,19 @@ const CheckoutScreen = ({ navigation }) => {
       mountedRef.current = false;
       killAllTimers();
     };
-  }, [killAllTimers, dispatch]);
+  }, [
+    killAllTimers,
+    dispatch,
+    isAuthenticated,
+    currentCustomer,
+    navigation,
+    fade,
+  ]);
 
   useEffect(() => {
-    if (ids.size)
-      AsyncStorage.setItem(
-        "usedOrderIds",
-        JSON.stringify([...ids])
-      ).catch(() => {});
+    if (ids.size) {
+      AsyncStorage.setItem("usedOrderIds", JSON.stringify([...ids])).catch(() => {});
+    }
   }, [ids]);
 
   useEffect(() => {
@@ -907,54 +1033,77 @@ const CheckoutScreen = ({ navigation }) => {
 
   /* ── Helpers ─────────────────────────────────────────── */
   const makeId = useCallback(() => {
-    let id,
-      t = 0;
+    let id;
+    let attempts = 0;
     do {
       id = `APP-${Math.floor(Math.random() * 900) + 100}-${
         Math.floor(Math.random() * 900) + 100
       }`;
-      t++;
-    } while (ids.has(id) && t < 100);
-    setIds((p) => new Set([...p, id]));
+      attempts += 1;
+    } while (ids.has(id) && attempts < 100);
+    setIds((previous) => new Set([...previous, id]));
     return id;
   }, [ids]);
 
   const wipe = () => AsyncStorage.multiRemove(CART_KEYS_TO_CLEAR);
 
   const retryFn = async (fn, n = 3) => {
-    let e;
-    for (let i = 1; i <= n; i++) {
+    let lastError;
+    for (let attempt = 1; attempt <= n; attempt += 1) {
       try {
         return await fn();
-      } catch (x) {
-        e = x;
-        if (i < n)
-          await new Promise((r) => setTimeout(r, 2 ** i * 1000));
+      } catch (error) {
+        lastError = error;
+        if (isPriceUpdateFailure(error)) throw error;
+        if (attempt < n) {
+          await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 1000));
+        }
       }
     }
-    throw e;
+    throw lastError;
   };
 
-  const submitOrder = async (co, addr) => {
-    await retryFn(async () => {
-      const cid =
-        (await AsyncStorage.getItem("cartId")) || co.Cartid;
-      return dispatch(
-        checkOutOrder({ ...co, Cartid: cid })
-      ).unwrap();
-    });
-    await retryFn(async () => {
+  const createCheckoutOrder = async (co) => {
+    const cid = (await AsyncStorage.getItem("cartId")) || co.Cartid;
+    try {
+      await validateCartBeforeOrder(cid);
+    } catch (error) {
+      console.error("[Checkout] ValidateCart failed:", error?.payload ?? error);
+      throw error;
+    }
+
+    // CheckOutDbCart creates the order only. Cart-price validation is handled
+    // exclusively by ValidateCart immediately before order creation.
+    try {
+      return await dispatch(checkOutOrder({ ...co, Cartid: cid })).unwrap();
+    } catch (error) {
+      console.error("[Checkout] CheckOutDbCart order creation failed:", error?.payload ?? error);
+      throw error;
+    }
+  };
+
+  const updateDeliveryAndClearCart = async (addr) =>
+    retryFn(async () => {
       await dispatch(updateOrderDelivery(addr)).unwrap();
       dispatch(clearCart());
       await wipe();
     });
+
+  // COD uses this combined flow: validate cart, create order, then save delivery.
+  // Mobile Money validates before prompting and creates an order only after a
+  // confirmed successful payment.
+  const submitOrder = async (co, addr) => {
+    const orderCode = String(co.orderCode || addr.orderCode);
+    await createCheckoutOrder({ ...co, orderCode });
+    await updateDeliveryAndClearCart({ ...addr, orderCode });
+    return orderCode;
   };
 
-  const onMomo = (t) => {
-    let v = t.replace(/\D/g, "");
-    if (v.startsWith("0")) v = "233" + v.slice(1);
-    if (!v.startsWith("233")) v = "233";
-    const next = v.slice(0, 12);
+  const onMomo = (text) => {
+    let value = text.replace(/\D/g, "");
+    if (value.startsWith("0")) value = "233" + value.slice(1);
+    if (!value.startsWith("233")) value = "233";
+    const next = value.slice(0, 12);
     setMomo(next);
     const detected = detectNetworkFromNumber(next);
     let network = selectedNetwork;
@@ -975,82 +1124,71 @@ const CheckoutScreen = ({ navigation }) => {
   const handleRetryValidation = () =>
     scheduleAutoValidation(momo, selectedNetwork);
 
-  /* ── Dispatch order after successful MoMo payment ────── */
-  const dispatchMomoOrder = async (orderId, checkoutObj, addrObj) => {
-    if (doneRef.current) return;
-    doneRef.current = true;
-    try {
-      const finalCheckoutObj = {
-        ...checkoutObj,
-        paymentService:
-          selectedNetworkRef.current?.apiCode || "MTN",
-      };
-      await submitOrder(finalCheckoutObj, addrObj);
-      await dispatch(
-        dispatchToAllNetworks({
-          paymentData: {
-            transactionNumber: orderId,
-            contactNumber: momoRef.current,
-            amount: grandTotalRef.current,
-          },
-          networks: NETWORK_CONFIGS,
-        })
-      );
-      await AsyncStorage.multiRemove(CART_KEYS_TO_CLEAR);
-    } catch (e) {
-      doneRef.current = false;
-      if (mountedRef.current)
-        Alert.alert(
-          "Order Error",
-          "Payment succeeded but order submission failed. Please contact support with your reference number."
+  /* ── Create and dispatch a MoMo order after confirmed payment ── */
+  const dispatchMomoOrder = useCallback(
+    async (orderId, checkoutObj, addrObj, paymentStatus) => {
+      if (!isPaymentSuccess(paymentStatus)) return null;
+      if (doneRef.current) return null;
+      if (!momoCartValidatedRef.current) {
+        throw new Error("The cart was not validated before Mobile Money payment.");
+      }
+
+      doneRef.current = true;
+      try {
+        // This function is called only after the payment status is confirmed.
+        // Revalidate after payment before CheckOutDbCart creates the order.
+        await createCheckoutOrder({ ...checkoutObj, orderCode: orderId });
+
+        const finalAddressObj = { ...addrObj, orderCode: orderId };
+        await updateDeliveryAndClearCart(finalAddressObj);
+        await dispatch(
+          dispatchToAllNetworks({
+            paymentData: {
+              transactionNumber: orderId,
+              contactNumber: momoRef.current,
+              amount: grandTotalRef.current,
+            },
+            networks: NETWORK_CONFIGS,
+          })
         );
-      throw e;
-    }
-  };
-
-  /* ══════════════════════════════════════════════════════
-     FIX #3: navigateAfterPayment — single source of truth
-     for ALL post-payment navigation (success AND failure)
-     ═══════════════════════════════════════════════════════ */
-  const navigateAfterPayment = useCallback(
-    (success, orderId, failureReason = null) => {
-      if (!mountedRef.current) return;
-
-      // Close modal first
-      setModalOpen(false);
-      setModalPhase("input");
-
-      if (success) {
-        // Navigate to order placed screen
-        navigation.reset({
-          index: 0,
-          routes: [
-            {
-              name: "OrderPlacedScreen",
-              params: { orderId },
-            },
-          ],
-        });
-      } else {
-        // FIX #3: Always navigate for failures too
-        // Navigate to order cancellation or show failure screen
-        navigation.reset({
-          index: 0,
-          routes: [
-            {
-              name: "OrderCancellationScreen",
-              params: {
-                orderId,
-                reason:
-                  failureReason ||
-                  "Payment was not completed.",
-              },
-            },
-          ],
-        });
+        await AsyncStorage.multiRemove(CART_KEYS_TO_CLEAR);
+        momoCartValidatedRef.current = false;
+        return orderId;
+      } catch (error) {
+        if (!priceUpdateHandledRef.current && mountedRef.current) {
+          Alert.alert(
+            "Order Error",
+            "Payment succeeded, but order processing could not be completed. Please contact support with your payment reference."
+          );
+        }
+        throw error;
       }
     },
-    [navigation]
+    [createCheckoutOrder, dispatch, updateDeliveryAndClearCart]
+  );
+
+  /* ── Post-payment navigation ─────────────────────────── */
+  const navigateAfterPayment = useCallback(
+    async (success, orderId) => {
+      if (!mountedRef.current || priceUpdateHandledRef.current) return;
+
+      killAllTimers();
+      if (success) {
+        await clearMomoDraft();
+        navigation.reset({
+          index: 0,
+          routes: [{ name: "OrderPlacedScreen", params: { orderId } }],
+        });
+        return;
+      }
+
+      // No server order exists for an unsuccessful or abandoned payment. Return
+      // to checkout with the cart intact so another method (including COD) works.
+      payDoneRef.current = false;
+      doneRef.current = false;
+      await clearMomoDraft();
+    },
+    [clearMomoDraft, killAllTimers, navigation]
   );
 
   /* ── Polling ─────────────────────────────────────────── */
@@ -1075,33 +1213,36 @@ const CheckoutScreen = ({ navigation }) => {
           });
 
           if (isPaymentSuccess(res)) {
-            // ── SUCCESS PATH ──
             payDoneRef.current = true;
             killAllTimers();
             if (!mountedRef.current) return;
 
             setModalPhase("success");
-
+            let placedOrderId;
             try {
-              await dispatchMomoOrder(
+              // Order creation is gated on this confirmed-success status.
+              placedOrderId = await dispatchMomoOrder(
                 orderId,
                 checkoutObj,
-                addrObj
+                addrObj,
+                res
               );
             } catch (dispatchErr) {
-              console.error(
-                "[Poll] dispatchMomoOrder failed:",
-                dispatchErr
-              );
+              console.error("[Poll] dispatchMomoOrder failed:", dispatchErr);
+              if (!priceUpdateHandledRef.current && mountedRef.current) {
+                setModalPhase("failed");
+              }
+              return;
             }
 
-            // Navigate after brief success display
+            // Do not replace the price-update dialog with an order-success route.
+            if (!placedOrderId || priceUpdateHandledRef.current) return;
+
             setTimeout(() => {
-              navigateAfterPayment(true, orderId);
+              if (priceUpdateHandledRef.current) return;
+              navigateAfterPayment(true, placedOrderId);
             }, 1600);
           } else {
-            // ── NON-SUCCESS RESPONSE (NOT YET COMPLETE) ──
-            // Log for debugging — polling continues until timeout
             console.log(
               "[Poll] Payment not yet complete, continuing to poll:",
               res?.responseCode,
@@ -1116,34 +1257,26 @@ const CheckoutScreen = ({ navigation }) => {
             setModalPhase("failed");
             Alert.alert(
               "Authentication Error",
-              err.message ||
-                "Authentication failed. Please contact support."
+              err.message || "Authentication failed. Please contact support."
             );
-            // Navigate to failure after alert
             setTimeout(() => {
-              navigateAfterPayment(
-                false,
-                orderId,
-                "Authentication error"
-              );
+              navigateAfterPayment(false, orderId);
             }, 500);
           }
         }
       }, POLL_INTERVAL_MS);
     },
-    [dispatch, killAllTimers, navigateAfterPayment]
+    [dispatch, killAllTimers, navigateAfterPayment, dispatchMomoOrder]
   );
 
   /* ── Handle Pay ──────────────────────────────────────── */
   const handlePay = async () => {
     if (!canPay) return;
 
-    // Capture all values at call time using refs for closure safety
     const currentOid = oidRef.current;
     const currentPCo = pCoRef.current;
     const currentPAddr = pAddrRef.current;
     const currentNet = selectedNetworkRef.current?.apiCode;
-    const currentNetCode = selectedNetworkRef.current?.code;
     const currentMomo = momoRef.current;
     const currentGrandTotal = grandTotalRef.current;
 
@@ -1176,33 +1309,23 @@ const CheckoutScreen = ({ navigation }) => {
           debitResult?.responseCode,
           debitResult?.responseMessage
         );
-        const err = new Error(
+        const error = new Error(
           debitResult?.responseMessage ||
             "Payment prompt could not be sent. Please try again."
         );
-        err.gatewayCode = debitResult?.responseCode;
-        err.isGatewayRejection = true;
-        throw err;
+        error.gatewayCode = debitResult?.responseCode;
+        error.isGatewayRejection = true;
+        throw error;
       }
 
-      console.log(
-        "[Pay] Prompt submitted, code:",
-        debitResult?.responseCode
-      );
-
-      // Start polling for transaction status
+      console.log("[Pay] Prompt submitted, code:", debitResult?.responseCode);
       beginPolling(currentOid, currentPCo, currentPAddr);
 
-      // FIX #4: Redirect to PaymentHelp after timeout
-      // instead of leaving user stranded
       redirectTimeoutRef.current = setTimeout(() => {
         if (!mountedRef.current || payDoneRef.current) return;
         killAllTimers();
-
-        // FIX: Navigate to help screen — DO NOT leave user on modal
         setModalOpen(false);
         setModalPhase("input");
-
         navigation.navigate("PaymentHelpScreen", {
           orderId: currentOid,
           network: currentNet,
@@ -1224,23 +1347,22 @@ const CheckoutScreen = ({ navigation }) => {
         if (err.isAuthError) {
           Alert.alert(
             "Authentication Error",
-            err.message || "Authentication failed."
+            err.message || "Authentication failed.",
+            [
+              {
+                text: "OK",
+                onPress: () =>
+                  navigateAfterPayment(false, currentOid),
+              },
+            ]
           );
-          // FIX #4: Navigate after auth error
-          setTimeout(() => {
-            navigateAfterPayment(
-              false,
-              currentOid,
-              "Authentication error"
-            );
-          }, 500);
           return;
         }
 
         if (err.status === 503 || err.status === 502) {
           Alert.alert(
             "Service Temporarily Unavailable",
-            `The payment service is temporarily unavailable.\n\nWould you like to try again?`,
+            "The payment service is temporarily unavailable.\n\nWould you like to try again?",
             [
               {
                 text: "Try Again",
@@ -1251,16 +1373,10 @@ const CheckoutScreen = ({ navigation }) => {
                 },
               },
               {
-                text: "Cancel",
+                text: "Back to Checkout",
                 style: "destructive",
-                onPress: () => {
-                  // FIX #4: Navigate on cancel, don't just close modal
-                  navigateAfterPayment(
-                    false,
-                    currentOid,
-                    "Service unavailable"
-                  );
-                },
+                onPress: () =>
+                  navigateAfterPayment(false, currentOid),
               },
             ]
           );
@@ -1276,29 +1392,20 @@ const CheckoutScreen = ({ navigation }) => {
               {
                 text: "Try Again",
                 onPress: () => {
-                  if (!mountedRef.current) return;
-                  // Return to input phase — user stays on checkout
-                  setModalPhase("input");
+                  if (mountedRef.current) setModalPhase("input");
                 },
               },
               {
-                text: "Cancel Order",
+                text: "Back to Checkout",
                 style: "destructive",
-                onPress: () => {
-                  // FIX #4: Navigate on cancel
-                  navigateAfterPayment(
-                    false,
-                    currentOid,
-                    "Payment rejected by provider"
-                  );
-                },
+                onPress: () =>
+                  navigateAfterPayment(false, currentOid),
               },
             ]
           );
           return;
         }
 
-        // Generic fallback — user unsure if prompt was received
         Alert.alert(
           "Payment Request Issue",
           "We couldn't confirm the payment prompt was sent to your phone.\n\nDid you receive a payment prompt?",
@@ -1331,21 +1438,14 @@ const CheckoutScreen = ({ navigation }) => {
             {
               text: "No, try again",
               onPress: () => {
-                if (!mountedRef.current) return;
-                setModalPhase("input");
+                if (mountedRef.current) setModalPhase("input");
               },
             },
             {
-              text: "Cancel Order",
+              text: "Back to Checkout",
               style: "destructive",
-              onPress: () => {
-                // FIX #4: Navigate on cancel
-                navigateAfterPayment(
-                  false,
-                  currentOid,
-                  "Order cancelled by user"
-                );
-              },
+              onPress: () =>
+                navigateAfterPayment(false, currentOid),
             },
           ],
           { cancelable: false }
@@ -1356,45 +1456,52 @@ const CheckoutScreen = ({ navigation }) => {
     }
   };
 
-  /* ── Finalize (non-MoMo) ─────────────────────────────── */
+  /* ── Finalize non-MoMo order ─────────────────────────── */
   const finalize = useCallback(
     async (id, co, addr) => {
       if (!id || doneRef.current) return;
       doneRef.current = true;
       try {
         setBusy(true);
-        await submitOrder(co, addr);
-        // FIX: Ensure navigation always fires for non-momo
+        const placedOrderId = await submitOrder(
+          { ...co, orderCode: id },
+          { ...addr, orderCode: id }
+        );
         navigation.reset({
           index: 0,
           routes: [
             {
               name: "OrderPlacedScreen",
-              params: { orderId: id },
+              params: { orderId: placedOrderId || id },
             },
           ],
         });
-      } catch (e) {
+      } catch (error) {
+        if (isPriceUpdateFailure(error)) {
+          await handlePriceUpdateFailure(error);
+          setModalOpen(false);
+          setPriceUpdateOpen(true);
+          return;
+        }
+
+        console.error("[Checkout] Order submission failed:", error?.payload ?? error);
         doneRef.current = false;
-        Alert.alert("Error", e?.message || "Order failed.");
+        Alert.alert("Error", getFailureMessage(error, "Order failed."));
       } finally {
         setBusy(false);
         setOid(null);
       }
     },
-    [navigation]
+    [navigation, handlePriceUpdateFailure, submitOrder]
   );
 
   /* ── Location ────────────────────────────────────────── */
-  const pickLoc = async (l) => {
-    setLoc(l);
-    setAddress(`${l.town?.name}, ${l.region}`);
+  const pickLoc = async (location) => {
+    setLoc(location);
+    setAddress(`${location.town?.name}, ${location.region}`);
     setTyping(false);
-    setPayMethod("");
-    await AsyncStorage.setItem(
-      "selectedLocation",
-      JSON.stringify(l)
-    );
+    choosePayMethod("");
+    await AsyncStorage.setItem("selectedLocation", JSON.stringify(location));
     setLocOpen(false);
   };
 
@@ -1404,100 +1511,98 @@ const CheckoutScreen = ({ navigation }) => {
     if (next) {
       setLoc(null);
       setAddress("");
-      setPayMethod("");
+      choosePayMethod("");
       await AsyncStorage.removeItem("selectedLocation");
     }
   };
 
-  /* ── Checkout (Place Order button) ───────────────────── */
+  /* ── Checkout ────────────────────────────────────────── */
   const checkout = async () => {
-    if (name.trim().toLowerCase().includes("guest"))
+    // Use the immediately-updated selection, not a stale Mobile Money value.
+    const selectedPayMethod = payMethodRef.current;
+
+    if (name.trim().toLowerCase().includes("guest")) {
       return Alert.alert("Name Required", "Enter your real name.");
-    if (!payMethod)
-      return Alert.alert("Payment", "Choose a payment method.");
-    if (!address.trim())
-      return Alert.alert("Address", "Enter a delivery address.");
-    if (!name.trim())
-      return Alert.alert("Name", "Enter recipient name.");
-    if (!phone.trim())
-      return Alert.alert("Phone", "Enter contact number.");
-    if (
-      payMethod === "Mobile Money" &&
-      !isValidPhoneFormat(phone)
-    )
+    }
+    if (!selectedPayMethod) return Alert.alert("Payment", "Choose a payment method.");
+    if (!address.trim()) return Alert.alert("Address", "Enter a delivery address.");
+    if (!name.trim()) return Alert.alert("Name", "Enter recipient name.");
+    if (!phone.trim()) return Alert.alert("Phone", "Enter contact number.");
+    if (selectedPayMethod === "Mobile Money" && !isValidPhoneFormat(phone)) {
       return Alert.alert(
         "Invalid Phone",
         "Please enter a valid 10-digit number starting with 0."
       );
+    }
 
     const id = makeId();
+    doneRef.current = false;
+    payDoneRef.current = false;
+    momoCartValidatedRef.current = false;
     setOid(id);
-    oidRef.current = id; // sync ref immediately
-
-    const cartId = await AsyncStorage.getItem("cartId");
-    const items = cartItems.map((it) => {
-      const qty = Number(it.quantity) || 1;
-      const amt =
-        Number(it.amount) || Number(it.total) || 0;
-      return {
-        productId: it.productId,
-        productName: it.productName,
-        quantity: qty,
-        unitPrice: parseFloat(
-          (qty > 0 ? amt / qty : amt).toFixed(2)
-        ),
-        amount: amt,
-      };
-    });
-
-    const co = {
-      Cartid: cartId,
-      customerId: customer.customerAccountNumber,
-      orderCode: id,
-      PaymentMode: payMethod,
-      PaymentAccountNumber: customer.contactNumber,
-      customerAccountType: customer.accountType || "Customer",
-      paymentService:
-        payMethod === "Mobile Money" ? "PENDING_NETWORK" : "Cash",
-      totalAmount: totalBeforeCharge,
-      items,
-      recipientName: name,
-      recipientContactNumber: phone,
-      orderNote: note || "N/A",
-      orderDate: new Date().toISOString(),
-    };
-
-    const addr = {
-      orderCode: id,
-      address,
-      Customerid: customer.customerAccountNumber,
-      recipientName: name,
-      recipientContactNumber: phone,
-      orderNote: note || "N/A",
-      geoLocation: "N/A",
-    };
+    oidRef.current = id;
+    setBusy(true);
 
     try {
-      setBusy(true);
+      const cartId = await AsyncStorage.getItem("cartId");
+      const items = cartItems.map((item) => {
+        const qty = Number(item.quantity) || 1;
+        const amount = Number(item.amount) || Number(item.total) || 0;
+        return {
+          productId: item.productId,
+          productName: item.productName,
+          quantity: qty,
+          unitPrice: parseFloat((qty > 0 ? amount / qty : amount).toFixed(2)),
+          amount,
+        };
+      });
 
-      if (payMethod !== "Mobile Money") {
-        return await finalize(id, co, addr);
+      const co = {
+        Cartid: cartId,
+        customerId: customer.customerAccountNumber,
+        orderCode: id,
+        PaymentMode: selectedPayMethod,
+        PaymentAccountNumber: customer.contactNumber,
+        customerAccountType: customer.accountType || "Customer",
+        paymentService:
+          selectedPayMethod === "Mobile Money" ? "PENDING_NETWORK" : "Cash",
+        totalAmount: totalBeforeCharge,
+        items,
+        recipientName: name,
+        recipientContactNumber: phone,
+        orderNote: note || "N/A",
+        orderDate: new Date().toISOString(),
+      };
+
+      const addr = {
+        orderCode: id,
+        address,
+        Customerid: customer.customerAccountNumber,
+        recipientName: name,
+        recipientContactNumber: phone,
+        orderNote: note || "N/A",
+        geoLocation: "N/A",
+      };
+
+      if (selectedPayMethod !== "Mobile Money") {
+        await finalize(id, co, addr);
+        return;
       }
 
-      await AsyncStorage.setItem(
-        "checkoutDetails",
-        JSON.stringify(co)
-      );
-      await AsyncStorage.setItem(
-        "orderDeliveryDetails",
-        JSON.stringify(addr)
-      );
+      // Mobile Money starts only after ValidateCart returns responseCode 1.
+      // Do not create or dispatch a server order until payment is confirmed.
+      await validateCartBeforeOrder(cartId);
+      momoCartValidatedRef.current = true;
 
-      // Sync refs immediately so handlePay closures have correct values
+      // Keep an in-memory checkout draft for the payment flow.
       setPCo(co);
       setPAddr(addr);
       pCoRef.current = co;
       pAddrRef.current = addr;
+
+      await AsyncStorage.setItem("checkoutDetails", JSON.stringify(co));
+      await AsyncStorage.setItem("orderDeliveryDetails", JSON.stringify(addr));
+      await AsyncStorage.setItem("pendingOrderId", id);
 
       setMomo("233");
       setSelectedNetwork(null);
@@ -1507,25 +1612,66 @@ const CheckoutScreen = ({ navigation }) => {
       dispatch(setValidationStep("idle"));
       dispatch(clearError());
       setModalOpen(true);
-    } catch (e) {
+    } catch (error) {
+      if (isPriceUpdateFailure(error)) {
+        await handlePriceUpdateFailure(error);
+        setModalOpen(false);
+        setPriceUpdateOpen(true);
+        return;
+      }
+
+      console.error("[Checkout] Checkout setup failed:", error?.payload ?? error);
+      momoCartValidatedRef.current = false;
       doneRef.current = false;
+      setModalOpen(false);
       setOid(null);
-      Alert.alert("Error", e?.message || "Checkout failed.");
+      oidRef.current = null;
+      setPCo(null);
+      setPAddr(null);
+      pCoRef.current = null;
+      pAddrRef.current = null;
+      await AsyncStorage.multiRemove([
+        "checkoutDetails",
+        "orderDeliveryDetails",
+        "pendingOrderId",
+      ]).catch(() => {});
+      Alert.alert("Error", getFailureMessage(error, "Checkout failed."));
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
 
-  const closeModal = () => {
-    if (modalPhase === "pending") return;
+  const closeModal = async () => {
+    if (
+      modalPhase === "pending" ||
+      modalPhase === "success" ||
+      closeModalInFlightRef.current
+    ) {
+      return;
+    }
+
+    closeModalInFlightRef.current = true;
+    setBusy(true);
     clearTimeout(autoValidateTimerRef.current);
     killAllTimers();
-    setModalOpen(false);
-    setModalPhase("input");
-    setInlineValidation("idle");
-    dispatch(clearError());
-    dispatch(setValidationStep("idle"));
+
+    try {
+      // No server order exists before payment success, so abandoning the modal
+      // simply clears the local payment draft and leaves the cart available.
+      await clearMomoDraft();
+    } finally {
+      closeModalInFlightRef.current = false;
+      if (mountedRef.current) setBusy(false);
+    }
   };
+
+  const goHomeAfterPriceUpdate = useCallback(() => {
+    setPriceUpdateOpen(false);
+    navigation.reset({
+      index: 0,
+      routes: [{ name: HOME_ROUTE }],
+    });
+  }, [navigation]);
 
   /* ═══════════════════════════════════════════════════════
      RENDER SECTIONS
@@ -1540,11 +1686,7 @@ const CheckoutScreen = ({ navigation }) => {
         value={name}
         onChangeText={setName}
         placeholder="John Doe"
-        error={
-          !name.trim() && name.length > 0
-            ? "Name is required"
-            : null
-        }
+        error={!name.trim() && name.length > 0 ? "Name is required" : null}
       />
       <Field
         label="Contact Number"
@@ -1586,20 +1728,12 @@ const CheckoutScreen = ({ navigation }) => {
               onPress={() => setLocOpen(true)}
               activeOpacity={0.8}
             >
-              <Ionicons
-                name="map-outline"
-                size={14}
-                color={C.white}
-              />
-              <Text style={s.locBtnText}>
-                {address ? "Change" : "Select"}
-              </Text>
+              <Ionicons name="map-outline" size={14} color={C.white} />
+              <Text style={s.locBtnText}>{address ? "Change" : "Select"}</Text>
             </TouchableOpacity>
           </View>
         ) : (
-          <View
-            style={[s.fieldBox, { alignItems: "flex-start" }]}
-          >
+          <View style={[s.fieldBox, { alignItems: "flex-start" }]}>
             <Ionicons
               name="create-outline"
               size={17}
@@ -1607,10 +1741,7 @@ const CheckoutScreen = ({ navigation }) => {
               style={{ marginLeft: 14, marginTop: 13 }}
             />
             <TextInput
-              style={[
-                s.fieldInput,
-                { height: 84, textAlignVertical: "top" },
-              ]}
+              style={[s.fieldInput, { height: 84, textAlignVertical: "top" }]}
               value={address}
               onChangeText={setAddress}
               multiline
@@ -1620,11 +1751,7 @@ const CheckoutScreen = ({ navigation }) => {
           </View>
         )}
       </View>
-      <TouchableOpacity
-        style={s.toggle}
-        onPress={toggleManual}
-        activeOpacity={0.7}
-      >
+      <TouchableOpacity style={s.toggle} onPress={toggleManual} activeOpacity={0.7}>
         <Ionicons
           name={typing ? "list-outline" : "pencil-outline"}
           size={13}
@@ -1649,39 +1776,30 @@ const CheckoutScreen = ({ navigation }) => {
   const renderPayment = () => (
     <Card>
       <HeaderRow icon="wallet-outline" title="Payment Method" />
-      {methods.map((m) => {
-        const on = payMethod === m.key;
+      {methods.map((method) => {
+        const selected = payMethod === method.key;
         return (
           <TouchableOpacity
-            key={m.key}
+            key={method.key}
             activeOpacity={0.7}
-            onPress={() => setPayMethod(m.key)}
-            style={[s.pmCard, on && s.pmCardOn]}
+            onPress={() => choosePayMethod(method.key)}
+            style={[s.pmCard, selected && s.pmCardOn]}
           >
-            <View style={[s.pmIconBox, on && s.pmIconBoxOn]}>
+            <View style={[s.pmIconBox, selected && s.pmIconBoxOn]}>
               <Ionicons
-                name={m.icon}
+                name={method.icon}
                 size={20}
-                color={on ? C.brand : C.inkFaint}
+                color={selected ? C.brand : C.inkFaint}
               />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={[s.pmTitle, on && { color: C.brandDark }]}>
-                {m.key}
+              <Text style={[s.pmTitle, selected && { color: C.brandDark }]}>
+                {method.key}
               </Text>
-              <Text style={s.pmSub}>{m.desc}</Text>
+              <Text style={s.pmSub}>{method.desc}</Text>
             </View>
-            <View
-              style={[s.radio, on && { borderColor: C.brand }]}
-            >
-              {on && (
-                <View
-                  style={[
-                    s.radioDot,
-                    { backgroundColor: C.brand },
-                  ]}
-                />
-              )}
+            <View style={[s.radio, selected && { borderColor: C.brand }]}>
+              {selected && <View style={[s.radioDot, { backgroundColor: C.brand }]} />}
             </View>
           </TouchableOpacity>
         );
@@ -1692,39 +1810,25 @@ const CheckoutScreen = ({ navigation }) => {
   const renderSummary = () => (
     <View>
       <Card style={{ marginBottom: 120 }}>
-        <HeaderRow
-          icon="receipt-outline"
-          title="Order Summary"
-          badge={cartItems.length}
-        />
-        {cartItems.map((item, i) => {
+        <HeaderRow icon="receipt-outline" title="Order Summary" badge={cartItems.length} />
+        {cartItems.map((item, index) => {
           const img = productImage(item.imagePath);
-          const exactAmount =
-            Number(item.amount) || Number(item.total) || 0;
+          const exactAmount = Number(item.amount) || Number(item.total) || 0;
           const qty = Number(item.quantity) || 1;
-          const unitPr = qty > 0 ? exactAmount / qty : exactAmount;
+          const unitPrice = qty > 0 ? exactAmount / qty : exactAmount;
           return (
             <View
-              key={`${item.productId}-${i}`}
+              key={`${item.productId}-${index}`}
               style={[
                 s.itemRow,
-                i === cartItems.length - 1 && {
-                  borderBottomWidth: 0,
-                },
+                index === cartItems.length - 1 && { borderBottomWidth: 0 },
               ]}
             >
               {img ? (
-                <Image
-                  source={{ uri: img }}
-                  style={s.itemImg}
-                />
+                <CachedImage source={{ uri: img }} style={s.itemImg} />
               ) : (
                 <View style={s.itemImgFallback}>
-                  <Ionicons
-                    name="cube-outline"
-                    size={18}
-                    color={C.inkGhost}
-                  />
+                  <Ionicons name="cube-outline" size={18} color={C.inkGhost} />
                 </View>
               )}
               <View style={{ flex: 1 }}>
@@ -1735,11 +1839,7 @@ const CheckoutScreen = ({ navigation }) => {
                   <View style={s.qtyTag}>
                     <Text style={s.qtyTagText}>Qty {qty}</Text>
                   </View>
-                  {qty > 1 && (
-                    <Text style={s.unitPrice}>
-                      {money(unitPr)} each
-                    </Text>
-                  )}
+                  {qty > 1 && <Text style={s.unitPrice}>{money(unitPrice)} each</Text>}
                 </View>
               </View>
               <Text style={s.itemTotal}>{money(exactAmount)}</Text>
@@ -1756,10 +1856,7 @@ const CheckoutScreen = ({ navigation }) => {
           <Text
             style={[
               s.sumVal,
-              deliveryLabel === "FREE" && {
-                color: C.green,
-                fontWeight: "800",
-              },
+              deliveryLabel === "FREE" && { color: C.green, fontWeight: "800" },
             ]}
           >
             {deliveryLabel}
@@ -1785,15 +1882,11 @@ const CheckoutScreen = ({ navigation }) => {
         </View>
         {payMethod === "Mobile Money" && (
           <View style={s.notice}>
-            <Ionicons
-              name="information-circle-outline"
-              size={14}
-              color={C.blue}
-            />
+            <Ionicons name="information-circle-outline" size={14} color={C.blue} />
             <Text style={s.noticeText}>
-              The {money(serviceCharge)} service charge is applied by
-              your mobile money provider. Your account will be
-              automatically validated in the payment screen.
+              The {money(serviceCharge)} service charge is applied by your mobile
+              money provider. Your account will be automatically validated in the
+              payment screen.
             </Text>
           </View>
         )}
@@ -1817,35 +1910,19 @@ const CheckoutScreen = ({ navigation }) => {
       <View style={s.mOverlay}>
         <View style={s.mSheet}>
           <View style={s.mDrag} />
-          {modalPhase !== "pending" && (
-            <TouchableOpacity
-              style={s.mClose}
-              onPress={closeModal}
-            >
-              <Ionicons
-                name="close-circle"
-                size={28}
-                color={C.inkGhost}
-              />
+          {modalPhase !== "pending" && modalPhase !== "success" && (
+            <TouchableOpacity style={s.mClose} onPress={closeModal}>
+              <Ionicons name="close-circle" size={28} color={C.inkGhost} />
             </TouchableOpacity>
           )}
           <ScrollView
             showsVerticalScrollIndicator={false}
             bounces={false}
-            contentContainerStyle={{
-              paddingHorizontal: 20,
-              paddingBottom: 34,
-            }}
+            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 34 }}
           >
             <View style={s.mBrand}>
-              <Image
-                source={frankoLogo}
-                style={s.mLogo}
-                resizeMode="contain"
-              />
-              <Text style={s.mBrandText}>
-                Franko Trading Limited
-              </Text>
+              <CachedImage source={frankoLogo} style={s.mLogo} resizeMode="contain" />
+              <Text style={s.mBrandText}>Franko Trading Limited</Text>
             </View>
             <View style={s.mAmountBox}>
               <Text style={s.mAmountLabel}>AMOUNT TO PAY</Text>
@@ -1853,19 +1930,13 @@ const CheckoutScreen = ({ navigation }) => {
               <View style={s.mBreakdown}>
                 <Text style={s.mBreakdownText}>
                   Items: {money(subtotal)}
-                  {deliveryFee > 0
-                    ? ` + Delivery: ${money(deliveryFee)}`
-                    : ""}
+                  {deliveryFee > 0 ? ` + Delivery: ${money(deliveryFee)}` : ""}
                   {" + Service: "}
                   {money(serviceCharge)}
                 </Text>
               </View>
               <View style={s.mRefWrap}>
-                <Ionicons
-                  name="document-text-outline"
-                  size={11}
-                  color={C.inkFaint}
-                />
+                <Ionicons name="document-text-outline" size={11} color={C.inkFaint} />
                 <Text style={s.mRefText}>Ref: {oid}</Text>
               </View>
             </View>
@@ -1877,14 +1948,10 @@ const CheckoutScreen = ({ navigation }) => {
                     <View style={s.mBadge}>
                       <Text style={s.mBadgeText}>1</Text>
                     </View>
-                    <Text style={s.mStepTitle}>
-                      Mobile Money Number
-                    </Text>
+                    <Text style={s.mStepTitle}>Mobile Money Number</Text>
                   </View>
                   <View style={s.momoRow}>
-                    <Text style={{ fontSize: 18, marginRight: 8 }}>
-                      🇬🇭
-                    </Text>
+                    <Text style={{ fontSize: 18, marginRight: 8 }}>🇬🇭</Text>
                     <TextInput
                       style={s.momoInput}
                       value={momo}
@@ -1896,69 +1963,33 @@ const CheckoutScreen = ({ navigation }) => {
                       editable={inlineValidation !== "validating"}
                     />
                     {inlineValidation === "validating" && (
-                      <ActivityIndicator
-                        size="small"
-                        color={C.brand}
-                      />
+                      <ActivityIndicator size="small" color={C.brand} />
                     )}
                     {inlineValidation === "success" && (
-                      <Ionicons
-                        name="checkmark-circle"
-                        size={22}
-                        color={C.green}
-                      />
+                      <Ionicons name="checkmark-circle" size={22} color={C.green} />
                     )}
                     {inlineValidation === "failed" && (
-                      <Ionicons
-                        name="close-circle"
-                        size={22}
-                        color={C.red}
-                      />
+                      <Ionicons name="close-circle" size={22} color={C.red} />
                     )}
                   </View>
                   {momoZero() && (
                     <View style={s.hintRow}>
-                      <Ionicons
-                        name="warning"
-                        size={13}
-                        color={C.red}
-                      />
-                      <Text
-                        style={[s.hintText, { color: C.red }]}
-                      >
+                      <Ionicons name="warning" size={13} color={C.red} />
+                      <Text style={[s.hintText, { color: C.red }]}>
                         Don't include a leading 0 after 233
                       </Text>
                     </View>
                   )}
-                  {momo.length === 12 &&
-                    !momoOk() &&
-                    !momoZero() && (
-                      <View style={s.hintRow}>
-                        <Ionicons
-                          name="warning"
-                          size={13}
-                          color={C.red}
-                        />
-                        <Text
-                          style={[s.hintText, { color: C.red }]}
-                        >
-                          Invalid number
-                        </Text>
-                      </View>
-                    )}
+                  {momo.length === 12 && !momoOk() && !momoZero() && (
+                    <View style={s.hintRow}>
+                      <Ionicons name="warning" size={13} color={C.red} />
+                      <Text style={[s.hintText, { color: C.red }]}>Invalid number</Text>
+                    </View>
+                  )}
                   {momoOk() && inlineValidation === "idle" && (
                     <View style={s.hintRow}>
-                      <Ionicons
-                        name="ellipse-outline"
-                        size={13}
-                        color={C.inkFaint}
-                      />
-                      <Text
-                        style={[
-                          s.hintText,
-                          { color: C.inkFaint },
-                        ]}
-                      >
+                      <Ionicons name="ellipse-outline" size={13} color={C.inkFaint} />
+                      <Text style={[s.hintText, { color: C.inkFaint }]}>
                         Select a network to validate automatically
                       </Text>
                     </View>
@@ -1970,13 +2001,9 @@ const CheckoutScreen = ({ navigation }) => {
                     <View style={s.mBadge}>
                       <Text style={s.mBadgeText}>2</Text>
                     </View>
-                    <Text style={s.mStepTitle}>
-                      Select Network
-                    </Text>
+                    <Text style={s.mStepTitle}>Select Network</Text>
                     {inlineValidation === "validating" && (
-                      <Text style={s.autoValidatingLabel}>
-                        Auto-validating…
-                      </Text>
+                      <Text style={s.autoValidatingLabel}>Auto-validating…</Text>
                     )}
                   </View>
                   {NETWORK_CONFIGS.map((network) => (
@@ -2000,29 +2027,17 @@ const CheckoutScreen = ({ navigation }) => {
                   activeOpacity={canPay ? 0.85 : 1}
                   disabled={!canPay || payBusy}
                   onPress={handlePay}
-                  style={[
-                    s.payBtn,
-                    (!canPay || payBusy) && s.payBtnOff,
-                  ]}
+                  style={[s.payBtn, (!canPay || payBusy) && s.payBtnOff]}
                 >
                   {payBusy ? (
                     <View style={s.payBtnInner}>
-                      <ActivityIndicator
-                        color={C.white}
-                        size="small"
-                      />
-                      <Text style={s.payBtnText}>
-                        Sending request…
-                      </Text>
+                      <ActivityIndicator color={C.white} size="small" />
+                      <Text style={s.payBtnText}>Sending request…</Text>
                     </View>
                   ) : (
                     <View style={s.payBtnInner}>
                       <Ionicons
-                        name={
-                          canPay
-                            ? "card-outline"
-                            : "lock-closed-outline"
-                        }
+                        name={canPay ? "card-outline" : "lock-closed-outline"}
                         size={18}
                         color={C.white}
                       />
@@ -2041,11 +2056,7 @@ const CheckoutScreen = ({ navigation }) => {
 
                 <View style={s.helpCard}>
                   <View style={s.helpHead}>
-                    <Ionicons
-                      name="bulb-outline"
-                      size={15}
-                      color={C.amber}
-                    />
+                    <Ionicons name="bulb-outline" size={15} color={C.amber} />
                     <Text style={s.helpTitle}>How It Works</Text>
                   </View>
                   {[
@@ -2054,10 +2065,10 @@ const CheckoutScreen = ({ navigation }) => {
                     "Tap Pay once validation succeeds",
                     "Approve the prompt on your phone",
                     "Your order is confirmed instantly after payment",
-                  ].map((t, i) => (
-                    <View key={i} style={s.helpLine}>
+                  ].map((text, index) => (
+                    <View key={index} style={s.helpLine}>
                       <View style={s.helpDot} />
-                      <Text style={s.helpText}>{t}</Text>
+                      <Text style={s.helpText}>{text}</Text>
                     </View>
                   ))}
                 </View>
@@ -2066,26 +2077,13 @@ const CheckoutScreen = ({ navigation }) => {
 
             {modalPhase === "pending" && (
               <View style={s.statusBox}>
-                <Animated.View
-                  style={[
-                    s.pulseRing,
-                    { transform: [{ scale: pulse }] },
-                  ]}
-                >
+                <Animated.View style={[s.pulseRing, { transform: [{ scale: pulse }] }]}>
                   <View style={s.pulseCore}>
-                    <Ionicons
-                      name="phone-portrait"
-                      size={32}
-                      color={C.brand}
-                    />
+                    <Ionicons name="phone-portrait" size={32} color={C.brand} />
                   </View>
                 </Animated.View>
-                <Text style={s.statusTitle}>
-                  Approve on Your Phone
-                </Text>
-                <Text style={s.statusSub}>
-                  A payment prompt has been sent
-                </Text>
+                <Text style={s.statusTitle}>Approve on Your Phone</Text>
+                <Text style={s.statusSub}>A payment prompt has been sent</Text>
                 <View style={s.statusMeta}>
                   <View style={s.infoLine}>
                     <Text style={s.infoLabel}>Number</Text>
@@ -2093,21 +2091,11 @@ const CheckoutScreen = ({ navigation }) => {
                   </View>
                   <View style={s.infoLine}>
                     <Text style={s.infoLabel}>Network</Text>
-                    <Text style={s.infoVal}>
-                      {selectedNetwork?.name}
-                    </Text>
+                    <Text style={s.infoVal}>{selectedNetwork?.name}</Text>
                   </View>
                   <View style={s.infoLine}>
                     <Text style={s.infoLabel}>Amount</Text>
-                    <Text
-                      style={[
-                        s.infoVal,
-                        {
-                          color: C.brand,
-                          fontWeight: "800",
-                        },
-                      ]}
-                    >
+                    <Text style={[s.infoVal, { color: C.brand, fontWeight: "800" }]}>
                       {money(grandTotal)}
                     </Text>
                   </View>
@@ -2118,12 +2106,7 @@ const CheckoutScreen = ({ navigation }) => {
                       style={[
                         s.barFill,
                         {
-                          width: `${
-                            Math.max(
-                              0,
-                              Math.min(1, tick / TIMER_SECONDS)
-                            ) * 100
-                          }%`,
+                          width: `${Math.max(0, Math.min(1, tick / TIMER_SECONDS)) * 100}%`,
                           backgroundColor: C.brand,
                         },
                       ]}
@@ -2138,32 +2121,14 @@ const CheckoutScreen = ({ navigation }) => {
 
             {modalPhase === "success" && (
               <View style={s.statusBox}>
-                <View
-                  style={[
-                    s.statusBubble,
-                    { backgroundColor: C.greenGhost },
-                  ]}
-                >
-                  <Ionicons
-                    name="checkmark-circle"
-                    size={68}
-                    color={C.green}
-                  />
+                <View style={[s.statusBubble, { backgroundColor: C.greenGhost }]}>
+                  <Ionicons name="checkmark-circle" size={68} color={C.green} />
                 </View>
-                <Text style={[s.statusTitle, { color: C.green }]}>
-                  Payment Successful!
-                </Text>
-                <Text style={s.statusSub}>
-                  Processing your order…
-                </Text>
+                <Text style={[s.statusTitle, { color: C.green }]}>Payment Successful!</Text>
+                <Text style={s.statusSub}>Processing your order…</Text>
                 {loading.networkDispatch && (
                   <View style={s.dispatchingStatus}>
-                    <ActivityIndicator
-                      size="small"
-                      color={C.brand}
-                      style={{ marginTop: 18 }}
-                    />
-                    
+                    <ActivityIndicator size="small" color={C.brand} style={{ marginTop: 18 }} />
                   </View>
                 )}
               </View>
@@ -2171,21 +2136,10 @@ const CheckoutScreen = ({ navigation }) => {
 
             {modalPhase === "failed" && (
               <View style={s.statusBox}>
-                <View
-                  style={[
-                    s.statusBubble,
-                    { backgroundColor: C.redGhost },
-                  ]}
-                >
-                  <Ionicons
-                    name="close-circle"
-                    size={68}
-                    color={C.red}
-                  />
+                <View style={[s.statusBubble, { backgroundColor: C.redGhost }]}>
+                  <Ionicons name="close-circle" size={68} color={C.red} />
                 </View>
-                <Text style={[s.statusTitle, { color: C.red }]}>
-                  Payment Not Completed
-                </Text>
+                <Text style={[s.statusTitle, { color: C.red }]}>Payment Not Completed</Text>
                 <Text style={s.statusSub}>
                   {authError
                     ? "Authentication failed — please contact support"
@@ -2194,9 +2148,7 @@ const CheckoutScreen = ({ navigation }) => {
                     : "Check the alert above for options"}
                 </Text>
                 {error?.status === 503 && retryAttempts > 0 && (
-                  <Text style={s.retryText}>
-                    Retry attempts: {retryAttempts}
-                  </Text>
+                  <Text style={s.retryText}>Retry attempts: {retryAttempts}</Text>
                 )}
               </View>
             )}
@@ -2206,12 +2158,43 @@ const CheckoutScreen = ({ navigation }) => {
     </Modal>
   );
 
-  /* ═══════════════════════════════════════════════════════
-     RENDER
-     ═══════════════════════════════════════════════════════ */
+  /* ── Price-update modal ──────────────────────────────── */
+  const renderPriceUpdateModal = () => (
+    <Modal
+      visible={priceUpdateOpen}
+      transparent
+      animationType="fade"
+      onRequestClose={goHomeAfterPriceUpdate}
+    >
+      <View style={s.priceUpdateOverlay}>
+        <View style={s.priceUpdateCard}>
+          <View style={s.priceUpdateIconWrap}>
+            <Ionicons name="pricetag-outline" size={28} color={C.amber} />
+          </View>
+          <Text style={s.priceUpdateTitle}>Price Update Detected</Text>
+          <Text style={s.priceUpdateMessage}>{priceUpdateMessage}</Text>
+          <TouchableOpacity
+            style={s.priceUpdateButton}
+            onPress={goHomeAfterPriceUpdate}
+            activeOpacity={0.85}
+          >
+            <Text style={s.priceUpdateButtonText}>Continue to Home</Text>
+            <Ionicons name="arrow-forward" size={17} color={C.white} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
   return (
     <View style={s.root}>
-      {busy && (
+      <Modal
+        visible={busy}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => {}}
+      >
         <View style={s.busyOverlay}>
           <View style={s.busyBox}>
             <ActivityIndicator size="large" color={C.brand} />
@@ -2219,7 +2202,8 @@ const CheckoutScreen = ({ navigation }) => {
             <Text style={s.busySub}>Please wait…</Text>
           </View>
         </View>
-      )}
+      </Modal>
+
       <View style={[s.header, { paddingTop: 10 }]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -2231,25 +2215,15 @@ const CheckoutScreen = ({ navigation }) => {
         <View style={{ flex: 1 }}>
           <Text style={s.hTitle}>Checkout</Text>
           <View style={s.hSec}>
-            <Ionicons
-              name="lock-closed"
-              size={9}
-              color={C.brandLight}
-            />
+            <Ionicons name="lock-closed" size={9} color={C.brandLight} />
             <Text style={s.hSecText}>Secure checkout</Text>
           </View>
         </View>
         <View style={s.hBag}>
-          <Ionicons
-            name="bag-handle-outline"
-            size={19}
-            color={C.white}
-          />
+          <Ionicons name="bag-handle-outline" size={19} color={C.white} />
           {cartItems.length > 0 && (
             <View style={s.hBagBadge}>
-              <Text style={s.hBagBadgeText}>
-                {cartItems.length}
-              </Text>
+              <Text style={s.hBagBadgeText}>{cartItems.length}</Text>
             </View>
           )}
         </View>
@@ -2270,9 +2244,7 @@ const CheckoutScreen = ({ navigation }) => {
           s.bottom,
           {
             paddingBottom:
-              Platform.OS === "ios"
-                ? Math.max(insets.bottom, 14)
-                : 14,
+              Platform.OS === "ios" ? Math.max(insets.bottom, 14) : 14,
           },
         ]}
       >
@@ -2287,11 +2259,7 @@ const CheckoutScreen = ({ navigation }) => {
           activeOpacity={0.85}
         >
           <Text style={s.botBtnText}>Place Order</Text>
-          <Ionicons
-            name="arrow-forward-circle"
-            size={18}
-            color={C.white}
-          />
+          <Ionicons name="arrow-forward-circle" size={18} color={C.white} />
         </TouchableOpacity>
       </View>
 
@@ -2302,6 +2270,7 @@ const CheckoutScreen = ({ navigation }) => {
         selectedLocation={loc}
       />
       {renderModal()}
+      {renderPriceUpdateModal()}
     </View>
   );
 };
@@ -2328,17 +2297,8 @@ const s = StyleSheet.create({
     marginRight: 12,
   },
   hTitle: { color: C.white, fontSize: 19, fontWeight: "800" },
-  hSec: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 2,
-  },
-  hSecText: {
-    color: C.brandLight,
-    fontSize: 10,
-    fontWeight: "600",
-  },
+  hSec: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
+  hSecText: { color: C.brandLight, fontSize: 10, fontWeight: "600" },
   hBag: { position: "relative", padding: 4 },
   hBagBadge: {
     position: "absolute",
@@ -2352,11 +2312,7 @@ const s = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 3,
   },
-  hBagBadgeText: {
-    color: C.white,
-    fontSize: 9,
-    fontWeight: "800",
-  },
+  hBagBadgeText: { color: C.white, fontSize: 9, fontWeight: "800" },
   card: {
     backgroundColor: C.card,
     borderRadius: 18,
@@ -2364,11 +2320,7 @@ const s = StyleSheet.create({
     marginBottom: 12,
     ...shadow("sm"),
   },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-  },
+  cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
   cardIconWrap: {
     width: 32,
     height: 32,
@@ -2378,30 +2330,16 @@ const s = StyleSheet.create({
     justifyContent: "center",
     marginRight: 10,
   },
-  cardTitle: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: "800",
-    color: C.ink,
-  },
+  cardTitle: { flex: 1, fontSize: 15, fontWeight: "800", color: C.ink },
   cardBadge: {
     backgroundColor: C.brandGhost,
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
-  cardBadgeText: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: C.brand,
-  },
+  cardBadgeText: { fontSize: 11, fontWeight: "800", color: C.brand },
   fieldWrap: { marginBottom: 12 },
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: C.inkSoft,
-    marginBottom: 6,
-  },
+  fieldLabel: { fontSize: 12, fontWeight: "700", color: C.inkSoft, marginBottom: 6 },
   fieldBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -2419,17 +2357,8 @@ const s = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: Platform.OS === "ios" ? 13 : 10,
   },
-  fieldError: {
-    fontSize: 11,
-    color: C.red,
-    fontWeight: "600",
-    marginTop: 4,
-  },
-  addrRow: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-  },
+  fieldError: { fontSize: 11, color: C.red, fontWeight: "600", marginTop: 4 },
+  addrRow: { flexDirection: "row", gap: 8, alignItems: "center" },
   locBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -2440,12 +2369,7 @@ const s = StyleSheet.create({
     borderRadius: 13,
   },
   locBtnText: { color: C.white, fontSize: 11, fontWeight: "800" },
-  toggle: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginBottom: 12,
-  },
+  toggle: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 12 },
   toggleText: { color: C.brand, fontWeight: "700", fontSize: 12 },
   pmCard: {
     flexDirection: "row",
@@ -2457,10 +2381,7 @@ const s = StyleSheet.create({
     marginBottom: 8,
     backgroundColor: C.cardAlt,
   },
-  pmCardOn: {
-    borderColor: C.brandBorder,
-    backgroundColor: C.brandGhost,
-  },
+  pmCardOn: { borderColor: C.brandBorder, backgroundColor: C.brandGhost },
   pmIconBox: {
     width: 40,
     height: 40,
@@ -2491,12 +2412,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.lineLight,
   },
-  itemImg: {
-    width: 50,
-    height: 50,
-    borderRadius: 11,
-    backgroundColor: C.lineLight,
-  },
+  itemImg: { width: 50, height: 50, borderRadius: 11, backgroundColor: C.lineLight },
   itemImgFallback: {
     width: 50,
     height: 50,
@@ -2512,30 +2428,13 @@ const s = StyleSheet.create({
     lineHeight: 17,
     marginBottom: 3,
   },
-  itemMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  qtyTag: {
-    backgroundColor: C.brandGhost,
-    borderRadius: 5,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
+  itemMeta: { flexDirection: "row", alignItems: "center", gap: 8 },
+  qtyTag: { backgroundColor: C.brandGhost, borderRadius: 5, paddingHorizontal: 7, paddingVertical: 2 },
   qtyTagText: { fontSize: 10, fontWeight: "700", color: C.brand },
   unitPrice: { fontSize: 10, color: C.inkFaint, fontWeight: "600" },
   itemTotal: { fontSize: 14, fontWeight: "800", color: C.ink },
-  divider: {
-    borderBottomWidth: 1,
-    borderBottomColor: C.line,
-    marginVertical: 10,
-  },
-  sumLine: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 5,
-  },
+  divider: { borderBottomWidth: 1, borderBottomColor: C.line, marginVertical: 10 },
+  sumLine: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 },
   sumLabel: { fontSize: 13, fontWeight: "600", color: C.inkMuted },
   sumVal: { fontSize: 13, fontWeight: "700", color: C.ink },
   totalRow: {
@@ -2545,12 +2444,7 @@ const s = StyleSheet.create({
     paddingVertical: 6,
   },
   totalLabel: { fontSize: 16, fontWeight: "900", color: C.ink },
-  totalHint: {
-    fontSize: 10,
-    color: C.inkFaint,
-    fontWeight: "600",
-    marginTop: 2,
-  },
+  totalHint: { fontSize: 10, color: C.inkFaint, fontWeight: "600", marginTop: 2 },
   totalVal: { fontSize: 18, fontWeight: "900", color: C.red },
   notice: {
     flexDirection: "row",
@@ -2563,13 +2457,7 @@ const s = StyleSheet.create({
     padding: 10,
     marginTop: 10,
   },
-  noticeText: {
-    flex: 1,
-    fontSize: 11,
-    color: C.blue,
-    fontWeight: "600",
-    lineHeight: 16,
-  },
+  noticeText: { flex: 1, fontSize: 11, color: C.blue, fontWeight: "600", lineHeight: 16 },
   dispatchStatusCard: {
     backgroundColor: C.card,
     borderRadius: 18,
@@ -2577,40 +2465,12 @@ const s = StyleSheet.create({
     marginBottom: 12,
     ...shadow("sm"),
   },
-  dispatchHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  dispatchTitle: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "700",
-    color: C.ink,
-    marginLeft: 8,
-  },
-  dispatchSummaryBadge: {
-    backgroundColor: C.brand,
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  dispatchSummaryText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: C.white,
-  },
-  dispatchLoadingStatus: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 8,
-  },
-  dispatchLoadingText: {
-    fontSize: 12,
-    color: C.inkMuted,
-    fontWeight: "500",
-  },
+  dispatchHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+  dispatchTitle: { flex: 1, fontSize: 14, fontWeight: "700", color: C.ink, marginLeft: 8 },
+  dispatchSummaryBadge: { backgroundColor: C.brand, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  dispatchSummaryText: { fontSize: 11, fontWeight: "700", color: C.white },
+  dispatchLoadingStatus: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
+  dispatchLoadingText: { fontSize: 12, color: C.inkMuted, fontWeight: "500" },
   dispatchResultsList: { marginTop: 8 },
   dispatchResultItem: {
     flexDirection: "row",
@@ -2623,27 +2483,11 @@ const s = StyleSheet.create({
     marginBottom: 6,
   },
   dispatchResultContent: { flex: 1 },
-  dispatchResultNetwork: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: C.ink,
-  },
-  dispatchResultTime: {
-    fontSize: 10,
-    color: C.inkMuted,
-    marginTop: 1,
-  },
-  dispatchResultStatus: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
+  dispatchResultNetwork: { fontSize: 12, fontWeight: "600", color: C.ink },
+  dispatchResultTime: { fontSize: 10, color: C.inkMuted, marginTop: 1 },
+  dispatchResultStatus: { flexDirection: "row", alignItems: "center", gap: 4 },
   dispatchResultText: { fontSize: 11, fontWeight: "600" },
-  dispatchResultDuration: {
-    fontSize: 9,
-    color: C.inkFaint,
-    marginLeft: 4,
-  },
+  dispatchResultDuration: { fontSize: 9, color: C.inkFaint, marginLeft: 4 },
   bottom: {
     flexDirection: "row",
     alignItems: "center",
@@ -2656,12 +2500,7 @@ const s = StyleSheet.create({
     ...shadow("lg"),
   },
   botLabel: { fontSize: 11, color: C.inkFaint, fontWeight: "600" },
-  botAmount: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: C.ink,
-    marginTop: 1,
-  },
+  botAmount: { fontSize: 18, fontWeight: "900", color: C.ink, marginTop: 1 },
   botBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -2674,31 +2513,16 @@ const s = StyleSheet.create({
   },
   botBtnText: { color: C.white, fontSize: 14, fontWeight: "800" },
   busyOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
     backgroundColor: C.overlay,
     justifyContent: "center",
     alignItems: "center",
-    zIndex: 999,
+    padding: 24,
   },
-  busyBox: {
-    backgroundColor: C.white,
-    padding: 26,
-    borderRadius: 18,
-    alignItems: "center",
-    ...shadow("lg"),
-  },
-  busyTitle: {
-    marginTop: 12,
-    fontSize: 15,
-    fontWeight: "800",
-    color: C.ink,
-  },
+  busyBox: { backgroundColor: C.white, padding: 26, borderRadius: 18, alignItems: "center", ...shadow("lg") },
+  busyTitle: { marginTop: 12, fontSize: 15, fontWeight: "800", color: C.ink },
   busySub: { marginTop: 3, fontSize: 12, color: C.inkMuted },
-  mOverlay: {
-    flex: 1,
-    backgroundColor: C.overlay,
-    justifyContent: "flex-end",
-  },
+  mOverlay: { flex: 1, backgroundColor: C.overlay, justifyContent: "flex-end" },
   mSheet: {
     backgroundColor: C.white,
     borderTopLeftRadius: 26,
@@ -2706,34 +2530,11 @@ const s = StyleSheet.create({
     maxHeight: "92%",
     ...shadow("lg"),
   },
-  mDrag: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: C.inkGhost,
-    alignSelf: "center",
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  mClose: {
-    position: "absolute",
-    top: 8,
-    right: 12,
-    zIndex: 10,
-    padding: 6,
-  },
-  mBrand: {
-    alignItems: "center",
-    marginTop: 6,
-    marginBottom: 12,
-  },
+  mDrag: { width: 36, height: 4, borderRadius: 2, backgroundColor: C.inkGhost, alignSelf: "center", marginTop: 10, marginBottom: 4 },
+  mClose: { position: "absolute", top: 8, right: 12, zIndex: 10, padding: 6 },
+  mBrand: { alignItems: "center", marginTop: 6, marginBottom: 12 },
   mLogo: { width: 90, height: 36 },
-  mBrandText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: C.inkSoft,
-    marginTop: 4,
-  },
+  mBrandText: { fontSize: 12, fontWeight: "800", color: C.inkSoft, marginTop: 4 },
   mAmountBox: {
     backgroundColor: C.brandGhost,
     borderWidth: 1.5,
@@ -2743,270 +2544,97 @@ const s = StyleSheet.create({
     alignItems: "center",
     marginBottom: 18,
   },
-  mAmountLabel: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: C.inkFaint,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  mAmountVal: {
-    fontSize: 24,
-    fontWeight: "900",
-    color: C.brandDark,
-    marginTop: 3,
-  },
-  mBreakdown: {
-    backgroundColor: "rgba(5,150,105,0.08)",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginTop: 8,
-  },
-  mBreakdownText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: C.brandDark,
-  },
-  mRefWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 6,
-  },
+  mAmountLabel: { fontSize: 10, fontWeight: "800", color: C.inkFaint, textTransform: "uppercase", letterSpacing: 0.5 },
+  mAmountVal: { fontSize: 24, fontWeight: "900", color: C.brandDark, marginTop: 3 },
+  mBreakdown: { backgroundColor: "rgba(5,150,105,0.08)", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginTop: 8 },
+  mBreakdownText: { fontSize: 10, fontWeight: "700", color: C.brandDark },
+  mRefWrap: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
   mRefText: { fontSize: 10, color: C.inkFaint, fontWeight: "600" },
-  mStep: {
-    backgroundColor: C.cardAlt,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: C.line,
-  },
-  mStepHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  mBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: C.brand,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 8,
-  },
+  mStep: { backgroundColor: C.cardAlt, borderRadius: 14, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: C.line },
+  mStepHead: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+  mBadge: { width: 24, height: 24, borderRadius: 12, backgroundColor: C.brand, alignItems: "center", justifyContent: "center", marginRight: 8 },
   mBadgeText: { color: C.white, fontSize: 12, fontWeight: "800" },
-  mStepTitle: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: "800",
-    color: C.ink,
-  },
-  autoValidatingLabel: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: C.brand,
-    fontStyle: "italic",
-  },
-  momoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: C.white,
-    borderWidth: 1.5,
-    borderColor: C.line,
-    borderRadius: 13,
-    paddingHorizontal: 12,
-  },
-  momoInput: {
-    flex: 1,
-    fontSize: 17,
-    fontWeight: "600",
-    color: C.ink,
-    paddingVertical: 12,
-  },
-  hintRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginTop: 6,
-  },
+  mStepTitle: { flex: 1, fontSize: 13, fontWeight: "800", color: C.ink },
+  autoValidatingLabel: { fontSize: 10, fontWeight: "600", color: C.brand, fontStyle: "italic" },
+  momoRow: { flexDirection: "row", alignItems: "center", backgroundColor: C.white, borderWidth: 1.5, borderColor: C.line, borderRadius: 13, paddingHorizontal: 12 },
+  momoInput: { flex: 1, fontSize: 17, fontWeight: "600", color: C.ink, paddingVertical: 12 },
+  hintRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 },
   hintText: { fontSize: 11, fontWeight: "600" },
-  netCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: C.white,
-    borderWidth: 2,
-    borderColor: C.line,
-    borderRadius: 13,
-    padding: 12,
-    marginBottom: 8,
-  },
+  netCard: { flexDirection: "row", alignItems: "center", backgroundColor: C.white, borderWidth: 2, borderColor: C.line, borderRadius: 13, padding: 12, marginBottom: 8 },
   netLogo: { width: 38, height: 38, borderRadius: 9 },
   netName: { fontSize: 13, fontWeight: "700", color: C.ink },
   netSub: { fontSize: 10, color: C.inkFaint, marginTop: 1 },
-  vBanner: {
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1.5,
-  },
+  vBanner: { borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1.5 },
   vBannerRow: { flexDirection: "row", alignItems: "flex-start" },
   vBannerTitle: { fontSize: 13, fontWeight: "700" },
-  vBannerSub: {
-    fontSize: 11,
-    color: C.inkMuted,
-    marginTop: 3,
-    lineHeight: 16,
-  },
-  vRetryBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: C.brand,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginLeft: 10,
-    alignSelf: "flex-start",
-  },
+  vBannerSub: { fontSize: 11, color: C.inkMuted, marginTop: 3, lineHeight: 16 },
+  vRetryBtn: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: C.brand, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginLeft: 10, alignSelf: "flex-start" },
   vRetryText: { color: C.white, fontSize: 11, fontWeight: "700" },
-  payBtn: {
-    backgroundColor: C.brand,
-    borderRadius: 14,
-    paddingVertical: 15,
+  payBtn: { backgroundColor: C.brand, borderRadius: 14, paddingVertical: 15, alignItems: "center", justifyContent: "center", marginBottom: 14, ...shadow("brand") },
+  payBtnOff: { backgroundColor: C.inkGhost, ...Platform.select({ ios: { shadowOpacity: 0 }, android: { elevation: 0 } }) },
+  payBtnInner: { flexDirection: "row", alignItems: "center", gap: 8 },
+  payBtnText: { color: C.white, fontSize: 16, fontWeight: "800" },
+  helpCard: { backgroundColor: C.amberGhost, borderWidth: 1, borderColor: C.amberBorder, borderRadius: 13, padding: 14 },
+  helpHead: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 10 },
+  helpTitle: { fontSize: 12, fontWeight: "800", color: "#92400E" },
+  helpLine: { flexDirection: "row", alignItems: "flex-start", marginBottom: 7, gap: 8 },
+  helpDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: C.amber, marginTop: 5 },
+  helpText: { flex: 1, fontSize: 11, color: "#78350F", lineHeight: 16 },
+  statusBox: { alignItems: "center", paddingVertical: 32 },
+  pulseRing: { width: 96, height: 96, borderRadius: 48, backgroundColor: C.brandGhost, alignItems: "center", justifyContent: "center" },
+  pulseCore: { width: 68, height: 68, borderRadius: 34, backgroundColor: C.white, alignItems: "center", justifyContent: "center", ...shadow("sm") },
+  statusBubble: { width: 104, height: 104, borderRadius: 52, alignItems: "center", justifyContent: "center", marginBottom: 6 },
+  statusTitle: { fontSize: 18, fontWeight: "900", color: C.ink, marginTop: 18 },
+  statusSub: { fontSize: 13, color: C.inkFaint, marginTop: 5 },
+  statusMeta: { width: "100%", backgroundColor: C.cardAlt, borderRadius: 12, padding: 14, marginTop: 18, borderWidth: 1, borderColor: C.line },
+  infoLine: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: C.lineLight },
+  infoLabel: { fontSize: 12, color: C.inkFaint, fontWeight: "600" },
+  infoVal: { fontSize: 12, color: C.ink, fontWeight: "700" },
+  tickWrap: { width: "100%", marginTop: 22, alignItems: "center" },
+  tickText: { fontSize: 12, fontWeight: "700", color: C.brandDark, marginTop: 7 },
+  barTrack: { width: "100%", height: 5, backgroundColor: C.line, borderRadius: 3, overflow: "hidden" },
+  barFill: { height: 5, borderRadius: 3 },
+  dispatchingStatus: { alignItems: "center", marginTop: 10 },
+  dispatchingText: { fontSize: 12, color: C.inkMuted, marginTop: 6 },
+  retryText: { fontSize: 11, color: C.inkMuted, marginTop: 4, textAlign: "center" },
+  priceUpdateOverlay: {
+    flex: 1,
+    backgroundColor: C.overlay,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 14,
-    ...shadow("brand"),
+    padding: 24,
   },
-  payBtnOff: {
-    backgroundColor: C.inkGhost,
-    ...Platform.select({
-      ios: { shadowOpacity: 0 },
-      android: { elevation: 0 },
-    }),
-  },
-  payBtnInner: {
-    flexDirection: "row",
+  priceUpdateCard: {
+    width: "100%",
+    maxWidth: 400,
+    backgroundColor: C.white,
+    borderRadius: 22,
+    padding: 24,
     alignItems: "center",
-    gap: 8,
+    ...shadow("lg"),
   },
-  payBtnText: { color: C.white, fontSize: 16, fontWeight: "800" },
-  helpCard: {
+  priceUpdateIconWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: C.amberGhost,
     borderWidth: 1,
     borderColor: C.amberBorder,
-    borderRadius: 13,
-    padding: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
   },
-  helpHead: {
+  priceUpdateTitle: { fontSize: 18, fontWeight: "900", color: C.ink, textAlign: "center" },
+  priceUpdateMessage: { fontSize: 13, color: C.inkMuted, lineHeight: 20, textAlign: "center", marginTop: 8, marginBottom: 20 },
+  priceUpdateButton: {
+    alignSelf: "stretch",
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
-    marginBottom: 10,
-  },
-  helpTitle: { fontSize: 12, fontWeight: "800", color: "#92400E" },
-  helpLine: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 7,
+    justifyContent: "center",
     gap: 8,
+    backgroundColor: C.brand,
+    paddingVertical: 14,
+    borderRadius: 14,
   },
-  helpDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: C.amber,
-    marginTop: 5,
-  },
-  helpText: {
-    flex: 1,
-    fontSize: 11,
-    color: "#78350F",
-    lineHeight: 16,
-  },
-  statusBox: { alignItems: "center", paddingVertical: 32 },
-  pulseRing: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: C.brandGhost,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  pulseCore: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: C.white,
-    alignItems: "center",
-    justifyContent: "center",
-    ...shadow("sm"),
-  },
-  statusBubble: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 6,
-  },
-  statusTitle: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: C.ink,
-    marginTop: 18,
-  },
-  statusSub: { fontSize: 13, color: C.inkFaint, marginTop: 5 },
-  statusMeta: {
-    width: "100%",
-    backgroundColor: C.cardAlt,
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 18,
-    borderWidth: 1,
-    borderColor: C.line,
-  },
-  infoLine: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: C.lineLight,
-  },
-  infoLabel: { fontSize: 12, color: C.inkFaint, fontWeight: "600" },
-  infoVal: { fontSize: 12, color: C.ink, fontWeight: "700" },
-  tickWrap: {
-    width: "100%",
-    marginTop: 22,
-    alignItems: "center",
-  },
-  tickText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: C.brandDark,
-    marginTop: 7,
-  },
-  barTrack: {
-    width: "100%",
-    height: 5,
-    backgroundColor: C.line,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  barFill: { height: 5, borderRadius: 3 },
-  dispatchingStatus: { alignItems: "center", marginTop: 10 },
-  dispatchingText: {
-    fontSize: 12,
-    color: C.inkMuted,
-    marginTop: 6,
-  },
-  retryText: {
-    fontSize: 11,
-    color: C.inkMuted,
-    marginTop: 4,
-    textAlign: "center",
-  },
+  priceUpdateButtonText: { color: C.white, fontSize: 14, fontWeight: "800" },
 });

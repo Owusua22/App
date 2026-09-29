@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   FlatList,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
@@ -15,6 +14,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
+import CachedImage from '../components/CachedImage';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch, useSelector } from 'react-redux';
@@ -193,7 +193,7 @@ const BrandScreen = () => {
   };
 
   const getImageUrl = (imagePath) => {
-    if (!imagePath) return 'https://via.placeholder.com/300x300/f0f0f0/cccccc?text=No+Image';
+    if (!imagePath) return null;
     const fileName = imagePath.split(/[\\/]/).pop();
     if (imagePath.includes('\\') || imagePath.includes('F:') || imagePath.includes('D:')) {
       return `https://testing.frankotrading.com/Media/Products_Images/${fileName}`;
@@ -327,10 +327,11 @@ const BrandScreen = () => {
         activeOpacity={0.9}
       >
         <View style={styles.imageContainer}>
-          <Image
+          <CachedImage
             source={{ uri: getImageUrl(item.productImage) }}
             style={styles.productImage}
             resizeMode="contain"
+            recyclingKey={item.productID}
           />
           {isNew && (
             <View style={styles.newBadge}>
@@ -613,7 +614,7 @@ const BrandScreen = () => {
           removeClippedSubviews={false}
           initialNumToRender={10}
           maxToRenderPerBatch={10}
-          windowSize={10}
+          windowSize={5}
         />
       )}
 

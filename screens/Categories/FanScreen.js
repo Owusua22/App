@@ -9,6 +9,8 @@ import {
   StyleSheet,
   Dimensions,
 } from "react-native";
+import CachedImage from "../../components/CachedImage";
+import { resolveProductImageUri } from "../../utils/ImageCache";
 import { useDispatch, useSelector } from "react-redux";
 import { fetchProductsByCategory } from "../../redux/slice/productSlice";
 import { useNavigation } from "@react-navigation/native";
@@ -41,15 +43,6 @@ const filteredProducts = useMemo(() => {
       maximumFractionDigits: 2,
     });
 
-  const getValidImageURL = (imagePath) => {
-    if (!imagePath) {
-      return "https://via.placeholder.com/150";
-    }
-    return `https://smfteapi.salesmate.app/Media/Products_Images/${imagePath
-      .split("\\")
-      .pop()}`;
-  };
-
   if ( productsLoading) {
     return (
       <View style={styles.loaderContainer}>
@@ -59,7 +52,7 @@ const filteredProducts = useMemo(() => {
   }
 
   const renderItem = ({ item }) => {
-    const productImageURL = getValidImageURL(item.productImage);
+    const productImageURL = resolveProductImageUri(item.productImage);
     const discount =
       item.oldPrice > 0
         ? Math.round(((item.oldPrice - item.price) / item.oldPrice) * 100)
@@ -74,7 +67,11 @@ const filteredProducts = useMemo(() => {
         activeOpacity={0.9}
       >
         <View style={styles.imageContainer}>
-          <Image source={{ uri: productImageURL }} style={styles.productImage} />
+          <CachedImage
+            source={{ uri: productImageURL }}
+            style={styles.productImage}
+            recyclingKey={item.productID}
+          />
           {discount > 0 && (
             <View style={styles.discountBadge}>
               <Text style={styles.discountText}>{discount}% OFF</Text>
@@ -111,6 +108,10 @@ const filteredProducts = useMemo(() => {
         numColumns={2}
         columnWrapperStyle={styles.row}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={false}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
         ListHeaderComponent={() => (
           <View style={styles.header}>
             <TouchableOpacity
