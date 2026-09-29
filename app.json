@@ -16,14 +16,14 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.poldark.mrfranky2",
-      "buildNumber": "590009",
+      "buildNumber": "600006",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.poldark.mrfranky2",
-      "versionCode": 590009,
+      "versionCode": 600006,
       "targetSdkVersion": 34,
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
