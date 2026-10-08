@@ -1,58 +1,33 @@
-import React, { useCallback, memo } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import React, { memo, useCallback } from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const TABS = [
+  { name: 'Home', label: 'Home', icon: 'home' },
+  { name: 'Category', label: 'Categories', icon: 'grid' },
+  { name: 'Shops', label: 'Stores', icon: 'map-pin' },
+  { name: 'Wishlist', label: 'Saved', icon: 'heart' },
+  { name: 'Account', label: 'Account', icon: 'user' },
+];
 
 function Footer() {
   const navigation = useNavigation();
   const route = useRoute();
-  const insets = useSafeAreaInsets();
-
-  const isActive = useCallback((tabName) => route.name === tabName, [route.name]);
-
-  const colors = {
-    primary: '#22C55E',
-    inactive: '#9CA3AF',
-    border: '#E5E7EB',
-  };
-
-  const handleNavigate = useCallback(
-    (screen) => {
-      if (route.name !== screen) {
-        navigation.navigate(screen);
-      }
-    },
-    [navigation, route.name]
-  );
-
-  const tabs = [
-    { name: 'Home', label: 'Home', icon: 'home' },
-    { name: 'Category', label: 'Categories', icon: 'grid' },
-    { name: 'Account', label: 'Profile', icon: 'user' },
-    { name: 'Shops', label: 'Shops', icon: 'shopping-bag' },
-  ];
+  const handleNavigate = useCallback((screen) => {
+    if (route.name !== screen) navigation.navigate(screen);
+  }, [navigation, route.name]);
 
   return (
-    <View style={[styles.footerContainer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-      {tabs.map((tab) => {
-        const active = isActive(tab.name);
+    <View style={styles.footer}>
+      {TABS.map((tab) => {
+        const active = route.name === tab.name;
         return (
-          <Pressable
-            key={tab.name}
-            style={styles.footerItem}
-            android_ripple={{ color: '#E5E7EB', borderless: false }}
-            onPress={() => handleNavigate(tab.name)}
-          >
-            <Feather
-              name={tab.icon}
-              size={Platform.OS === 'android' ? 16 : 20}
-              color={active ? colors.primary : colors.inactive}
-            />
-            <Text style={[styles.footerText, { color: active ? colors.primary : colors.inactive }]}>
-              {tab.label}
-            </Text>
-            {active && <View style={[styles.activeIndicator, { backgroundColor: colors.primary }]} />}
+          <Pressable key={tab.name} onPress={() => handleNavigate(tab.name)} style={styles.item} accessibilityRole="tab" accessibilityState={{ selected: active }} accessibilityLabel={tab.label}>
+            <View style={[styles.iconWrap, active && styles.activeIcon]}>
+              <Feather name={tab.icon} size={20} color={active ? '#FFFFFF' : '#84938A'} />
+            </View>
+            <Text style={[styles.label, active && styles.activeLabel]}>{tab.label}</Text>
           </Pressable>
         );
       })}
@@ -63,37 +38,10 @@ function Footer() {
 export default memo(Footer);
 
 const styles = StyleSheet.create({
-  footerContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 8,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    elevation: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: -2 },
-  },
-  footerItem: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 3,
-    minWidth: 55,
-  },
-  footerText: {
-    fontSize: Platform.OS === 'android' ? 9 : 10,
-    fontWeight: '500',
-    marginTop: 2,
-  },
-  activeIndicator: {
-    position: 'absolute',
-    bottom: 0,
-    width: 18,
-    height: 2,
-    borderRadius: 1,
-  },
+  footer: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#EDF1EB', paddingTop: 8, paddingBottom: 8, paddingHorizontal: 10, justifyContent: 'space-around' },
+  item: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 47 },
+  iconWrap: { width: 40, height: 28, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  activeIcon: { backgroundColor: '#08613E' },
+  label: { fontSize: 10, fontWeight: '600', color: '#84938A', marginTop: 3 },
+  activeLabel: { color: '#075C3B', fontWeight: '800' },
 });

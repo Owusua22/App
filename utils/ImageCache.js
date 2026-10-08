@@ -1,4 +1,4 @@
-import { Image as NativeImage } from "react-native";
+import { Image as ExpoImage } from "expo-image";
 
 const PRODUCT_IMAGE_BASE_URL =
   "https://testing.frankotrading.com/Media/Products_Images";
@@ -10,19 +10,26 @@ export const resolveProductImageUri = (imagePath) => {
   const normalizedPath = imagePath.trim().replace(/\\/g, "/");
   if (/^https?:\/\//i.test(normalizedPath)) return normalizedPath;
   const imageName = normalizedPath.split("/").pop();
-  return imageName ? `${PRODUCT_IMAGE_BASE_URL}/${imageName}` : null;
+  if (!imageName) return null;
+  // Filenames from the API can contain spaces, # or pre-escaped characters.
+  // Encode exactly once so the URL used for prefetch matches the displayed URL.
+  let encodedName;
+  try {
+    encodedName = encodeURIComponent(decodeURIComponent(imageName));
+  } catch {
+    encodedName = encodeURIComponent(imageName);
+  }
+  return `${PRODUCT_IMAGE_BASE_URL}/${encodedName}`;
 };
 
-/** Prefetch one remote image into React Native's native image cache. */
+/** Prefetch one remote image into Expo Image's memory/disk cache. */
 export const preloadImage = (url) => {
   if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
     return Promise.resolve(false);
   }
   if (prefetchedUrls.has(url)) return Promise.resolve(true);
   if (prefetchingUrls.has(url)) return prefetchingUrls.get(url);
-  if (typeof NativeImage.prefetch !== "function") return Promise.resolve(false);
-
-  const request = NativeImage.prefetch(url)
+  const request = ExpoImage.prefetch(url, "memory-disk")
     .then((success) => {
       if (success) prefetchedUrls.add(url);
       return Boolean(success);

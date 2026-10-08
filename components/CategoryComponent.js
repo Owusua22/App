@@ -1,243 +1,55 @@
-import { useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Animated, Dimensions } from 'react-native';
+import React from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { MaterialIcons, Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import Icon from 'react-native-vector-icons/MaterialIcons';
-import { LinearGradient } from 'expo-linear-gradient';
-
-const { width } = Dimensions.get('window');
 
 const categories = [
-  { name: "Phones", icon: "smartphone", route: "Phones" },
-  { name: "Laptops", icon: "laptop", route: "Computers" },
-  { name: "Refrigerator", icon: "kitchen", route: "Fridge" },
-  { name: "Television", icon: "tv", route: "Television" },
-  { name: "Speakers", icon: "speaker", route: "Speakers" },
-  { name: "Accessories", icon: "headphones", route: "Accessories" },
-  { name: "Air-conditioners", icon: "ac-unit", route: "AirCondition" },
-  { name: "Washing Machine", icon: "local-laundry-service", route: "WashingMachine" },
-
-  
-
+  { name: 'Phones', icon: 'smartphone', route: 'Phones', color: '#E7F5EB' },
+  { name: 'Laptops', icon: 'laptop-mac', route: 'Computers', color: '#ECF0FA' },
+  { name: 'Fridges', icon: 'kitchen', route: 'Fridge', color: '#E5F3F4' },
+  { name: 'TVs', icon: 'tv', route: 'Television', color: '#F7EFE4' },
+  { name: 'Speakers', icon: 'speaker', route: 'Speakers', color: '#F3ECF7' },
+  { name: 'Accessories', icon: 'headphones', route: 'Accessories', color: '#FDEEEB' },
+  { name: 'Air cons', icon: 'ac-unit', route: 'AirCondition', color: '#E9F4FA' },
+  { name: 'Laundry', icon: 'local-laundry-service', route: 'WashingMachine', color: '#F1F3E8' },
 ];
 
-const CategoryComponent = () => {
+export default function CategoryComponent() {
   const navigation = useNavigation();
-
-  const handleViewAllPress = () => {
-    navigation.navigate('Category');
-  };
-
-  const handleCategoryPress = (category) => {
-    navigation.navigate(category.route);
-  };
-
-  const CategoryItem = ({ category, index }) => {
-    const scaleValue = useRef(new Animated.Value(1)).current;
-    const opacityValue = useRef(new Animated.Value(1)).current;
-    const translateY = useRef(new Animated.Value(0)).current;
-
-    const handlePressIn = () => {
-      Animated.parallel([
-        Animated.spring(scaleValue, {
-          toValue: 0.92,
-          useNativeDriver: true,
-          tension: 400,
-          friction: 10,
-        }),
-        Animated.spring(translateY, {
-          toValue: -2,
-          useNativeDriver: true,
-          tension: 400,
-          friction: 10,
-        }),
-        Animated.timing(opacityValue, {
-          toValue: 0.8,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    };
-
-    const handlePressOut = () => {
-      Animated.parallel([
-        Animated.spring(scaleValue, {
-          toValue: 1,
-          useNativeDriver: true,
-          tension: 400,
-          friction: 10,
-        }),
-        Animated.spring(translateY, {
-          toValue: 0,
-          useNativeDriver: true,
-          tension: 400,
-          friction: 10,
-        }),
-        Animated.timing(opacityValue, {
-          toValue: 1,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    };
-
-    return (
-      <TouchableOpacity
-        key={index}
-        onPress={() => handleCategoryPress(category)}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        activeOpacity={1}
-        style={styles.categoryItem}
-      >
-        <Animated.View 
-          style={[
-            styles.categoryContainer, 
-            { 
-              transform: [
-                { scale: scaleValue },
-                { translateY: translateY }
-              ],
-              opacity: opacityValue 
-            }
-          ]}
-        >
-          <View style={styles.imageContainer}>
-            <LinearGradient
-              colors={['#f0fdf4', '#d1fae5']}
-              style={styles.gradientBackground}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            >
-              <Icon
-                name={category.icon}
-                size={32}
-                color="#10B981"
-              />
-            </LinearGradient>
-          </View>
-          <Text style={styles.categoryName} numberOfLines={2}>
-            {category.name}
-          </Text>
-        </Animated.View>
-      </TouchableOpacity>
-    );
-  };
-
   return (
     <View style={styles.container}>
-      <View style={styles.contentContainer}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <View>
-              <Text style={styles.title}>Categories</Text>
-              <Text style={styles.subtitle}>Explore our products</Text>
+      <View style={styles.heading}>
+        <View>
+          <Text style={styles.kicker}>FIND WHAT YOU LOVE</Text>
+          <Text style={styles.title}>Shop by category</Text>
+        </View>
+        <Pressable onPress={() => navigation.navigate('Category')} style={styles.all} accessibilityRole="button" accessibilityLabel="See all categories">
+          <Text style={styles.allText}>See all</Text><Feather name="arrow-up-right" size={15} color="#086942" />
+        </Pressable>
+      </View>
+      <View style={styles.grid}>
+        {categories.map((category) => (
+          <Pressable key={category.route} onPress={() => navigation.navigate(category.route)} style={styles.item} accessibilityRole="button" accessibilityLabel={`Shop ${category.name}`}>
+            <View style={[styles.iconBox, { backgroundColor: category.color }]}>
+              <MaterialIcons name={category.icon} size={28} color="#075A3B" />
             </View>
-            <TouchableOpacity style={styles.viewAllButton} onPress={handleViewAllPress}>
-              <Text style={styles.viewAll}>View All</Text>
-              <Icon name="arrow-forward-ios" size={14} color="#10B981" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Categories Grid */}
-        <View style={styles.categoriesGrid}>
-          {categories.map((category, index) => (
-            <CategoryItem key={index} category={category} index={index} />
-          ))}
-        </View>
+            <Text style={styles.name} numberOfLines={1}>{category.name}</Text>
+          </Pressable>
+        ))}
       </View>
     </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  contentContainer: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  header: {
-    marginBottom: 24,
-  },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#1f2937',
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  viewAllButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f0fdf4',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#d1fae5',
-  },
-  viewAll: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#10B981',
-    marginRight: 4,
-  },
-  categoriesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 16,
-  },
-  categoryItem: {
-    width: (width - 88) / 4, // 4 columns with proper spacing
-    marginBottom: 20,
-  },
-  categoryContainer: {
-    alignItems: 'center',
-  },
-  imageContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: 20,
-    marginBottom: 12,
-    shadowColor: '#10B981',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  gradientBackground: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  categoryName: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#374151',
-    textAlign: 'center',
-    lineHeight: 16,
-    maxWidth: '100%',
-  },
+  container: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 17, backgroundColor: '#FFFFFF', marginHorizontal: 16, marginVertical: 10, borderRadius: 22, borderWidth: 1, borderColor: '#EFF2EC' },
+  heading: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 20 },
+  kicker: { fontSize: 9, color: '#0B8A58', letterSpacing: 1.5, fontWeight: '800', marginBottom: 5 },
+  title: { fontSize: 21, color: '#163A29', fontWeight: '800', letterSpacing: -0.6 },
+  all: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingBottom: 2 },
+  allText: { fontSize: 12, fontWeight: '700', color: '#086942' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap' },
+  item: { width: '25%', alignItems: 'center', marginBottom: 15 },
+  iconBox: { width: 56, height: 56, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  name: { color: '#344C3C', fontSize: 11, fontWeight: '700', textAlign: 'center' },
 });
-
-export default CategoryComponent;

@@ -11,12 +11,12 @@ import {
 } from "react-native";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigation } from "@react-navigation/native";
-import { addToCart } from "../redux/slice/cartSlice";
-import { addToWishlist } from "../redux/wishlistSlice";
+import { addToCart } from '../redux/slice/cartSlice';
+import { addToWishlist } from '../redux/wishlistSlice';
 import { AntDesign, FontAwesome } from "@expo/vector-icons";
-import CachedImage from "./CachedImage";
-import frankoLogo from "../assets/frankoIcon.png";
-import { preloadProductImages, resolveProductImageUri } from "../utils/ImageCache";
+import CachedImage from './CachedImage';
+import frankoLogo from '../assets/frankoIcon.png';
+import { preloadProductImages, resolveProductImageUri } from '../utils/ImageCache';
 
 const CARD_MARGIN = 8;
 const CARD_WIDTH = 160;
@@ -49,7 +49,7 @@ const ProductCard = memo(
     index = 0,
     showHotDeal = true,
     cardWidth = CARD_WIDTH,
-    cardHeight = 240,
+    cardHeight = 252,
   }) => {
     const dispatch = useDispatch();
     const navigation = useNavigation();
@@ -73,7 +73,7 @@ const ProductCard = memo(
         imageUri: resolveProductImageUri(product.productImage),
         formattedPrice: formatCurrency(currentPrice),
         formattedOldPrice:
-          oldPrice > 0 ? formatCurrency(oldPrice) : null,
+          oldPrice > currentPrice ? formatCurrency(oldPrice) : null,
       };
     }, [product, showHotDeal, index]);
 
@@ -160,7 +160,7 @@ const ProductCard = memo(
             {imageStatus !== "loaded" && (
               <View pointerEvents="none" style={styles.imageLoadingContainer}>
                 {imageStatus === "loading" ? (
-                  <ActivityIndicator size="large" color="#E63946" />
+                  <ActivityIndicator size="large" color="#086942" />
                 ) : (
                   <Image source={frankoLogo} style={styles.frankoLogo} />
                 )}
@@ -175,18 +175,20 @@ const ProductCard = memo(
 
             {cardData.discount > 0 && (
               <View style={styles.discountBadge}>
-                <Text style={styles.discountText}>SALE</Text>
+                <Text style={styles.discountText}>-{cardData.discount}%</Text>
               </View>
             )}
 
             <TouchableOpacity
               style={styles.wishlistButton}
               onPress={handleWishlistPress}
+              accessibilityRole="button"
+              accessibilityLabel={isInWishlist ? "Already in wishlist" : `Save ${product.productName} to wishlist`}
             >
               <FontAwesome
                 name={isInWishlist ? "heart" : "heart-o"}
                 size={18}
-                color={isInWishlist ? "red" : "#666"}
+                color={isInWishlist ? "#B21F36" : "#41604D"}
               />
             </TouchableOpacity>
           </View>
@@ -210,11 +212,13 @@ const ProductCard = memo(
             ]}
             onPress={handleAddToCartPress}
             disabled={isAddingToCart}
+            accessibilityRole="button"
+            accessibilityLabel={`Add ${product.productName} to cart`}
           >
             {isAddingToCart ? (
               <ActivityIndicator size="small" color="white" />
             ) : (
-              <AntDesign name="shopping-cart" size={14} color="white" />
+              <AntDesign name="plus" size={19} color="white" />
             )}
           </TouchableOpacity>
         </TouchableOpacity>
@@ -307,172 +311,51 @@ OptimizedProductList.displayName = "OptimizedProductList";
 
 const styles = StyleSheet.create({
   productCard: {
-    backgroundColor: "#fff",
-    padding: 4,
-    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
     width: 160,
     marginRight: 8,
     marginLeft: 10,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.9,
-    shadowRadius: 2,
-    elevation: 5,
-    marginBottom: 20,
-    height: 240,
+    borderWidth: 1,
+    borderColor: '#EDF0E9',
+    overflow: 'hidden',
+    marginBottom: 16,
+    height: 252,
   },
-
-  cardTouchable: {
-    flex: 1,
-  },
-
-  imageContainer: {
-    position: "relative",
-    height: 140,
-  },
-
-  imageLoadingContainer: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#f8f9fa",
-    zIndex: 2,
-  },
-
-  productImage: {
-    width: "100%",
-    height: "100%",
-  },
-
-  hiddenImage: {
-    opacity: 0,
-  },
-
-  hotDealBadge: {
-    position: "absolute",
-    top: 8,
-    left: 8,
-    backgroundColor: "#ff4757",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    zIndex: 2,
-  },
-
-  hotDealText: {
-    color: "white",
-    fontSize: 10,
-    fontWeight: "bold",
-    textTransform: "uppercase",
-  },
-
-  discountBadge: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    backgroundColor: "#E63946",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    zIndex: 2,
-  },
-
-  discountText: {
-    color: "white",
-    fontSize: 10,
-    fontWeight: "bold",
-    textTransform: "uppercase",
-  },
-
-  wishlistButton: {
-    position: "absolute",
-    bottom: 8,
-    right: 8,
-    backgroundColor: "white",
-    padding: 6,
-    borderRadius: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-
-  productInfo: {
-    padding: 12,
-    paddingBottom: 8,
-  },
-
-  productName: {
-    fontSize: 13,
-    color: "#333",
-    fontWeight: "500",
-    lineHeight: 18,
-    marginBottom: 6,
-    minHeight: 36,
-  },
-
-  priceContainer: {
-    flexDirection: "column",
-    gap: 2,
-    marginBottom: 8,
-  },
-
-  productPrice: {
-    fontSize: 14,
-    color: "#2d3436",
-    fontWeight: "bold",
-  },
-
-  oldPrice: {
-    fontSize: 10,
-    color: "#636e72",
-    textDecorationLine: "line-through",
-  },
-
-  addToCartButton: {
-    position: "absolute",
-    bottom: 2,
-    right: 8,
-    backgroundColor: "#E63946",
-    padding: 8,
-    borderRadius: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-
-  addToCartButtonDisabled: {
-    backgroundColor: "#f8a5aa",
-  },
+  cardTouchable: { flex: 1 },
+  imageContainer: { position: 'relative', height: 135, backgroundColor: '#F5F8F3', margin: 7, borderRadius: 13, overflow: 'hidden' },
+  imageLoadingContainer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F8F3' },
+  productImage: { width: '100%', height: '100%' },
+  hiddenImage: { opacity: 0 },
+  hotDealBadge: { position: 'absolute', top: 7, left: 7, backgroundColor: '#0A6944', paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, zIndex: 2 },
+  hotDealText: { color: '#FFFFFF', fontSize: 9, fontWeight: '800', letterSpacing: 0.4 },
+  discountBadge: { position: 'absolute', top: 7, right: 7, backgroundColor: '#B21F36', paddingHorizontal: 6, paddingVertical: 4, borderRadius: 6, zIndex: 2 },
+  discountText: { color: '#FFFFFF', fontSize: 9, fontWeight: '800' },
+  wishlistButton: { position: 'absolute', bottom: 7, right: 7, backgroundColor: '#FFFFFF', width: 29, height: 29, alignItems: 'center', justifyContent: 'center', borderRadius: 10, zIndex: 3 },
+  productInfo: { paddingHorizontal: 11, paddingTop: 5, paddingRight: 13 },
+  productName: { fontSize: 12, color: '#263A2D', fontWeight: '600', lineHeight: 17, marginBottom: 7, minHeight: 34 },
+  priceContainer: { gap: 3, paddingRight: 26 },
+  productPrice: { fontSize: 14, color: '#08613E', fontWeight: '800' },
+  oldPrice: { fontSize: 10, color: '#99A69C', textDecorationLine: 'line-through' },
+  addToCartButton: { position: 'absolute', bottom: 10, right: 10, backgroundColor: '#08613E', width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+  addToCartButtonDisabled: { backgroundColor: '#8CB8A1' },
 
   loadingCard: {
     width: CARD_WIDTH,
     marginRight: CARD_MARGIN,
-    backgroundColor: "#fff",
-    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
     overflow: "hidden",
-    height: 240,
+    height: 252,
     marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
+    borderWidth: 1,
+    borderColor: "#EDF0E9",
     marginLeft: 10,
   },
 
   loadingImage: {
     height: 140,
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "#EAF1E9",
     justifyContent: "center",
     alignItems: "center",
     position: "relative",
@@ -485,7 +368,7 @@ const styles = StyleSheet.create({
 
   loadingTitle: {
     height: 16,
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "#EAF1E9",
     borderRadius: 4,
     marginBottom: 8,
     position: "relative",
@@ -495,7 +378,7 @@ const styles = StyleSheet.create({
   loadingPrice: {
     height: 12,
     width: "60%",
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "#EAF1E9",
     borderRadius: 4,
     position: "relative",
     overflow: "hidden",
@@ -505,8 +388,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     resizeMode: "contain",
-    opacity: 0.1,
-    tintColor: "#bbb",
+    opacity: 0.25,
   },
 
   productList: {

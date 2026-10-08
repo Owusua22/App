@@ -1,10 +1,10 @@
 import React from 'react';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { createStackNavigator } from '@react-navigation/stack';
-import AboutScreen from '../screens/AboutScreen';
-import ShopsScreen from '../screens/ShopsScreen';
-import ContactUsScreen from '../screens/ContactUsScreen'; // Ensure correct import
-import HomeScreen from '../screens/HomeScreen'; // Ensure HomeScreen is imported
+import AboutScreen from '../screens/support/AboutScreen';
+import ShopsScreen from '../screens/shop/ShopScreen';
+import ContactUsScreen from '../screens/support/ContactUsScreen'; // Ensure correct import
+import HomeScreen from '../screens/shop/HomeScreen'; // Ensure HomeScreen is imported
 
 const Drawer = createDrawerNavigator();
 const Stack = createStackNavigator();

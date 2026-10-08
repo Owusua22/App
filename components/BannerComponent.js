@@ -7,7 +7,7 @@ export default function BannerComponent() {
   return (
     <View style={styles.container}>
       <Image
-        source={require('../assets/na.jpeg')} // Replace with your image URL
+        source={require('../assets/kumasi.jpg')} // Replace with your image URL
         style={styles.image}
       />
     
