@@ -1,24 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Alert,
-  FlatList,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { Alert, FlatList, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import Text from './AppText';
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigation } from "@react-navigation/native";
 import Feather from "@expo/vector-icons/Feather";
 import Icon from "react-native-vector-icons/MaterialCommunityIcons";
-import { fetchProductsByCategory } from "../redux/slice/productSlice";
-import { addToCart } from "../redux/slice/cartSlice";
-import { ProductCard, LoadingCard } from "./ProductCard";
-import { preloadProductImages } from "../utils/ImageCache";
+import { fetchProductsByCategory } from '../redux/slice/productSlice';
+import { addToCart } from '../redux/slice/cartSlice';
+import { ProductCard, LoadingCard } from './ProductCard';
+import { preloadProductImages } from '../utils/ImageCache';
+import { useCatalogRevalidation } from '../hooks/useCatalogRevalidation';
+import { refreshCatalog } from '../utils/catalogRefresh';
+import CatalogFetchNotice from './CatalogFetchNotice';
 
 const CARD_MARGIN = 8;
-const CARD_WIDTH = 170;
+const CARD_WIDTH = 160;
+const CARD_STRIDE = CARD_WIDTH + 18; // card plus its 10px left and 8px right margins
 const MAX_DISPLAY_PRODUCTS = 10;
 const EMPTY_PRODUCTS = [];
 
@@ -40,7 +37,23 @@ const CategoryProductCarousel = ({
   const loading = useSelector((state) => Boolean(state.products?.loading));
   const cartId = useSelector((state) => state.cart?.cartId);
   const [addingToCart, setAddingToCart] = useState({});
-  const requestedCategoryRef = useRef(null);
+  const [requestComplete, setRequestComplete] = useState(false);
+  const [requestError, setRequestError] = useState(false);
+  const fetching = useCatalogRevalidation(`category:${categoryId}`, () => fetchProductsByCategory(categoryId), {
+    enabled: Boolean(categoryId),
+    onResult: (result) => {
+      setRequestComplete(true);
+      setRequestError(Boolean(result?.error));
+    },
+  });
+  const retry = useCallback(() => {
+    setRequestError(false);
+    setRequestComplete(false);
+    void refreshCatalog(dispatch, `category:${categoryId}`, () => fetchProductsByCategory(categoryId), { force: true })
+      .then((result) => setRequestError(Boolean(result?.error)))
+      .catch(() => setRequestError(true))
+      .finally(() => setRequestComplete(true));
+  }, [dispatch, categoryId]);
 
   const products = useMemo(() => {
     const categoryProducts = productsByCategory?.[categoryId];
@@ -53,22 +66,11 @@ const CategoryProductCarousel = ({
   );
 
   useEffect(() => {
-    if (products.length > 0) {
-      requestedCategoryRef.current = categoryId;
-      return;
-    }
-    if (loading || requestedCategoryRef.current === categoryId) return;
-
-    requestedCategoryRef.current = categoryId;
-    dispatch(fetchProductsByCategory(categoryId));
-  }, [categoryId, dispatch, loading, products.length]);
-
-  useEffect(() => {
     if (!displayProducts.length) return;
     // Warm the native image cache for the first products before they are swiped into view.
-    void preloadProductImages(displayProducts, {
-      maxImages: 8,
-      concurrency: 3,
+    void preloadProductImages(displayProducts.slice(3, 6), {
+      maxImages: 3,
+      concurrency: 1,
     });
   }, [displayProducts]);
 
@@ -135,8 +137,8 @@ const CategoryProductCarousel = ({
   );
 
   const getItemLayout = useCallback((_, index) => ({
-    length: CARD_WIDTH + CARD_MARGIN,
-    offset: (CARD_WIDTH + CARD_MARGIN) * index,
+    length: CARD_STRIDE,
+    offset: CARD_STRIDE * index,
     index,
   }), []);
 
@@ -148,7 +150,7 @@ const CategoryProductCarousel = ({
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.productList}
     >
-      {Array.from({ length: 6 }, (_, index) => (
+      {Array.from({ length: 3 }, (_, index) => (
         <LoadingCard key={`loading-${index}`} />
       ))}
     </ScrollView>
@@ -165,12 +167,12 @@ const CategoryProductCarousel = ({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.productList}
         decelerationRate="fast"
-        snapToInterval={CARD_WIDTH + CARD_MARGIN}
+        snapToInterval={CARD_STRIDE}
         snapToAlignment="start"
         removeClippedSubviews
-        initialNumToRender={4}
-        maxToRenderPerBatch={6}
-        windowSize={10}
+        initialNumToRender={2}
+        maxToRenderPerBatch={3}
+        windowSize={5}
         updateCellsBatchingPeriod={50}
         ListFooterComponent={shouldShowViewMore ? (
           <TouchableOpacity
@@ -178,7 +180,7 @@ const CategoryProductCarousel = ({
             onPress={handleFooterPress}
           >
             <View style={styles.viewAllContent}>
-              <Icon name={footerIcon} size={32} color="#10B981" />
+              <Icon name={footerIcon} size={32} color="#086942" />
               <Text style={styles.viewAllText}>View More</Text>
               <Text style={styles.viewMoreSubtext}>
                 {products.length - MAX_DISPLAY_PRODUCTS}+ {moreLabel}
@@ -200,9 +202,9 @@ const CategoryProductCarousel = ({
                 <View style={styles.iconGlow} />
                 <View style={styles.iconInner}>
                   {headerIconFamily === "feather" ? (
-                    <Feather name={headerIcon} size={22} color="#fff" />
+                    <Feather name={headerIcon} size={22} color="#086942" />
                   ) : (
-                    <Icon name={headerIcon} size={24} color="#fff" />
+                    <Icon name={headerIcon} size={24} color="#086942" />
                   )}
                 </View>
               </View>
@@ -221,7 +223,7 @@ const CategoryProductCarousel = ({
             >
               <Text style={styles.viewMoreText}>View All</Text>
               <View style={styles.arrowContainer}>
-                <Icon name="chevron-right" size={14} color="#10B981" />
+                <Icon name="chevron-right" size={14} color="#086942" />
               </View>
             </TouchableOpacity>
           </View>
@@ -233,9 +235,12 @@ const CategoryProductCarousel = ({
           </View>
         </View>
 
-        {(loading && products.length === 0) || products.length === 0
+        <CatalogFetchNotice loading={fetching} hasCachedData={products.length > 0} label="products" />
+        {products.length ? renderMainProducts() : fetching || !requestComplete
           ? renderLoadingCards()
-          : renderMainProducts()}
+          : requestError
+            ? <TouchableOpacity onPress={retry} style={styles.emptyState} accessibilityRole="button"><Text style={styles.emptyText}>Could not load products. Tap to retry.</Text></TouchableOpacity>
+            : <View style={styles.emptyState}><Text style={styles.emptyText}>Nothing here yet. Explore our other categories.</Text></View>}
       </View>
     </View>
   );
@@ -244,163 +249,40 @@ const CategoryProductCarousel = ({
 export default React.memo(CategoryProductCarousel);
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F8FAFC",
-  },
-  showroomContainer: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    overflow: "hidden",
-    marginVertical: 8,
-  },
-  showroomHeader: {
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 10,
-    position: "relative",
-    overflow: "hidden",
-  },
-  backgroundPattern: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 0,
-  },
-  floatingDot: {
-    position: "absolute",
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "#10B981",
-    opacity: 0.1,
-  },
-  dot1: {
-    top: 15,
-    right: 80,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  dot2: {
-    top: 35,
-    right: 60,
-    opacity: 0.08,
-  },
-  dot3: {
-    top: 25,
-    right: 100,
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-    opacity: 0.06,
-  },
-  headerContent: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    zIndex: 1,
-    position: "relative",
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  iconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#10B981",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-    position: "relative",
-    shadowColor: "#10B981",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  iconGlow: {
-    position: "absolute",
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#10B981",
-    opacity: 0.2,
-  },
-  iconInner: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  headerTextContainer: {
-    flex: 1,
-  },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  showroomTitle: {
-    color: "#111827",
-    fontWeight: "800",
-    fontSize: 22,
-    letterSpacing: -0.5,
-    marginRight: 8,
-  },
-  showroomSubtitle: {
-    color: "#6B7280",
-    fontSize: 12,
-    fontWeight: "500",
-    letterSpacing: 0.2,
-  },
-  viewMoreButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F0FDF4",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: "#BBF7D0",
-    shadowColor: "#10B981",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  viewMoreText: {
-    color: "#059669",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-    marginRight: 4,
-  },
-  arrowContainer: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: "#DCFCE7",
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  container: { backgroundColor: '#FFFFFF' },
+  showroomContainer: { backgroundColor: '#FFFFFF', marginVertical: 5 },
+  showroomHeader: { backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingTop: 13, paddingBottom: 4 },
+  backgroundPattern: { display: 'none' },
+  floatingDot: { display: 'none' },
+  dot1: {}, dot2: {}, dot3: {},
+  headerContent: { flexDirection: 'row', alignItems: 'center' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  iconContainer: { width: 30, height: 30, borderRadius: 8, backgroundColor: '#84e8b9', alignItems: 'center', justifyContent: 'center', marginRight: 9 },
+  iconGlow: { display: 'none' },
+  iconInner: { alignItems: 'center', justifyContent: 'center' },
+  headerTextContainer: { flex: 1 },
+  titleRow: { flexDirection: 'row', alignItems: 'center' },
+  showroomTitle: { color: '#172B24', fontWeight: '900', fontSize: 18, letterSpacing: -0.4 },
+  showroomSubtitle: { color: '#86958A', fontSize: 10, marginTop: 3 },
+  viewMoreButton: { flexDirection: 'row', alignItems: 'center' },
+  viewMoreText: { color: '#086942', fontSize: 10, fontWeight: '900', marginRight: 2 },
+  arrowContainer: { alignItems: 'center', justifyContent: 'center' },
+  emptyState: { padding: 22, alignItems: 'center' },
+  emptyText: { color: '#86958A', fontSize: 12, textAlign: 'center' },
   productList: {
     paddingRight: 10,
-    paddingVertical: 20,
+    paddingTop: 7,
+    paddingBottom: 2,
   },
   viewAllCard: {
     width: CARD_WIDTH,
-    height: 240,
+    height: 252,
     marginRight: CARD_MARGIN,
     marginLeft: 10,
-    backgroundColor: "#F0FDF4",
+    backgroundColor: "#E4F8EB",
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: "#BBF7D0",
+    borderColor: "#84e8b9",
     borderStyle: "dashed",
   },
   viewAllContent: {
@@ -410,14 +292,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   viewAllText: {
-    color: "#10B981",
+    color: "#086942",
     fontSize: 16,
     fontWeight: "700",
     marginTop: 8,
     textAlign: "center",
   },
   viewMoreSubtext: {
-    color: "#059669",
+    color: "#086942",
     fontSize: 12,
     fontWeight: "500",
     marginTop: 4,

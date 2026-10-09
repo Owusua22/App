@@ -1,7 +1,9 @@
+import { createWebSafeStyles } from '../theme/webSafeStyles';
 import React, { useState, useEffect, useCallback } from 'react';
-import { Modal, TextInput, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, View, Text } from 'react-native';
+import { Modal, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, View } from 'react-native';
+import Text, { AppTextInput as TextInput } from './AppText';
 import CachedImage from './CachedImage';
-import { resolveProductImageUri } from '../utils/ImageCache';
+import { getProductImageUri } from '../utils/ImageCache';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchProducts } from '../redux/slice/productSlice'; // Import fetchProducts action
 import { useNavigation } from '@react-navigation/native'; // For navigation
@@ -89,7 +91,7 @@ const SearchModal = ({ visible, onClose }) => {
           </View>
 
           {loading ? (
-            <ActivityIndicator size="large" color="#006838" />
+            <ActivityIndicator size="large" color="#086942" />
           ) : (
             <>
               {filteredProducts.length === 0 ? (
@@ -108,7 +110,7 @@ const SearchModal = ({ visible, onClose }) => {
                       onPress={() => navigateToProduct(item.productID)}
                     >
                       <CachedImage
-                        source={{ uri: resolveProductImageUri(item.productImage) }}
+                        source={{ uri: getProductImageUri(item) }}
                         style={styles.itemImage}
                         recyclingKey={item.productID}
                       />
@@ -130,7 +132,7 @@ const SearchModal = ({ visible, onClose }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const styles = createWebSafeStyles({
   modalContainer: {
     flex: 1,
     justifyContent: 'center',

@@ -15,6 +15,7 @@ export const getAdvertisment = createAsyncThunk(
         params: {
           endpoint: GET_ADS_ENDPOINT,
           AdsName, // forwarded as query param to backend
+          _fresh: Date.now(), // bypass stale browser/proxy responses
         },
       });
 
@@ -36,6 +37,7 @@ export const getHomePageAdvertisment = createAsyncThunk(
         params: {
           endpoint: GET_ADS_ENDPOINT,
           AdsName: "Home Page",
+          _fresh: Date.now(),
         },
       });
 
@@ -59,6 +61,7 @@ export const getBannerPageAdvertisment = createAsyncThunk(
         params: {
           endpoint: GET_ADS_ENDPOINT,
           AdsName: "Banner",
+          _fresh: Date.now(),
         },
       });
 

@@ -1,12 +1,6 @@
 import React, { useEffect } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  ActivityIndicator,
-} from "react-native";
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import Text from './AppText';
 import { useDispatch, useSelector } from "react-redux";
 import { fetchHomePageShowrooms } from "../redux/slice/showroomSlice";
 
@@ -21,7 +15,7 @@ const ShowroomList = () => {
   if (loading) {
     return (
       <View style={styles.loading}>
-        <ActivityIndicator size="small" color="#10B981" />
+        <ActivityIndicator size="small" color="#086942" />
       </View>
     );
   }
@@ -64,7 +58,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   button: {
-    backgroundColor: "#10B981",
+    backgroundColor: "#086942",
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 20,

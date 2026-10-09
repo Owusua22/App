@@ -1,29 +1,21 @@
+import { createWebSafeStyles } from '../theme/webSafeStyles';
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  Image,
-  ScrollView,
-  StyleSheet,
-  Dimensions,
-  Platform,
-  Animated,
-} from 'react-native';
+import { View, TouchableOpacity, Image, ScrollView, StyleSheet, Dimensions, Platform, Animated } from 'react-native';
+import Text from './AppText';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 
 const brands = [
-  { id: '760af684-7a19-46ab-acc5-7445ef32073a', logo: require('../assets/samsung.png'), name: 'Samsung', color: '#059669' },
-  { id: 'c163ee86-1d24-4c97-943b-1f82a09c6066', logo: require('../assets/infinix.png'), name: 'Infinix', color: '#16a34a' },
-  { id: '4c1dba1d-61b2-4ec3-9c03-38036dd02c89', logo: require('../assets/itel.png'), name: 'Itel', color: '#14b8a6' },
-  { id: 'fb694e59-77be-455f-9573-acf917ffb39d', logo: require('../assets/hmd.png'), name: 'HMD', color: '#22c55e' },
-  { id: '86cca959-70a4-448e-86f1-3601309f49a6', logo: require('../assets/tecno-logo.png'), name: 'Tecno', color: '#15803d' },
-  { id: '5c6cf9ae-d44f-42a9-82e5-c82bbf6913cd', logo: require('../assets/apple.jpeg'), name: 'Apple', color: '#166534' },
-  { id: 'd643698d-f794-4d33-9237-4a913aa463a2', logo: require('../assets/huawel.jpeg'), name: 'Huawei', color: '#0f766e' },
-  
+  { id: '760af684-7a19-46ab-acc5-7445ef32073a', logo: require('../assets/samsung.png'), name: 'Samsung', color: '#086942' },
+  { id: 'c163ee86-1d24-4c97-943b-1f82a09c6066', logo: require('../assets/infinix.png'), name: 'Infinix', color: '#086942' },
+  { id: '4c1dba1d-61b2-4ec3-9c03-38036dd02c89', logo: require('../assets/itel.png'), name: 'Itel', color: '#086942' },
+  { id: 'fb694e59-77be-455f-9573-acf917ffb39d', logo: require('../assets/hmd.png'), name: 'HMD', color: '#086942' },
+  { id: '86cca959-70a4-448e-86f1-3601309f49a6', logo: require('../assets/tecno-logo.png'), name: 'Tecno', color: '#086942' },
+  { id: '5c6cf9ae-d44f-42a9-82e5-c82bbf6913cd', logo: require('../assets/apple.jpeg'), name: 'Apple', color: '#086942' },
+  { id: 'd643698d-f794-4d33-9237-4a913aa463a2', logo: require('../assets/huawel.jpeg'), name: 'Huawei', color: '#086942' },
+
 ];
-  
+
 
 const BrandCard = React.memo(({ brand, index, onLayout }) => {
   const navigation = useNavigation();
@@ -78,14 +70,14 @@ const BrandCard = React.memo(({ brand, index, onLayout }) => {
       >
         {/* Accent border */}
         <View style={[styles.accentBorder, { backgroundColor: brand.color }]} />
-        
+
         {/* Glow effect container */}
         <View style={[styles.glowContainer, isPressed && styles.glowActive]}>
           <View style={[styles.logoContainer, { borderColor: `${brand.color}20` }]}>
             <Image source={brand.logo} style={styles.brandImage} resizeMode="contain" />
           </View>
         </View>
-        
+
         <View style={styles.brandInfo}>
           <Text style={styles.brandName} numberOfLines={1}>
             {brand.name}
@@ -156,24 +148,24 @@ export default function ShopByBrandsBanner() {
     <Animated.View style={[styles.container, { opacity: fadeInAnim }]}>
       {/* Background pattern */}
       <View style={styles.backgroundPattern} />
-      
+
       <View style={styles.header}>
         <View style={styles.headerContent}>
           <View style={styles.titleContainer}>
             <Text style={styles.title}>Brand Partners</Text>
             <View style={styles.titleAccent} />
           </View>
-          <Text style={styles.subtitle}>Discover authentic products from trusted Brands</Text>
+
         </View>
         <View style={styles.headerIcon}>
-          <Ionicons name="diamond-outline" size={24} color="#16a34a" />
+          <Ionicons name="diamond-outline" size={24} color="#086942" />
         </View>
       </View>
-      
+
       <View style={styles.carouselContainer}>
         {showArrows && canScrollLeft && (
-          <TouchableOpacity 
-            style={[styles.arrow, styles.arrowLeft]} 
+          <TouchableOpacity
+            style={[styles.arrow, styles.arrowLeft]}
             onPress={() => scrollBy('left')}
             activeOpacity={0.8}
           >
@@ -182,10 +174,10 @@ export default function ShopByBrandsBanner() {
             </View>
           </TouchableOpacity>
         )}
-        
+
         {showArrows && canScrollRight && (
-          <TouchableOpacity 
-            style={[styles.arrow, styles.arrowRight]} 
+          <TouchableOpacity
+            style={[styles.arrow, styles.arrowRight]}
             onPress={() => scrollBy('right')}
             activeOpacity={0.8}
           >
@@ -194,7 +186,7 @@ export default function ShopByBrandsBanner() {
             </View>
           </TouchableOpacity>
         )}
-        
+
         <ScrollView
           horizontal
           ref={scrollViewRef}
@@ -208,9 +200,9 @@ export default function ShopByBrandsBanner() {
           snapToAlignment="start"
         >
           {brands.map((brand, index) => (
-            <BrandCard 
-              key={brand.id} 
-              brand={brand} 
+            <BrandCard
+              key={brand.id}
+              brand={brand}
               index={index}
               onLayout={handleCardLayout}
             />
@@ -225,7 +217,7 @@ export default function ShopByBrandsBanner() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createWebSafeStyles({
   container: {
     backgroundColor: '#fff',
     marginHorizontal: 6,
@@ -234,7 +226,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...Platform.select({
       ios: {
-        shadowColor: '#16a34a',
+        shadowColor: '#086942',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.15,
         shadowRadius: 20,
@@ -250,7 +242,7 @@ const styles = StyleSheet.create({
     right: 0,
     width: 120,
     height: 120,
-    backgroundColor: '#22c55e',
+    backgroundColor: '#086942',
     opacity: 0.03,
     borderBottomLeftRadius: 60,
   },
@@ -280,7 +272,7 @@ const styles = StyleSheet.create({
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#16a34a',
+    backgroundColor: '#086942',
     marginLeft: 8,
   },
   subtitle: {
@@ -326,7 +318,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...Platform.select({
       ios: {
-        shadowColor: '#16a34a',
+        shadowColor: '#086942',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.08,
         shadowRadius: 12,
@@ -352,7 +344,7 @@ const styles = StyleSheet.create({
   glowActive: {
     ...Platform.select({
       ios: {
-        shadowColor: '#22c55e',
+        shadowColor: '#086942',
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.3,
         shadowRadius: 10,
@@ -417,12 +409,12 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#16a34a',
+    backgroundColor: '#086942',
     justifyContent: 'center',
     alignItems: 'center',
     ...Platform.select({
       ios: {
-        shadowColor: '#16a34a',
+        shadowColor: '#086942',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,

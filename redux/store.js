@@ -6,19 +6,20 @@ import productReducer from './slice/productSlice';
 import brandReducer from './slice/brandSlice';
 import categoryReducer from './slice/categorySlice';
 import cartReducer from './slice/cartSlice';
-import customerReducer from './slice/customerSlice';
-import orderReducer from './slice/orderSlice';
+import customerReducer, { silentLogoutAction, updateSessionTokens } from './slice/customerSlice';
+import { registerAuthExpiredHandler, registerAuthUpdatedHandler } from './slice/axiosInstance';
+import orderReducer, { clearOrderSession } from './slice/orderSlice';
 import shippingReducer from './slice/shippingSlice';
 import showroomReducer from "./slice/showroomSlice"
 import advertismentReducer from './slice/advertismentSlice'
-import paymentReducer from './slice/paymentSlice';
+import paymentReducer, { resetPaymentState } from './slice/paymentSlice';
 import wishlistReducer from './wishlistSlice';
 
 // Persist configuration
 const persistConfig = {
   key: 'root',
   storage: AsyncStorage,
-  whitelist: ['cart', 'products'], // Persist these reducers
+  whitelist: ['cart', 'products', 'advertisment', 'categories', 'brands'], // Persist these reducers
 };
 
 const rootReducer = combineReducers({
@@ -46,5 +47,13 @@ export const store = configureStore({
       immutableCheck: false,    // Disable the immutable state check
     }),
 });
+
+// Never leave an expired customer's profile or orders in memory after 401.
+registerAuthExpiredHandler(() => {
+  store.dispatch(silentLogoutAction());
+  store.dispatch(clearOrderSession());
+  store.dispatch(resetPaymentState());
+});
+registerAuthUpdatedHandler((customer) => store.dispatch(updateSessionTokens(customer)));
 
 export const persistor = persistStore(store); // Create the persistor

@@ -1,3 +1,4 @@
+import { createWebSafeStyles } from '../theme/webSafeStyles';
 
 import { View, Image, StyleSheet } from 'react-native';
 
@@ -7,7 +8,7 @@ export default function BannerComponent() {
   return (
     <View style={styles.container}>
       <Image
-        source={require('../assets/na.jpeg')} // Replace with your image URL
+        source={require('../assets/kumasi.jpg')} // Replace with your image URL
         style={styles.image}
       />
     
@@ -15,7 +16,7 @@ export default function BannerComponent() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createWebSafeStyles({
   container: {
     flex: 1,
     justifyContent: 'flex-end', // Align button to the bottom
@@ -30,7 +31,7 @@ const styles = StyleSheet.create({
     resizeMode: 'cover', // Make sure the image covers the screen
   },
   button: {
-    backgroundColor: '#006838', // Red background for the button
+    backgroundColor: '#086942', // Red background for the button
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

@@ -12,6 +12,7 @@ export const fetchCategories = createAsyncThunk(
       const { data } = await api.get("/", {
         params: {
           endpoint: CATEGORIES_ENDPOINT,
+          _fresh: Date.now(),
         },
       });
 

@@ -13,6 +13,7 @@ export const fetchBrands = createAsyncThunk(
       const { data } = await api.get("/", {
         params: {
           endpoint: BRANDS_ENDPOINT,
+          _fresh: Date.now(),
         },
       });
 

@@ -1,19 +1,11 @@
+import { createWebSafeStyles } from '../theme/webSafeStyles';
 // components/FloatingTawkChat.js
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  View,
-  TouchableOpacity,
-  TouchableWithoutFeedback,
-  Text,
-  StyleSheet,
-  Animated,
-  Linking,
-  Alert,
-  Platform,
-  Modal,
-} from 'react-native';
+import { View, TouchableOpacity, TouchableWithoutFeedback, StyleSheet, Animated, Linking, Alert, Platform, Modal } from 'react-native';
+import Text from './AppText';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
+import { subscribeScrollActivity } from '../utils/scrollActivity';
 
 /* ─── Config ─────────────────────────────────────────── */
 const WHATSAPP_NUMBER = '+233503607980';
@@ -21,9 +13,9 @@ const PHONE_NUMBER    = '+233302225651';
 
 /* ─── Palette ────────────────────────────────────────── */
 const G = {
-  primary:     '#059669',
-  primaryDark: '#047857',
-  primaryDeep: '#064E3B',
+  primary:     '#086942',
+  primaryDark: '#086942',
+  primaryDeep: '#086942',
   primaryGlow: 'rgba(5,150,105,0.22)',
   primaryMist: '#D1FAE5',
   primaryGhost:'#ECFDF5',
@@ -61,7 +53,8 @@ const sheetShadow = Platform.select({
 /* ═══════════════════════════════════════════════════════
  *  Component
  * ═════════════════════════════════════════════════════*/
-const FloatingTawkChat = ({ scrollY }) => {
+const FloatingTawkChat = () => {
+  const [fabInteractive, setFabInteractive] = useState(true);
   const [sheetVisible, setSheetVisible] = useState(false);
 
   // FAB visibility driven by scroll
@@ -94,12 +87,16 @@ const FloatingTawkChat = ({ scrollY }) => {
     Animated.timing(pulseAnim, { toValue: 1, duration: 150, useNativeDriver: true }).start();
   }, [pulseAnim]);
 
-  useEffect(() => { startPulse(); }, []);
+  useEffect(() => {
+    startPulse();
+    return () => { pulseLoop.current?.stop(); };
+  }, [startPulse]);
 
   /* ── Hide / show FAB on scroll ──────────────────────── */
   const hideFab = useCallback(() => {
     if (!isVisible.current) return;
     isVisible.current = false;
+    setFabInteractive(false);
     stopPulse();
     Animated.parallel([
       Animated.timing(fabOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
@@ -110,19 +107,27 @@ const FloatingTawkChat = ({ scrollY }) => {
   const showFab = useCallback(() => {
     if (isVisible.current) return;
     isVisible.current = true;
+    setFabInteractive(true);
     Animated.parallel([
       Animated.timing(fabOpacity, { toValue: 1, duration: 260, useNativeDriver: true }),
       Animated.spring(fabScale,   { toValue: 1, tension: 160, friction: 10, useNativeDriver: true }),
     ]).start(() => startPulse());
   }, [fabOpacity, fabScale, startPulse]);
 
-  // Expose onScroll handler — parent ScrollView should call this
-  // Usage: <ScrollView onScroll={onScroll} scrollEventThrottle={16} ...>
   const onScroll = useCallback(() => {
+    if (sheetVisible) return;
     hideFab();
     if (scrollTimer.current) clearTimeout(scrollTimer.current);
-    scrollTimer.current = setTimeout(showFab, 1200);
-  }, [hideFab, showFab]);
+    scrollTimer.current = setTimeout(showFab, 1000);
+  }, [hideFab, showFab, sheetVisible]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeScrollActivity(onScroll);
+    return () => {
+      unsubscribe();
+      if (scrollTimer.current) clearTimeout(scrollTimer.current);
+    };
+  }, [onScroll]);
 
   /* ── Sheet animation ────────────────────────────────── */
   const openSheet = () => {
@@ -261,7 +266,7 @@ const FloatingTawkChat = ({ scrollY }) => {
             transform: [{ scale: Animated.multiply(fabScale, pulseAnim) }],
           },
         ]}
-        pointerEvents={sheetVisible ? 'none' : 'box-none'}
+        pointerEvents={sheetVisible || !fabInteractive ? 'none' : 'box-none'}
       >
         <TouchableOpacity style={s.fab} onPress={openSheet} activeOpacity={0.85}>
           {/* Ring glow */}
@@ -278,29 +283,12 @@ const FloatingTawkChat = ({ scrollY }) => {
   );
 };
 
-/* ─── USAGE NOTE ─────────────────────────────────────────
- *
- *  To enable scroll-hide, attach the onScroll prop to your
- *  ScrollView (or FlatList) via a ref:
- *
- *    const fabRef = useRef();
- *    ...
- *    <ScrollView
- *      onScroll={fabRef.current?.onScroll}
- *      scrollEventThrottle={16}
- *    >
- *    <FloatingTawkChat ref={fabRef} />
- *
- *  Alternatively, wrap FloatingTawkChat in a forwardRef or
- *  pass onScroll as a prop callback.
- * ────────────────────────────────────────────────────── */
-
 export { FloatingTawkChat as default };
 
 /* ══════════════════════════════════════════════════════
  *  STYLES
  * ════════════════════════════════════════════════════*/
-const s = StyleSheet.create({
+const s = createWebSafeStyles({
   /* ── FAB ──────────────────────── */
   fabWrap: {
     position: 'absolute',

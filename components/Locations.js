@@ -1,13 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import {
-  View,
-  Text,
-  Modal,
-  TouchableOpacity,
-  StyleSheet,
-  Dimensions,
-  ScrollView,
-} from 'react-native';
+import { View, Modal, TouchableOpacity, StyleSheet, Dimensions, ScrollView } from 'react-native';
+import Text from './AppText';
 import Icon from 'react-native-vector-icons/Ionicons';
 
 const { height: screenHeight } = Dimensions.get('window');
@@ -697,7 +690,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
-    backgroundColor: '#059669',
+    backgroundColor: '#086942',
     flexShrink: 0,
   },
   modalTitle: {
@@ -769,7 +762,7 @@ const styles = StyleSheet.create({
   },
   freeDeliveryIndicator: {
     fontSize: 12,
-    color: '#059669',
+    color: '#086942',
     fontWeight: '500',
     marginTop: 2,
   },
@@ -802,7 +795,7 @@ const styles = StyleSheet.create({
   selectedTownItem: {
     backgroundColor: '#EBF8FF',
     borderLeftWidth: 3,
-    borderLeftColor: '#059669',
+    borderLeftColor: '#086942',
   },
   townContent: {
     flex: 1,
@@ -813,7 +806,7 @@ const styles = StyleSheet.create({
     color: '#1A202C',
   },
   selectedTownName: {
-    color: '#059669',
+    color: '#086942',
     fontWeight: '600',
   },
   deliveryFeeTag: {

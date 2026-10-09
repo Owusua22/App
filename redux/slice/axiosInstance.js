@@ -1,7 +1,8 @@
 // src/redux/slice/axiosInstance.js (React Native)
 import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { reset } from "../../services/navigationService";
+import { requestAuthRedirect } from "../../services/navigationService";
+import { beginSessionVersion, getSessionVersion, isSessionVersionCurrent, writeCustomer, clearCustomerStorage, getTokenExpiry, readAccessToken, readRefreshToken } from "./customerSessionStorage";
 
 const LAMBDA_BASE_URL =
   "https://02yo3gbfxe.execute-api.us-east-1.amazonaws.com/default/FrankoAPI";
@@ -12,9 +13,9 @@ const INACTIVITY_TIMEOUT = 3 * 24 * 60 * 60 * 1000;
 const LAST_ACTIVITY_KEY = "lastActivityTimestamp";
 
 let isLoginFlow = false;
-let isRefreshing = false;
 let refreshPromise = null;
 let authExpiredHandler = null;
+let authUpdatedHandler = null;
 let logoutInFlightPromise = null;
 
 export const setLoginFlow = (value) => {
@@ -28,6 +29,11 @@ export const registerAuthExpiredHandler = (handler) => {
   return () => {
     if (authExpiredHandler === handler) authExpiredHandler = null;
   };
+};
+
+// Keep the in-memory profile's tokens aligned with a successful silent refresh.
+export const registerAuthUpdatedHandler = (handler) => {
+  authUpdatedHandler = typeof handler === "function" ? handler : null;
 };
 
 /* ─── Storage helpers ─── */
@@ -117,8 +123,7 @@ const logRequestError = (error) => {
     status: response?.status,
     code: error?.code,
     message: error?.message || "Request failed without an error message.",
-    params: config?.params,
-    responseBody: response?.data,
+    // Never log request params, bodies, tokens or backend response bodies.
   });
 };
 
@@ -152,39 +157,32 @@ const axiosInstance = axios.create({
 
 /* ─── Auth utilities ─── */
 
-export const silentLogout = async () => {
-  try {
-    await AsyncStorage.removeItem("customer");
-    await AsyncStorage.removeItem(LAST_ACTIVITY_KEY);
-  } catch (error) {
-    console.error("[Auth error] Could not clear customer data:", error?.message || error);
-  }
-};
+export const silentLogout = async () => logoutAndRedirect();
 
 export const logoutAndRedirect = async () => {
   if (logoutInFlightPromise) return logoutInFlightPromise;
 
+  // Invalidate in-flight refreshes synchronously, before any storage await.
+  const version = beginSessionVersion();
   logoutInFlightPromise = (async () => {
-    await clearAuth();
-
     try {
-      await authExpiredHandler?.();
+      // Hide personal data in Redux immediately, even if storage is slow.
+      authExpiredHandler?.();
     } catch (error) {
       console.error("[Auth error] Could not clear Redux auth state:", error?.message || error);
     }
-
-    try {
-      // Signup is the app's login/register screen. It is reset as the root so
-      // an expired checkout cannot continue with the stale customer session.
-      reset("Signup");
-    } catch (error) {
-      console.error("[Auth error] Could not open the sign-in screen:", error?.message || error);
-    }
-  })().finally(() => {
-    logoutInFlightPromise = null;
-  });
+    await clearAuth();
+    if (isSessionVersionCurrent(version)) requestAuthRedirect();
+  })().finally(() => { logoutInFlightPromise = null; });
 
   return logoutInFlightPromise;
+};
+
+// An incomplete legacy customer record is not an authenticated session. Do
+// not open the sign-in modal for a first-time guest on public catalog calls.
+const clearGuestStub = async () => {
+  authExpiredHandler?.();
+  await clearAuth();
 };
 
 export const checkCustomerTokenValidity = async () => {
@@ -194,15 +192,14 @@ export const checkCustomerTokenValidity = async () => {
       return { hasCustomer: false, hasValidToken: true, shouldLogout: false };
     }
 
-    if (typeof customer.accessToken !== "string" || !customer.accessToken.trim()) {
-      await silentLogout();
-      return { hasCustomer: true, hasValidToken: false, shouldLogout: true };
+    if (!readAccessToken(customer)) {
+      return { hasCustomer: true, hasValidToken: false,
+        shouldLogout: Boolean(readRefreshToken(customer)), shouldCleanGuest: !readRefreshToken(customer) };
     }
 
     return { hasCustomer: true, hasValidToken: true, shouldLogout: false };
   } catch (error) {
     console.error("[Auth error] Token validation failed:", error?.message || error);
-    await silentLogout();
     return { hasCustomer: false, hasValidToken: false, shouldLogout: true };
   }
 };
@@ -245,15 +242,20 @@ export const getCurrentAuth = async () => {
 
 export const clearAuth = async () => {
   try {
-    await AsyncStorage.multiRemove([
-      "customer",
-      "customers",
-      "user",
-      "loginTime",
-      LAST_ACTIVITY_KEY,
-    ]);
+    // Serialized against token refresh writes, so an old refresh cannot
+    // restore a customer after this removal finishes.
+    await clearCustomerStorage();
   } catch (error) {
     console.error("[Auth error] Could not clear auth storage:", error?.message || error);
+  }
+  try {
+    await AsyncStorage.multiRemove([
+      "checkoutDetails", "orderAddressDetails", "orderDeliveryDetails",
+      "pendingOrderId", "selectedLocation", "shippingDetails",
+      "userOrders", "usedOrderIds",
+    ]);
+  } catch (error) {
+    console.error("[Auth error] Could not clear checkout drafts:", error?.message || error);
   }
 };
 
@@ -263,82 +265,94 @@ export const forceCleanupStorage = async () => {
 
 /* ─── Silent token refresh ─── */
 
-const resetRefreshState = () => {
-  isRefreshing = false;
-  refreshPromise = null;
-};
-
 const silentRefreshToken = async () => {
-  if (isRefreshing && refreshPromise) return refreshPromise;
-
-  isRefreshing = true;
+  if (refreshPromise) return refreshPromise;
+  const version = getSessionVersion();
   refreshPromise = (async () => {
+    const customer = await safeGetFromStorage("customer");
+    const refreshToken = readRefreshToken(customer);
+    if (!refreshToken || (getTokenExpiry(refreshToken) > 0 && getTokenExpiry(refreshToken) <= Date.now())) {
+      return null; // No usable refresh credential: session really has expired.
+    }
+
     try {
-      const customer = await safeGetFromStorage("customer");
-      if (!customer?.refreshToken) {
-        resetRefreshState();
-        return null;
-      }
-
-      const refreshConfig = {
-        params: {
-          endpoint: "/Users/CustomerRefreshToken",
-          client: "app",
-        },
-        headers: {
-          [LAMBDA_HEADER_NAME]: LAMBDA_HEADER_VALUE,
-          "Content-Type": "application/json",
-        },
-        timeout: 15000,
-      };
-
-      // Use plain axios to avoid running the refresh request through this
-      // instance's 401 interceptor.
+      // Plain axios: the refresh request must never recursively intercept itself.
       const response = await axios.post(
         LAMBDA_BASE_URL,
-        { refreshToken: customer.refreshToken },
-        refreshConfig
+        { refreshToken },
+        { params: { endpoint: "/Users/CustomerRefreshToken", client: "app" },
+          headers: { [LAMBDA_HEADER_NAME]: LAMBDA_HEADER_VALUE, "Content-Type": "application/json" },
+          timeout: 15000 }
       );
-
       let data = response.data;
       if (typeof data === "string") {
-        try {
-          data = JSON.parse(data);
-        } catch {
-          // The validation below reports a missing access token.
-        }
+        try { data = JSON.parse(data); } catch { /* invalid response */ }
       }
-
-      const newAccessToken = data?.accessToken || data?.AccessToken;
-      const newRefreshToken = data?.refreshToken || data?.RefreshToken;
-      if (!newAccessToken) {
-        console.error("[Auth error] Refresh response did not contain an access token", {
-          endpoint: refreshConfig.params.endpoint,
-          status: response.status,
-          responseBody: response.data,
-        });
-        resetRefreshState();
-        return null;
+      const accessToken = data?.accessToken || data?.AccessToken;
+      if (!accessToken) return null;
+      if (!isSessionVersionCurrent(version)) return null;
+      const updated = { ...customer, accessToken, refreshToken: data?.refreshToken || data?.RefreshToken || refreshToken };
+      try {
+        await writeCustomer(updated, () => isSessionVersionCurrent(version));
+      } catch (error) {
+        if (!isSessionVersionCurrent(version)) return null;
+        throw error;
       }
-
-      const updatedCustomer = {
-        ...customer,
-        accessToken: newAccessToken,
-        refreshToken: newRefreshToken || customer.refreshToken,
-      };
-
-      await AsyncStorage.setItem("customer", JSON.stringify(updatedCustomer));
-      await updateLastActivity();
-      resetRefreshState();
-      return newAccessToken;
+      if (isSessionVersionCurrent(version)) authUpdatedHandler?.(updated);
+      return accessToken;
     } catch (error) {
-      logRequestError(error);
-      resetRefreshState();
-      return null;
+      if (!isSessionVersionCurrent(version)) return null;
+      // Only a rejected/invalid refresh credential is proof of expiry.
+      // Do not destroy a session for offline, timeout or server errors.
+      if ([400, 401, 403].includes(error?.response?.status)) return null;
+      throw error;
     }
-  })();
-
+  })().finally(() => { refreshPromise = null; });
   return refreshPromise;
+};
+
+// Also used at launch/resume: refresh an expired access token while the app is
+// active; an expired refresh token or explicit rejection signs out instead.
+export const checkActiveSession = async ({ logoutIfExpiredWhileAway = false } = {}) => {
+  const customer = await safeGetFromStorage("customer");
+  if (!customer) return false;
+  const accessToken = readAccessToken(customer);
+  if (!accessToken) {
+    if (readRefreshToken(customer)) await logoutAndRedirect();
+    else await clearGuestStub();
+    return false;
+  }
+  if (await checkInactivityTimeout()) {
+    await logoutAndRedirect();
+    return false;
+  }
+  const refreshToken = readRefreshToken(customer);
+  if (getTokenExpiry(refreshToken) > 0 && getTokenExpiry(refreshToken) <= Date.now()) {
+    await logoutAndRedirect();
+    return false;
+  }
+  // Some legacy logins have an access token but no refresh credential; keep
+  // them until the access token actually expires or the server rejects it.
+  if (!refreshToken && getTokenExpiry(accessToken) > Date.now()) return true;
+  const accessExpiry = getTokenExpiry(accessToken);
+  if (accessExpiry > 0 && accessExpiry <= Date.now()) {
+    // A token that expired while the app was away belongs to an inactive
+    // session. Do not take the user into Orders/Checkout with stale identity.
+    const lastActivity = await getLastActivity();
+    if (logoutIfExpiredWhileAway && lastActivity && lastActivity < accessExpiry) {
+      await logoutAndRedirect();
+      return false;
+    }
+    try {
+      const newToken = await silentRefreshToken();
+      if (!newToken && !logoutInFlightPromise) await logoutAndRedirect();
+      return Boolean(newToken);
+    } catch {
+      // Network outage: keep the session and retry on next authenticated call.
+      return false;
+    }
+  }
+  return true;
 };
 
 /* ─── Request interceptor ─── */
@@ -350,22 +364,36 @@ axiosInstance.interceptors.request.use(
       client: "app",
     };
     config.headers = config.headers || {};
+    config._authVersion = getSessionVersion();
 
-    if (!config.headers.Authorization && !isLoginFlow) {
-      const inactive = await checkInactivityTimeout();
-      if (inactive) {
-        await logoutAndRedirect();
-        return Promise.reject(
-          new axios.Cancel("Session expired due to inactivity.")
-        );
-      }
-
+    if (!config.headers.Authorization && !isLoginFlow && !isUnauthenticatedCredentialRequest(config)) {
       const tokenCheck = await checkCustomerTokenValidity();
-      if (!tokenCheck.shouldLogout) {
-        const token = await getCurrentToken();
-        if (token) {
+      if (tokenCheck.shouldLogout) {
+        await logoutAndRedirect();
+        return Promise.reject(markAuthExpired(new axios.Cancel("Session expired.")));
+      }
+      if (tokenCheck.shouldCleanGuest) await clearGuestStub();
+      const customer = await safeGetFromStorage("customer");
+      const token = readAccessToken(customer) || (await getCurrentToken());
+      if (token) {
+        // Proactively renew known-expired JWTs, avoiding an avoidable 401.
+        if (getTokenExpiry(token) > 0 && getTokenExpiry(token) <= Date.now()) {
+          try {
+            const renewed = await silentRefreshToken();
+            if (!renewed) {
+              if (!isSessionVersionCurrent(config._authVersion)) {
+                return Promise.reject(markAuthExpired(new axios.Cancel("Previous session expired.")));
+              }
+              await logoutAndRedirect();
+              return Promise.reject(markAuthExpired(new axios.Cancel("Session expired.")));
+            }
+            config.headers.Authorization = `Bearer ${renewed}`;
+          } catch {
+            // Transient refresh failure: do not log out. Let the call fail normally.
+            config.headers.Authorization = `Bearer ${token}`;
+          }
+        } else {
           config.headers.Authorization = `Bearer ${token}`;
-          await updateLastActivity();
         }
       }
     }
@@ -388,23 +416,35 @@ axiosInstance.interceptors.request.use(
 axiosInstance.interceptors.response.use(
   (response) => {
     // Intentionally no success log.
-    updateLastActivity().catch(() => {});
     return response;
   },
   async (error) => {
     if (axios.isCancel(error)) return Promise.reject(error);
 
-    logRequestError(error);
+    if (error?.response?.status !== 401) logRequestError(error);
     const response = error?.response;
     const config = error?.config || response?.config;
     if (!response) return Promise.reject(error);
 
     if (response.status !== 401) return Promise.reject(error);
+    if (config?._authVersion !== undefined && !isSessionVersionCurrent(config._authVersion)) {
+      return Promise.reject(markAuthExpired(error)); // Old request from a signed-out session.
+    }
     // Invalid credentials during login/signup are normal form errors. A 401 on
     // any authenticated request (including checkout/password update) must run
     // refresh and then clear the session if refresh is rejected.
     if (isUnauthenticatedCredentialRequest(config)) {
       return Promise.reject(error);
+    }
+
+    const current = await safeGetFromStorage("customer");
+    if (!current) return Promise.reject(error);
+    const sentToken = String(config?.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
+    const latestToken = readAccessToken(current);
+    if (sentToken && latestToken && sentToken !== latestToken && !config?._retried) {
+      config._retried = true;
+      config.headers.Authorization = `Bearer ${latestToken}`;
+      return axiosInstance(config);
     }
 
     if (config?._retried) {
@@ -413,7 +453,16 @@ axiosInstance.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    const newToken = await silentRefreshToken();
+    let newToken;
+    try {
+      newToken = await silentRefreshToken();
+    } catch {
+      // A transient refresh failure must not erase the stored session.
+      return Promise.reject(error);
+    }
+    if (config?._authVersion !== undefined && !isSessionVersionCurrent(config._authVersion)) {
+      return Promise.reject(markAuthExpired(error));
+    }
     if (newToken && config) {
       config._retried = true;
       config.headers = config.headers || {};

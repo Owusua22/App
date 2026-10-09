@@ -1,18 +1,8 @@
+import { createWebSafeStyles } from '../theme/webSafeStyles';
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  Modal,
-  ScrollView,
-  Alert,
-  StyleSheet,
-  SafeAreaView,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import { View, TouchableOpacity, Modal, ScrollView, Alert, StyleSheet, FlatList, KeyboardAvoidingView, Platform } from 'react-native';
+import Text, { AppTextInput as TextInput } from './AppText';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { Picker } from '@react-native-picker/picker';
@@ -88,10 +78,10 @@ const CheckoutForm = ({
   const getFilteredLocations = () => {
     if (!locations || !Array.isArray(locations)) return [];
     if (!searchText) return locations;
-    
+
     return locations.map(region => ({
       ...region,
-      towns: region.towns?.filter(town => 
+      towns: region.towns?.filter(town =>
         town.name?.toLowerCase().includes(searchText.toLowerCase()) ||
         region.region?.toLowerCase().includes(searchText.toLowerCase())
       ) || []
@@ -100,10 +90,10 @@ const CheckoutForm = ({
 
   const handleTownSelect = (townName, regionName) => {
     if (!locations || !Array.isArray(locations)) return;
-    
+
     const selectedRegion = locations.find(r => r.region === regionName);
     const selectedTown = selectedRegion?.towns?.find(t => t.name === townName);
-    
+
     if (selectedTown) {
       setRegion(regionName);
       setTown(townName);
@@ -132,12 +122,12 @@ const CheckoutForm = ({
       finalFee = fee;
     }
 
-    const info = { 
-      address, 
+    const info = {
+      address,
       fee: finalFee,
-      isManual: locationNotFound 
+      isManual: locationNotFound
     };
-    
+
     try {
       setDeliveryInfo(info);
       await AsyncStorage.setItem("deliveryInfo", JSON.stringify(info));
@@ -182,8 +172,8 @@ const CheckoutForm = ({
   );
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
+    <KeyboardAvoidingView
+      style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView style={styles.formContainer} showsVerticalScrollIndicator={false}>
@@ -226,7 +216,7 @@ const CheckoutForm = ({
               {deliveryInfo?.address ? (
                 <>
                   <View style={styles.addressRow}>
-                    <Icon name="location-on" size={20} color="#10B981" />
+                    <Icon name="location-on" size={20} color="#086942" />
                     <Text style={styles.addressText}>{deliveryInfo.address}</Text>
                   </View>
                   <Text style={styles.deliveryFeeText}>
@@ -240,7 +230,7 @@ const CheckoutForm = ({
                 <Text style={styles.noAddressText}>No address selected</Text>
               )}
             </View>
-            
+
             <TouchableOpacity
               style={styles.selectLocationButton}
               onPress={() => setModalVisible(true)}
@@ -351,10 +341,10 @@ const CheckoutForm = ({
                               {locations
                                 ?.find((loc) => loc.region === region)
                                 ?.towns?.map((t) => (
-                                  <Picker.Item 
-                                    key={t.name} 
-                                    label={`${t.name} (${t.delivery_fee === 0 ? "N/A" : `₵${t.delivery_fee}`})`} 
-                                    value={t.name} 
+                                  <Picker.Item
+                                    key={t.name}
+                                    label={`${t.name} (${t.delivery_fee === 0 ? "N/A" : `₵${t.delivery_fee}`})`}
+                                    value={t.name}
                                   />
                                 )) || []}
                             </Picker>
@@ -377,10 +367,10 @@ const CheckoutForm = ({
                       }
                     }}
                   >
-                    <Icon 
-                      name={locationNotFound ? "check-box" : "check-box-outline-blank"} 
-                      size={20} 
-                      color="#10B981" 
+                    <Icon
+                      name={locationNotFound ? "check-box" : "check-box-outline-blank"}
+                      size={20}
+                      color="#086942"
                     />
                     <Text style={styles.checkboxText}>
                       My location is not in the list (Enter manually)
@@ -405,10 +395,10 @@ const CheckoutForm = ({
                       textAlignVertical="top"
                     />
                   </View>
-                  
+
                   <View style={styles.warningBox}>
                     <Text style={styles.warningText}>
-                      <Text style={styles.warningBold}>Note:</Text> Delivery fee for manual addresses is N/A. 
+                      <Text style={styles.warningBold}>Note:</Text> Delivery fee for manual addresses is N/A.
                       Our delivery team will contact you to confirm delivery charges.
                     </Text>
                   </View>
@@ -421,10 +411,10 @@ const CheckoutForm = ({
                       setManualAddress("");
                     }}
                   >
-                    <Icon 
-                      name={!locationNotFound ? "check-box" : "check-box-outline-blank"} 
-                      size={20} 
-                      color="#10B981" 
+                    <Icon
+                      name={!locationNotFound ? "check-box" : "check-box-outline-blank"}
+                      size={20}
+                      color="#086942"
                     />
                     <Text style={styles.checkboxText}>Back to location search</Text>
                   </TouchableOpacity>
@@ -440,12 +430,12 @@ const CheckoutForm = ({
               <TouchableOpacity
                 style={[
                   styles.saveButton,
-                  ((!locationNotFound && !region && !town) || 
+                  ((!locationNotFound && !region && !town) ||
                    (locationNotFound && !manualAddress.trim())) && styles.saveButtonDisabled
                 ]}
                 onPress={handleSave}
                 disabled={
-                  (!locationNotFound && !region && !town) || 
+                  (!locationNotFound && !region && !town) ||
                   (locationNotFound && !manualAddress.trim())
                 }
               >
@@ -460,7 +450,7 @@ const CheckoutForm = ({
   );
 };
 
-const styles = StyleSheet.create({
+const styles = createWebSafeStyles({
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',
@@ -532,11 +522,11 @@ const styles = StyleSheet.create({
   },
   deliveryFeeText: {
     fontSize: 14,
-    color: '#10B981',
+    color: '#086942',
   },
   feeAmount: {
     fontWeight: '600',
-    color: '#059669',
+    color: '#086942',
   },
   noAddressText: {
     fontSize: 14,
@@ -544,7 +534,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   selectLocationButton: {
-    backgroundColor: '#10B981',
+    backgroundColor: '#086942',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -637,7 +627,7 @@ const styles = StyleSheet.create({
   },
   deliveryFee: {
     fontSize: 14,
-    color: '#10B981',
+    color: '#086942',
     fontWeight: '500',
   },
   noResultsText: {
@@ -696,7 +686,7 @@ const styles = StyleSheet.create({
   saveButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#10B981',
+    backgroundColor: '#086942',
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 6,

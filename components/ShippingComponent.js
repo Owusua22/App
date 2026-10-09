@@ -1,15 +1,6 @@
 import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  Modal,
-  StyleSheet,
-  ActivityIndicator,
-  TouchableOpacity,
-  Alert,
-  Platform,
-  ScrollView,
-} from "react-native";
+import { View, Modal, StyleSheet, ActivityIndicator, TouchableOpacity, Alert, Platform, ScrollView } from 'react-native';
+import Text from './AppText';
 import { Picker } from "@react-native-picker/picker";
 import { useDispatch, useSelector } from "react-redux";
 import {

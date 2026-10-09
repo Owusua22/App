@@ -1,18 +1,14 @@
+import { createWebSafeStyles } from '../theme/webSafeStyles';
 import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  FlatList,
-  StyleSheet,
-  Image,
-  TouchableOpacity,
-  Dimensions,
-} from "react-native";
+import { View, FlatList, StyleSheet, Image, TouchableOpacity, Dimensions, useWindowDimensions } from 'react-native';
+import Text from './AppText';
+import CatalogProductCard, { getCatalogLayout } from './CatalogProductCard';
 import CachedImage from "./CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
-import { resetProducts, fetchProduct } from "../redux/slice/productSlice";
+import { fetchProducts } from "../redux/slice/productSlice";
+import { useCatalogRevalidation } from '../hooks/useCatalogRevalidation';
 
 const screenWidth = Dimensions.get("window").width;
 
@@ -24,16 +20,13 @@ const formatPrice = (price) =>
 export default function ProductsComponent() {
   const navigation = useNavigation();
   const dispatch = useDispatch();
+  const { width } = useWindowDimensions();
+  const { columns, cardWidth } = getCatalogLayout(width);
   const { products, loading } = useSelector((state) => state.products);
 
   const [recentProducts, setRecentProducts] = useState([]);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      dispatch(resetProducts());
-      dispatch(fetchProduct());
-    }, [dispatch])
-  );
+  useCatalogRevalidation('products:all', () => fetchProducts());
 
   useEffect(() => {
     if (products && products.length > 0) {
@@ -69,42 +62,10 @@ export default function ProductsComponent() {
     </View>
   );
 
-  const renderItem = ({ item }) => {
-    const productImageURL = getValidImageURL(item.productImage);
-    const discount =
-      item.oldPrice > 0
-        ? Math.round(((item.oldPrice - item.price) / item.oldPrice) * 100)
-        : 0;
-
-    return (
-      <TouchableOpacity
-        style={styles.productCard}
-        onPress={() => navigation.navigate("ProductDetails", { productId: item.productID })}
-      >
-        <View style={styles.imageContainer}>
-          <CachedImage
-            source={{ uri: productImageURL }}
-            style={styles.productImage}
-            recyclingKey={item.productID}
-          />
-          {discount > 0 && (
-            <View style={styles.discountBadge}>
-              <Text style={styles.discountText}>{`${discount}% OFF`}</Text>
-            </View>
-          )}
-        </View>
-        <Text style={styles.productName} numberOfLines={1}>
-          {item.productName}
-        </Text>
-        <View style={styles.priceContainer}>
-          <Text style={styles.productPrice}>{formatPrice(item.price)}</Text>
-          {item.oldPrice > 0 && (
-            <Text style={styles.oldPrice}>{formatPrice(item.oldPrice)}</Text>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  };
+  const renderItem = ({ item, index }) => (
+    <CatalogProductCard product={item} width={cardWidth} index={index}
+      onPress={(id) => navigation.navigate('ProductDetails', { productId: id })} />
+  );
 
   if (loading && recentProducts.length === 0) {
     return (
@@ -114,7 +75,7 @@ export default function ProductsComponent() {
           data={Array.from({ length: 4 })}
           keyExtractor={(_, index) => index.toString()}
           renderItem={renderSkeleton}
-          numColumns={2}
+          numColumns={columns} key={`columns-${columns}`}
           columnWrapperStyle={styles.row}
           showsVerticalScrollIndicator={false}
         />
@@ -132,7 +93,10 @@ export default function ProductsComponent() {
         data={recentProducts}
         keyExtractor={(item) => item.productID?.toString() || Math.random().toString()}
         renderItem={renderItem}
-        numColumns={2}
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={5}
+        numColumns={columns} key={`columns-${columns}`}
         columnWrapperStyle={styles.row}
         showsVerticalScrollIndicator={false}
       />
@@ -147,7 +111,7 @@ export default function ProductsComponent() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createWebSafeStyles({
   container: {
     flex: 1,
     padding: 10,
@@ -156,7 +120,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#28a745",
+    backgroundColor: "#086942",
     padding: 10,
     borderRadius: 10,
     marginBottom: 10,

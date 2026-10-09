@@ -2,6 +2,7 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import api, { setLoginFlow } from "./axiosInstance";
+import { getSessionVersion, isSessionVersionCurrent, writeCustomer } from "./customerSessionStorage";
 import { reset } from "../../services/navigationService";
 
 const CUSTOMER_KEY = "customer";
@@ -79,13 +80,8 @@ const extractResponseInfo = (data) => {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const logRequestFailure = (label, error) => {
-  console.error(`[${label}] Request failed`);
-  console.error(`[${label}] Status:`, error?.response?.status);
-  console.error(`[${label}] Response body:`, JSON.stringify(error?.response?.data));
-  console.error(`[${label}] Response headers:`, JSON.stringify(error?.response?.headers));
-  console.error(`[${label}] Request URL:`, error?.config?.url);
-  console.error(`[${label}] Request params:`, JSON.stringify(error?.config?.params));
-  console.error(`[${label}] Request headers sent:`, JSON.stringify(error?.config?.headers));
+  if (error?.authExpired) return; // Expected 401 after invalid refresh.
+  console.warn(`[${label}] Request failed`, { status: error?.response?.status });
 };
 
 const toErrorMessage = (error, fallback = "Something went wrong.") => {
@@ -225,6 +221,7 @@ export const getCustomerById = createAsyncThunk(
       console.log("[getCustomerById] Customer found:", data.contactNumber, "accountStatus:", data.accountStatus);
       return data;
     } catch (error) {
+      if (error?.authExpired) return rejectWithValue({ authExpired: true, message: error.authMessage });
       logRequestFailure("getCustomerById", error);
 
       const cached = await loadCustomerFromStorage();
@@ -248,7 +245,8 @@ const fetchCustomerAfterAuth = async (dispatch, { contactNumber, accessToken }) 
   try {
     return await dispatch(getCustomerById({ contactNumber, accessToken })).unwrap();
   } catch (err) {
-    console.log("[fetchCustomerAfterAuth] First attempt failed - retrying once...", err);
+    if (err?.authExpired) throw err;
+    console.log("[fetchCustomerAfterAuth] First attempt failed - retrying once...");
     await wait(600);
     return dispatch(getCustomerById({ contactNumber, accessToken })).unwrap();
   }
@@ -261,9 +259,9 @@ export const loginCustomer = createAsyncThunk(
   "customers/loginCustomer",
   async ({ contactNumber, password }, { dispatch, rejectWithValue }) => {
     setLoginFlow(true);
+    const version = getSessionVersion();
 
     try {
-      console.log("[loginCustomer] Calling API with:", { contactNumber });
 
       const loginResponse = await api.post(
         "/",
@@ -272,10 +270,10 @@ export const loginCustomer = createAsyncThunk(
       );
 
       const loginData = parseResponse(loginResponse.data);
-      console.log("[loginCustomer] Response:", JSON.stringify(loginData));
+
 
       const { code, message, status, accessToken, refreshToken } = extractResponseInfo(loginData);
-      console.log("[loginCustomer] Extracted - code:", code, "status:", status, "hasToken:", !!accessToken);
+
 
       const isSuccess = status === true && Boolean(accessToken);
 
@@ -284,14 +282,9 @@ export const loginCustomer = createAsyncThunk(
         return rejectWithValue(message || "Login failed. Invalid credentials.");
       }
 
-      console.log("[loginCustomer] Saving token to storage before fetching customer...");
-      await AsyncStorage.setItem(
-        CUSTOMER_KEY,
-        JSON.stringify({
-          contactNumber,
-          accessToken,
-          refreshToken,
-        })
+      await writeCustomer(
+        { contactNumber, accessToken, refreshToken },
+        () => isSessionVersionCurrent(version)
       );
 
       console.log("[loginCustomer] Fetching customer details...");
@@ -305,10 +298,10 @@ export const loginCustomer = createAsyncThunk(
         refreshToken: refreshToken || customer.refreshToken,
       };
 
-      await saveCustomerToStorage(customerWithTokens);
+      await writeCustomer(customerWithTokens, () => isSessionVersionCurrent(version));
       return customerWithTokens;
     } catch (error) {
-      console.error("[loginCustomer] Error:", error);
+      if (!error?.authExpired) console.warn("[loginCustomer] Could not complete login.");
       return rejectWithValue(toErrorMessage(error, "An unknown error occurred during login."));
     } finally {
       setLoginFlow(false);
@@ -420,6 +413,7 @@ export const refreshCustomerToken = createAsyncThunk(
   "customers/refreshToken",
   async (_, { getState, rejectWithValue }) => {
     try {
+      const version = getSessionVersion();
       const state = getState();
       const currentCustomer = state.customer?.currentCustomer;
       if (!currentCustomer?.refreshToken) return rejectWithValue("No refresh token available.");
@@ -437,7 +431,7 @@ export const refreshCustomerToken = createAsyncThunk(
         refreshToken: data.refreshToken || currentCustomer.refreshToken,
       };
 
-      await saveCustomerToStorage(updatedCustomer);
+      await writeCustomer(updatedCustomer, () => isSessionVersionCurrent(version));
       return updatedCustomer;
     } catch (error) {
       return rejectWithValue(toErrorMessage(error, "Failed to refresh token."));
@@ -463,10 +457,16 @@ const customerSlice = createSlice({
   initialState,
   reducers: {
     silentLogoutAction: (state) => {
-      state.currentCustomer = null;
-      state.selectedCustomer = null;
-      state.isAuthenticated = false;
-      AsyncStorage.removeItem("customer").catch(() => {});
+      // Pure reducer: storage removal belongs to logoutAndRedirect.
+      Object.assign(state, initialState, { isAuthChecked: true });
+    },
+    updateSessionTokens: (state, action) => {
+      if (!state.isAuthenticated || !state.currentCustomer) return;
+      // Profile must stay the same account: a late refresh must not replace
+      // a newly signed-in user's tokens or personal information.
+      if (state.currentCustomer.contactNumber !== action.payload?.contactNumber) return;
+      state.currentCustomer.accessToken = action.payload.accessToken;
+      state.currentCustomer.refreshToken = action.payload.refreshToken;
     },
     setCurrentCustomer: (state, action) => {
       state.currentCustomer = action.payload;
@@ -495,16 +495,17 @@ const customerSlice = createSlice({
 
       .addCase(fetchCustomers.pending, (s) => { s.loading = true; s.error = null; })
       .addCase(fetchCustomers.fulfilled, (s, a) => {
-        s.loading = false; s.customerList = Array.isArray(a.payload) ? a.payload : []; s.error = null;
+        s.loading = false;
+        if (s.isAuthenticated) s.customerList = Array.isArray(a.payload) ? a.payload : [];
+        s.error = null;
       })
       .addCase(fetchCustomers.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
 
       .addCase(getCustomerById.pending, (s) => { s.loading = true; s.error = null; })
       .addCase(getCustomerById.fulfilled, (s, a) => {
         s.loading = false; s.error = null;
-        if (!s.currentCustomer || !s.isAuthenticated) {
+        if (s.isAuthenticated) {
           s.currentCustomer = a.payload;
-          s.isAuthenticated = true;
         }
       })
       .addCase(getCustomerById.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
@@ -529,7 +530,11 @@ const customerSlice = createSlice({
       .addCase(updateCustomerPassword.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
 
       .addCase(refreshCustomerToken.pending, (s) => { s.loading = true; s.error = null; })
-      .addCase(refreshCustomerToken.fulfilled, (s, a) => { s.loading = false; s.currentCustomer = a.payload; s.error = null; })
+      .addCase(refreshCustomerToken.fulfilled, (s, a) => {
+        s.loading = false;
+        if (s.isAuthenticated) s.currentCustomer = a.payload;
+        s.error = null;
+      })
       .addCase(refreshCustomerToken.rejected, (s, a) => { s.loading = false; s.error = a.payload || a.error?.message; })
 
       /* ====== LOGOUT THUNK STATES ====== */
@@ -552,7 +557,7 @@ const customerSlice = createSlice({
 });
 
 export const {
-  silentLogoutAction, setCurrentCustomer,
+  silentLogoutAction, setCurrentCustomer, updateSessionTokens,
   clearCustomers, setCustomer, clearSelectedCustomer, setAuthenticated, clearError,
 } = customerSlice.actions;
 

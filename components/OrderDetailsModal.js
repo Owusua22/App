@@ -1,17 +1,8 @@
+import { createWebSafeStyles } from '../theme/webSafeStyles';
 import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  Modal,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  Dimensions,
-  SafeAreaView,
-  ActivityIndicator,
-  Alert,
-  Platform,
-} from "react-native";
+import { View, Modal, ScrollView, TouchableOpacity, StyleSheet, Dimensions, ActivityIndicator, Alert, Platform } from 'react-native';
+import Text from './AppText';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import CachedImage from "./CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import Icon from "react-native-vector-icons/MaterialIcons";
@@ -340,7 +331,7 @@ const OrderModal = ({ orderCode, isModalVisible, onClose }) => {
       <Modal visible transparent animationType="slide" onRequestClose={onClose}>
         <View style={styles.loaderContainer}>
           <View style={styles.loaderCard}>
-            <ActivityIndicator size="large" color="#10b981" />
+            <ActivityIndicator size="large" color="#086942" />
             <Text style={styles.loaderText}>Loading order details...</Text>
           </View>
         </View>
@@ -495,7 +486,7 @@ const OrderModal = ({ orderCode, isModalVisible, onClose }) => {
                     <View style={styles.deliveryInfoSection}>
                       <View style={styles.infoRow}>
                         <View style={[styles.infoIconWrapper, styles.personIcon]}>
-                          <Icon name="person" size={20} color="#10b981" />
+                          <Icon name="person" size={20} color="#086942" />
                         </View>
                         <View style={styles.infoTextContainer}>
                           <Text style={styles.infoLabel}>Recipient Name</Text>
@@ -507,7 +498,7 @@ const OrderModal = ({ orderCode, isModalVisible, onClose }) => {
 
                       <View style={styles.infoRow}>
                         <View style={[styles.infoIconWrapper, styles.phoneIcon]}>
-                          <Icon name="phone" size={20} color="#10b981" />
+                          <Icon name="phone" size={20} color="#086942" />
                         </View>
                         <View style={styles.infoTextContainer}>
                           <Text style={styles.infoLabel}>Contact Number</Text>
@@ -521,7 +512,7 @@ const OrderModal = ({ orderCode, isModalVisible, onClose }) => {
                     <View style={styles.deliveryInfoSection}>
                       <View style={styles.infoRow}>
                         <View style={[styles.infoIconWrapper, styles.locationIcon]}>
-                          <Icon name="location-on" size={20} color="#10b981" />
+                          <Icon name="location-on" size={20} color="#086942" />
                         </View>
                         <View style={styles.infoTextContainer}>
                           <Text style={styles.infoLabel}>Delivery Address</Text>
@@ -534,7 +525,7 @@ const OrderModal = ({ orderCode, isModalVisible, onClose }) => {
                       {!!deliveryDetails.orderNote && (
                         <View style={styles.infoRow}>
                           <View style={[styles.infoIconWrapper, styles.noteIcon]}>
-                            <Icon name="note" size={20} color="#10b981" />
+                            <Icon name="note" size={20} color="#086942" />
                           </View>
                           <View style={styles.infoTextContainer}>
                             <Text style={styles.infoLabel}>Special Notes</Text>
@@ -622,7 +613,7 @@ const OrderModal = ({ orderCode, isModalVisible, onClose }) => {
                 <View style={styles.footerTotals}>
                   <View style={styles.totalSection}>
                     <View style={styles.totalIconContainer}>
-                      <Icon name="shopping-cart" size={16} color="#10b981" />
+                      <Icon name="shopping-cart" size={16} color="#086942" />
                     </View>
                     <View>
                       <Text style={styles.totalItemsLabel}>Total Items</Text>
@@ -634,7 +625,7 @@ const OrderModal = ({ orderCode, isModalVisible, onClose }) => {
 
                   <View style={styles.totalSection}>
                     <View style={styles.totalIconContainer}>
-                      <Icon name="account-balance-wallet" size={16} color="#10b981" />
+                      <Icon name="account-balance-wallet" size={16} color="#086942" />
                     </View>
                     <View>
                       <Text style={styles.totalAmountLabel}>Total Amount</Text>
@@ -702,7 +693,7 @@ const OrderModal = ({ orderCode, isModalVisible, onClose }) => {
 
 export default OrderModal;
 
-const styles = StyleSheet.create({
+const styles = createWebSafeStyles({
   modalContainer: {
     flex: 1,
     backgroundColor: "rgba(15,23,42,0.85)",
@@ -716,7 +707,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   header: {
-    backgroundColor: "#10b981",
+    backgroundColor: "#086942",
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderTopLeftRadius: 24,
@@ -756,7 +747,7 @@ const styles = StyleSheet.create({
   dateCard: { backgroundColor: "#ecfdf5" },
   itemsCard: { backgroundColor: "#eff6ff" },
   amountCard: { backgroundColor: "#fef3c7" },
-  summaryCardIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#10b981", alignItems: "center", justifyContent: "center", marginRight: 8 },
+  summaryCardIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#086942", alignItems: "center", justifyContent: "center", marginRight: 8 },
   itemsCardIcon: { backgroundColor: "#3b82f6" },
   amountCardIcon: { backgroundColor: "#f59e0b" },
   summaryCardContent: { flex: 1 },
@@ -767,7 +758,7 @@ const styles = StyleSheet.create({
   deliveryCard: { backgroundColor: "white", borderRadius: 16, padding: 12, marginBottom: 16, shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   cardHeaderLeft: { flexDirection: "row", alignItems: "center" },
-  cardHeaderIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#10b981", alignItems: "center", justifyContent: "center", marginRight: 8 },
+  cardHeaderIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#086942", alignItems: "center", justifyContent: "center", marginRight: 8 },
   cardHeaderTitle: { fontSize: 14, fontWeight: "700", color: "#111827" },
   cardContent: { marginTop: 4 },
   deliveryInfoGrid: { flexDirection: "row" },
@@ -791,7 +782,7 @@ const styles = StyleSheet.create({
   imageWrapper: { width: 70, height: 70, borderRadius: 14, overflow: "hidden", backgroundColor: "#f9fafb", borderWidth: StyleSheet.hairlineWidth, borderColor: "#e5e7eb" },
   productImage: { width: "100%", height: "100%" },
   placeholderImage: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#ecfdf5" },
-  quantityBadge: { position: "absolute", bottom: 4, right: 4, backgroundColor: "#10b981", borderRadius: 10, paddingHorizontal: 5, paddingVertical: 2 },
+  quantityBadge: { position: "absolute", bottom: 4, right: 4, backgroundColor: "#086942", borderRadius: 10, paddingHorizontal: 5, paddingVertical: 2 },
   quantityBadgeText: { fontSize: 10, color: "white", fontWeight: "700" },
   viewOverlay: { position: "absolute", top: 4, right: 4, backgroundColor: "rgba(15,23,42,0.6)", borderRadius: 10, padding: 2 },
   productDetails: { flex: 1 },
@@ -805,7 +796,7 @@ const styles = StyleSheet.create({
   quantityContainer: { marginTop: 2, paddingVertical: 2 },
   priceContainer: { marginTop: 2, paddingVertical: 2 },
   subtotalContainer: { marginTop: 2, paddingVertical: 2 },
-  quantityValue: { color: "#10b981" },
+  quantityValue: { color: "#086942" },
   priceValue: { color: "#1d4ed8" },
   subtotalValue: { color: "#b91c1c" },
   footer: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#e5e7eb", paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "white" },
@@ -827,7 +818,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: "#059669",
+    backgroundColor: "#086942",
   },
   invoiceButtonDisabled: { opacity: 0.6 },
   invoiceButtonText: { color: "white", fontSize: 14, fontWeight: "700" },
@@ -841,7 +832,7 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 13, color: "#4b5563", textAlign: "center", marginBottom: 4 },
   errorSubtext: { fontSize: 12, color: "#6b7280", marginBottom: 12 },
   errorActions: { flexDirection: "row", marginTop: 4 },
-  retryButton: { flexDirection: "row", alignItems: "center", backgroundColor: "#10b981", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, marginRight: 8 },
+  retryButton: { flexDirection: "row", alignItems: "center", backgroundColor: "#086942", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, marginRight: 8 },
   retryButtonText: { color: "white", fontSize: 13, fontWeight: "600", marginLeft: 4 },
   closeButton: { borderRadius: 999, borderWidth: 1, borderColor: "#d1d5db", paddingHorizontal: 16, paddingVertical: 8 },
   closeButtonText: { color: "#374151", fontSize: 13, fontWeight: "500" },

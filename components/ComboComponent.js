@@ -1,21 +1,17 @@
+import { createWebSafeStyles } from '../theme/webSafeStyles';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Platform,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { ActivityIndicator, Alert, FlatList, Platform, StyleSheet, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import Text from './AppText';
+import CatalogProductCard, { CATALOG_CARD_HEIGHT, CATALOG_CARD_IMAGE_HEIGHT, getCatalogLayout } from './CatalogProductCard';
 import CachedImage from "./CachedImage";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 
-import { fetchProducts, resetProducts } from "../redux/slice/productSlice";
+import { fetchProducts } from "../redux/slice/productSlice";
+import { useCatalogRevalidation } from '../hooks/useCatalogRevalidation';
+import CatalogFetchNotice from './CatalogFetchNotice';
+import { refreshCatalog } from '../utils/catalogRefresh';
 import { addToCart } from "../redux/slice/cartSlice";
 import { addToWishlist } from "../redux/wishlistSlice";
 import frankoLogo from "../assets/frankoIcon.png";
@@ -24,17 +20,17 @@ import {
   resolveProductImageUri,
 } from "../utils/ImageCache";
 
-const MAX_GRID_WIDTH = 1000;
+const MAX_GRID_WIDTH = 1100;
 const CARD_WIDTH = 120;
 const MIN_CARD_WIDTH = 120;
 const CARD_MARGIN = 6;
 const ROW_GAP = 12;
-const CARD_HEIGHT = 262;
-const IMAGE_HEIGHT = 150;
+const CARD_HEIGHT = CATALOG_CARD_HEIGHT;
+const IMAGE_HEIGHT = CATALOG_CARD_IMAGE_HEIGHT;
 const COLORS = {
-  green: "#16A34A",
-  greenDark: "#166534",
-  greenDeep: "#14532D",
+  green: "#086942",
+  greenDark: "#086942",
+  greenDeep: "#086942",
   greenLight: "#DCFCE7",
   greenTint: "#F0FDF4",
   greenBorder: "#BBF7D0",
@@ -94,156 +90,11 @@ const LoadingCard = memo(
   )
 );
 
-const ProductCard = memo(
-  ({
-    product,
-    onPress,
-    onAddToCart,
-    isAddingToCart,
-    isInWishlist,
-    onToggleWishlist,
-    imageUri,
-    discount,
-    isNew,
-    cardWidth = CARD_WIDTH,
-    cardHeight = CARD_HEIGHT,
-    imageHeight = IMAGE_HEIGHT,
-  }) => {
-    const [imageStatus, setImageStatus] = useState(imageUri ? "loading" : "error");
-    const imageSource = useMemo(
-      () => (imageUri ? { uri: imageUri } : null),
-      [imageUri]
-    );
-
-    React.useEffect(() => {
-      setImageStatus(imageUri ? "loading" : "error");
-    }, [imageUri]);
-
-    const handleImageLoad = useCallback(() => setImageStatus("loaded"), []);
-    const handleImageError = useCallback(() => setImageStatus("error"), []);
-
-    const handleCartPress = useCallback(
-      (event) => {
-        event?.stopPropagation?.();
-        onAddToCart(product);
-      },
-      [onAddToCart, product]
-    );
-    const handleWishlistPress = useCallback(
-      (event) => {
-        event?.stopPropagation?.();
-        onToggleWishlist(product, isInWishlist);
-      },
-      [isInWishlist, onToggleWishlist, product]
-    );
-
-    return (
-      <View style={[styles.productCard, { width: cardWidth, height: cardHeight }]}>
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel={`View ${product.productName ?? "product"}`}
-          activeOpacity={0.9}
-          onPress={() => onPress(product)}
-          style={styles.cardTouchable}
-        >
-          <View style={[styles.imageContainer, { height: imageHeight }]}>
-            {imageUri ? (
-              <CachedImage
-                source={imageSource}
-                style={[styles.productImage, imageStatus !== "loaded" && styles.hiddenImage]}
-                resizeMode="contain"
-                resizeMethod="resize"
-                onLoad={handleImageLoad}
-                onError={handleImageError}
-              />
-            ) : null}
-
-            {imageStatus !== "loaded" && (
-              <View pointerEvents="none" style={styles.imageLoadingContainer}>
-                <CachedImage
-                  source={frankoLogo}
-                  style={styles.frankoLogo}
-                  accessibilityLabel="Franko Trading logo"
-                />
-                {imageStatus === "loading" && (
-                  <ActivityIndicator
-                    size="large"
-                    color={COLORS.green}
-                    style={styles.imageSpinner}
-                  />
-                )}
-              </View>
-            )}
-
-            {isNew && (
-              <View style={styles.newBadge}>
-                <Text style={styles.badgeText}>NEW</Text>
-              </View>
-            )}
-            {discount > 0 && (
-              <View style={styles.discountBadge}>
-                <Text style={styles.badgeText}>SALE</Text>
-              </View>
-            )}
-
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel={
-                isInWishlist ? "Already in wishlist" : `Add ${product.productName} to wishlist`
-              }
-              style={styles.wishlistButton}
-              onPress={handleWishlistPress}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <FontAwesome
-                name={isInWishlist ? "heart" : "heart-o"}
-                size={16}
-                color={isInWishlist ? COLORS.green : COLORS.muted}
-              />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.productInfo}>
-            <Text style={styles.productName} numberOfLines={2}>
-              {product.productName ?? "Product"}
-            </Text>
-            <View style={styles.priceContainer}>
-              <Text
-                style={styles.productPrice}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.75}
-              >
-                GH₵ {formatPrice(product.price)}
-              </Text>
-              {Number(product.oldPrice) > 0 && (
-                <Text style={styles.oldPrice}>GH₵ {formatPrice(product.oldPrice)}</Text>
-              )}
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel={`Add ${product.productName ?? "product"} to cart`}
-          style={[
-            styles.addToCartButton,
-            isAddingToCart && styles.addToCartButtonDisabled,
-          ]}
-          onPress={handleCartPress}
-          disabled={isAddingToCart}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-        >
-          {isAddingToCart ? (
-            <ActivityIndicator size="small" color={COLORS.greenDeep} />
-          ) : (
-            <FontAwesome name="shopping-cart" size={14} color={COLORS.surface} />
-          )}
-        </TouchableOpacity>
-      </View>
-    );
-  }
-);
+const ProductCard = memo(({ product, onPress, onAddToCart, isAddingToCart, onToggleWishlist, isInWishlist, cardWidth }) => (
+  <CatalogProductCard product={product} width={cardWidth}
+    onPress={() => onPress(product)} onAddToCart={onAddToCart} addingToCart={isAddingToCart}
+    onWishlistPress={(item) => onToggleWishlist(item, isInWishlist)} />
+));
 
 const ComboComponent = () => {
   const dispatch = useDispatch();
@@ -263,74 +114,30 @@ const ComboComponent = () => {
   const [requestComplete, setRequestComplete] = useState(products.length > 0);
   const [requestError, setRequestError] = useState(false);
   const [listWidth, setListWidth] = useState(0);
-  const productsRequestedRef = useRef(products.length > 0);
-  const productsRequestInFlightRef = useRef(false);
+  const fetching = useCatalogRevalidation('products:all', () => fetchProducts(), {
+    onResult: (result) => {
+      if (result?.error) setRequestError(true);
+      else setRequestError(false);
+      setRequestComplete(true);
+    },
+  });
 
-  useEffect(() => {
-    if (products.length > 0) productsRequestedRef.current = true;
-  }, [products.length]);
-
-  // Measure the actual list width as well as the window width so grids also fit
-  // correctly inside split-screen layouts and parent containers with padding.
-  const gridWidth = Math.min(listWidth || windowWidth, MAX_GRID_WIDTH);
-  // Keep the card rails aligned to a single inset on phones; use a wider inset only on tablets.
-  const horizontalPadding = gridWidth < 600 ? 12 : 20;
-  const columnGap = CARD_MARGIN;
-  const availableGridWidth = gridWidth - horizontalPadding * 2;
-  const fitColumns = Math.floor(
-    (availableGridWidth + columnGap) / (MIN_CARD_WIDTH + columnGap)
-  );
-  const numColumns = Math.max(
-    gridWidth < 300 ? 1 : 2,
-    Math.min(4, fitColumns)
-  );
-  const cardWidth = Math.max(
-    0,
-    (gridWidth - horizontalPadding * 2 - columnGap * (numColumns - 1)) / numColumns
-  );
+  // Match the same 2/3/4-column card widths used by the category screens.
+  const gridWidth = Math.min(listWidth || windowWidth, 1100);
+  const horizontalPadding = 12;
+  const { columns: numColumns, cardWidth } = getCatalogLayout(gridWidth);
   const imageHeight = IMAGE_HEIGHT;
   const cardHeight = CARD_HEIGHT;
   const isSmall = gridWidth < 360;
   const titleFontSize = isSmall ? 22 : gridWidth >= 700 ? 30 : 25;
 
-  const loadProducts = useCallback(
-    (force = false) => {
-      if (productsRequestInFlightRef.current) return;
-      // Home regains focus frequently. Reuse the Redux product list instead of
-      // clearing and downloading it again on every return to the screen.
-      if (!force && productsRequestedRef.current) return;
-
-      productsRequestedRef.current = true;
-      productsRequestInFlightRef.current = true;
-      setRequestComplete(false);
-      setRequestError(false);
-      if (force) dispatch(resetProducts());
-
-      try {
-        const request = dispatch(fetchProducts());
-        Promise.resolve(request)
-          .then((result) => {
-            if (result?.error) setRequestError(true);
-          })
-          .catch(() => setRequestError(true))
-          .finally(() => {
-            productsRequestInFlightRef.current = false;
-            setRequestComplete(true);
-          });
-      } catch (_error) {
-        productsRequestInFlightRef.current = false;
-        setRequestError(true);
-        setRequestComplete(true);
-      }
-    },
-    [dispatch]
-  );
-
-  useFocusEffect(
-    useCallback(() => {
-      loadProducts();
-    }, [loadProducts])
-  );
+  const loadProducts = useCallback(() => {
+    setRequestError(false);
+    void refreshCatalog(dispatch, 'products:all', () => fetchProducts(), { force: true })
+      .then((result) => setRequestError(Boolean(result?.error)))
+      .catch(() => setRequestError(true))
+      .finally(() => setRequestComplete(true));
+  }, [dispatch]);
 
   const recentProducts = useMemo(() => {
     if (!products.length) return [];
@@ -507,21 +314,18 @@ const ComboComponent = () => {
               <View style={styles.eyebrowDot} />
               <Text style={styles.eyebrowText}>JUST LANDED</Text>
             </View>
-            <Text style={[styles.title, { fontSize: titleFontSize }]}>New Arrivals</Text>
+            <Text style={[styles.title, { fontSize: titleFontSize }]}>New arrivals</Text>
             <View style={styles.titleUnderline} />
-            <Text style={[styles.subtitle, { fontSize: isSmall ? 12 : 13 }]}>
-              Fresh picks, just for you
-            </Text>
           </View>
 
           <TouchableOpacity
             accessibilityRole="button"
-            accessibilityLabel="Shop all products"
+            accessibilityLabel="View products products"
             activeOpacity={0.85}
             style={[styles.viewAllButton, isSmall && styles.viewAllButtonSmall]}
             onPress={handleViewAll}
           >
-            <Text style={styles.viewAllText}>Shop all</Text>
+            <Text style={styles.viewAllText}>View products</Text>
             <View style={styles.arrowContainer}>
               <FontAwesome name="arrow-right" size={12} color={COLORS.greenDark} />
             </View>
@@ -548,7 +352,7 @@ const ComboComponent = () => {
               accessibilityLabel="Retry loading products"
               activeOpacity={0.82}
               style={styles.retryButton}
-              onPress={() => loadProducts(true)}
+              onPress={loadProducts}
             >
               <FontAwesome name="refresh" size={12} color={COLORS.surface} />
               <Text style={styles.retryText}>Retry</Text>
@@ -569,6 +373,7 @@ const ComboComponent = () => {
 
   return (
     <View style={styles.container}>
+      <CatalogFetchNotice loading={fetching} hasCachedData={products.length > 0} label="products" />
       <FlatList
         key={`new-arrivals-${numColumns}`}
         style={styles.list}
@@ -598,12 +403,12 @@ const ComboComponent = () => {
 
 export default ComboComponent;
 
-const styles = StyleSheet.create({
+const styles = createWebSafeStyles({
   container: {
     flex: 1,
     width: "100%",
     backgroundColor: COLORS.canvas,
-    paddingHorizontal: 16,
+    paddingHorizontal: 0,
   },
   list: {
     width: "100%",
@@ -615,6 +420,7 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
   },
   header: {
+    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",

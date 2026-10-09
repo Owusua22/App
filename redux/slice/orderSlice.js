@@ -60,6 +60,7 @@ const sanitizeBackendMessage = (message, fallback) => {
 };
 
 const toErrorPayload = (error, fallback) => {
+  if (error?.authExpired) return { authExpired: true, message: "Your session expired. Please sign in again." };
   const data = error?.response?.data;
   const serverMessage =
     data?.message ??
@@ -655,6 +656,23 @@ const orderSlice = createSlice({
       }
     },
 
+    clearOrderSession: (state) => {
+      state.orders = [];
+      state.salesOrder = [];
+      state.localOrders = [];
+      state.deliveryAddress = null;
+      state.deliveryUpdate = null;
+      state.lifeCycle = null;
+      state.cancelResult = null;
+      state.cartValidation = null;
+      state.checkoutDetails = null;
+      state.orderAddressDetails = null;
+      state.loading = false;
+      state.loadingStatus = getInitialLoadingStatus();
+      state.error = getInitialErrorState();
+      state.errorStatus = getInitialErrorState();
+    },
+
     clearOrders: (state) => {
       state.orders = [];
       state.salesOrder = [];
@@ -856,6 +874,9 @@ const orderSlice = createSlice({
         state.orders = asArray(action.payload);
       })
       .addCase(fetchOrdersByCustomer.rejected, (state, action) => {
+        // logoutAndRedirect already cleared order state; don't restore an error
+        // banner after redirect while this old request finishes rejecting.
+        if (action.payload?.authExpired) return;
         rejectLoading(state, "orders", action, "Failed to fetch orders");
       })
 
@@ -920,6 +941,7 @@ const orderSlice = createSlice({
 
 export const {
   clearOrders,
+  clearOrderSession,
   saveCheckoutDetails,
   saveAddressDetails,
   updateOrder,

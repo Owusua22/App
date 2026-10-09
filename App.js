@@ -1,22 +1,15 @@
+import { createWebSafeStyles } from './theme/webSafeStyles';
 // App.js
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  StyleSheet,
-  View,
-  Text,
-  ActivityIndicator,
-  Image,
-  StatusBar as RNStatusBar,
-  Animated,
-  AppState,
-} from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { StyleSheet, View, ActivityIndicator, Image, StatusBar as RNStatusBar, Animated, AppState, Platform } from 'react-native';
+import Text from './components/AppText';
 
 import { Provider, useDispatch, useSelector } from "react-redux";
 import { PersistGate } from "redux-persist/integration/react";
-import { store, persistor } from "./redux/store";
+import { store, persistor } from './redux/store';
 
 import { NavigationContainer } from "@react-navigation/native";
-import { createStackNavigator } from "@react-navigation/stack";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 import {
   SafeAreaView,
@@ -27,64 +20,70 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import NetInfo from "@react-native-community/netinfo";
 
-import { loadWishlistFromStorage } from "./redux/wishlistSlice";
-import { checkAuthStatus, selectIsAuthChecked } from "./redux/slice/customerSlice";
-import { navigationRef } from "./services/navigationService";
+import { loadWishlistFromStorage } from './redux/wishlistSlice';
+import { checkAuthStatus, selectIsAuthChecked } from './redux/slice/customerSlice';
+import { navigationRef, reset, flushAuthRedirect } from './services/navigationService';
 import {
   updateLastActivity,
-  checkInactivityTimeout,
   logoutAndRedirect,
-} from "./redux/slice/axiosInstance";
-import ForceUpdateGate from "./config/ForceUpdateGate";
-import { preloadProductImages } from "./utils/ImageCache";
+  checkActiveSession,
+} from './redux/slice/axiosInstance';
+import ForceUpdateGate from './config/ForceUpdateGate';
+import { franko } from './theme/franko';
+import { useFonts } from 'expo-font';
+import {
+  Inter_400Regular, Inter_500Medium, Inter_600SemiBold,
+  Inter_700Bold, Inter_800ExtraBold, Inter_900Black,
+} from '@expo-google-fonts/inter';
 
 // Screens
-import HomeScreen from "./screens/HomeScreen";
-import ProductDetailsScreen from "./screens/ProductDetailsScreen";
-import CartScreen from "./screens/CartScreen";
-import SignupScreen from "./screens/SignupScreen";
-import CheckoutScreen from "./screens/CheckoutScreen";
-import AccountScreen from "./screens/AccountScreen";
-import CategoryScreen from "./screens/CategoryScreen";
-import BrandScreen from "./screens/BrandScreen";
-import ShopScreen from "./screens/ShopScreen";
-import OrderReceivedScreen from "./screens/OrderReceivedScreen";
-import OrderHistoryScreen from "./screens/OrderHistoryScreen";
-import ProductsScreen from "./screens/ProductsScreen";
-import PaymentGatewayScreen from "./screens/PaymentGatewayScreen";
-import OrderPlacedScreen from "./screens/OrderPlacedScreen";
-import ShowroomScreen from "./screens/ShowroomScreen";
-import PhoneScreen from "./screens/Categories/PhoneScreen";
-import SpeakerScreen from "./screens/Categories/SpeakerScreen";
-import AccessoriesScreen from "./screens/Categories/AccessoriesScreen";
-import ComputerScreen from "./screens/Categories/ComputerScreen";
-import TelevisionScreen from "./screens/Categories/TelevisionScreen";
-import FanScreen from "./screens/Categories/FanScreen";
-import AirConditionScreen from "./screens/Categories/AirConditionScreen";
-import ComboScreen from "./screens/Categories/ComboScreen";
-import ApplianceScreen from "./screens/Categories/ApplianceScreen";
-import FridgeScreen from "./screens/Categories/FridgeScreen";
-import RecentlyViewedScreen from "./screens/RecentlyViewedScreen";
-import CustomerServiceScreen from "./screens/CustomerService";
-import InviteScreen from "./screens/InviteScreen";
-import AddressManagementScreen from "./screens/AddressManagementScreen";
-import SearchScreen from "./screens/SearchScreen";
-import AboutScreen from "./screens/AboutScreen";
-import FAQScreen from "./screens/FAQScreen";
-import OrderCancellationScreen from "./screens/OrderCancellationScreen";
-import MachineScreen from "./screens/Categories/MachineScreen";
-import TermsScreen from "./screens/TermsScreen";
-import WishlistScreen from "./screens/WishlistScreen";
+import HomeScreen from './screens/shop/HomeScreen';
+import ProductDetailsScreen from './screens/shop/ProductDetailsScreen';
+import CartScreen from './screens/orders/CartScreen';
+import SignupScreen from './screens/account/SignupScreen';
+import CheckoutScreen from './screens/orders/CheckoutScreen';
+import AccountScreen from './screens/account/AccountScreen';
+import CategoryScreen from './screens/shop/CategoryScreen';
+import BrandScreen from './screens/shop/BrandScreen';
+import ShopScreen from './screens/shop/ShopScreen';
+import OrderReceivedScreen from './screens/orders/OrderReceivedScreen';
+import OrderHistoryScreen from './screens/orders/OrderHistoryScreen';
+import ProductsScreen from './screens/shop/ProductsScreen';
+import PaymentGatewayScreen from './screens/orders/PaymentGatewayScreen';
+import OrderPlacedScreen from './screens/orders/OrderPlacedScreen';
+import ShowroomScreen from './screens/shop/ShowroomScreen';
+import PhoneScreen from './screens/shop/categories/PhoneScreen';
+import SpeakerScreen from './screens/shop/categories/SpeakerScreen';
+import AccessoriesScreen from './screens/shop/categories/AccessoriesScreen';
+import ComputerScreen from './screens/shop/categories/ComputerScreen';
+import TelevisionScreen from './screens/shop/categories/TelevisionScreen';
+import FanScreen from './screens/shop/categories/FanScreen';
+import AirConditionScreen from './screens/shop/categories/AirConditionScreen';
+import ComboScreen from './screens/shop/categories/ComboScreen';
+import ApplianceScreen from './screens/shop/categories/ApplianceScreen';
+import FridgeScreen from './screens/shop/categories/FridgeScreen';
+import RecentlyViewedScreen from './screens/shop/RecentlyViewedScreen';
+import CustomerServiceScreen from './screens/support/CustomerService';
+import InviteScreen from './screens/account/InviteScreen';
+import AddressManagementScreen from './screens/orders/AddressManagementScreen';
+import SearchScreen from './screens/shop/SearchScreen';
+import AboutScreen from './screens/support/AboutScreen';
+import FAQScreen from './screens/support/FAQScreen';
+import OrderCancellationScreen from './screens/orders/OrderCancellationScreen';
+import MachineScreen from './screens/shop/categories/MachineScreen';
+import TermsScreen from './screens/support/TermsScreen';
+import PolicyScreen from './screens/support/PolicyScreen';
+import ContactUsScreen from './screens/support/ContactUsScreen';
+import WishlistScreen from './screens/shop/WishlistScreen';
 
 // Components
-import Header from "./components/Header";
-import Footer from "./components/Footer";
-import FloatingTawkChat from "./components/FloatingTawkChat";
-import PaymentHelpScreen from "./screens/PaymentHelpScreen";
+import Header from './components/Header';
+import Footer from './components/Footer';
+import FloatingTawkChat from './components/FloatingTawkChat';
+import { notifyScrollActivity } from './utils/scrollActivity';
+import PaymentHelpScreen from './screens/orders/PaymentHelpScreen';
 
-const Stack = createStackNavigator();
-const EMPTY_PRODUCTS = [];
-const EMPTY_PRODUCT_GROUPS = {};
+const Stack = createNativeStackNavigator();
 const WELCOME_DOTS = Array.from({ length: 20 }, () => ({
   left: `${Math.random() * 100}%`,
   top: `${Math.random() * 100}%`,
@@ -165,7 +164,7 @@ const WelcomeScreen = ({ onReady }) => {
       />
 
       <LinearGradient
-        colors={["#BBF7D0", "#10B981", "#059669"]}
+        colors={["#086942", "#086942", "#84e8b9"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.welcomeContainer}
@@ -191,7 +190,7 @@ const WelcomeScreen = ({ onReady }) => {
           >
             <View style={styles.logoShadow}>
               <Image
-                source={require("./assets/frankoIcon.png")}
+                source={require('./assets/frankoIcon.png')}
                 style={styles.logo}
                 resizeMode="contain"
               />
@@ -202,8 +201,7 @@ const WelcomeScreen = ({ onReady }) => {
             style={[styles.textContainer, { transform: [{ translateY: slideAnim }] }]}
           >
             <Text style={styles.welcomeTitle}>Welcome to</Text>
-            <Text style={styles.companyName}>Franko Trading Ent</Text>
-            <Text style={styles.tagline}>Your trusted electronics partner</Text>
+            <Text style={styles.companyName}>Franko Trading</Text>
           </Animated.View>
 
           {loading && (
@@ -215,7 +213,7 @@ const WelcomeScreen = ({ onReady }) => {
             >
               <ActivityIndicator size="large" color="#ffffff" />
               <Text style={styles.loadingText}>
-                Home of quality phones and electronic appliances.
+                Loading products…
               </Text>
             </Animated.View>
           )}
@@ -235,15 +233,27 @@ const ScreenWithFooter = ({ children }) => (
   </View>
 );
 
-const HomeScreenWithFooter = () => (
+const CartScreenWithFooter = () => (
   <ScreenWithFooter>
-    <HomeScreen />
+    <CartScreen />
   </ScreenWithFooter>
 );
-const CategoryScreenWithFooter = () => (
+const ShowroomScreenWithFooter = () => (
   <ScreenWithFooter>
-    <CategoryScreen />
+    <ShowroomScreen />
   </ScreenWithFooter>
+);
+const HomeScreenWithFooter = () => (
+  <View style={{ flex: 1 }}>
+    <Header />
+    <ScreenWithFooter><HomeScreen /></ScreenWithFooter>
+  </View>
+);
+const CategoryScreenWithFooter = () => (
+  <View style={{ flex: 1 }}>
+    <Header />
+    <ScreenWithFooter><CategoryScreen /></ScreenWithFooter>
+  </View>
 );
 const AccountScreenWithFooter = () => (
   <ScreenWithFooter>
@@ -253,6 +263,11 @@ const AccountScreenWithFooter = () => (
 const ProductsScreenWithFooter = () => (
   <ScreenWithFooter>
     <ProductsScreen />
+  </ScreenWithFooter>
+);
+const WishlistScreenWithFooter = () => (
+  <ScreenWithFooter>
+    <WishlistScreen />
   </ScreenWithFooter>
 );
 const ShopScreenWithFooter = () => (
@@ -281,13 +296,20 @@ const AddressManagementScreenWithFooter = () => (
   </ScreenWithFooter>
 );
 
+// The account screen uses SignupScreen as a modal. A navigation route must
+// explicitly show it; otherwise reset('Signup') lands on an invisible modal.
+const SignInRoute = () => (
+  <SignupScreen visible onClose={() => reset('Home')} onSuccess={() => reset('Home')} />
+);
+
 /* App Stack */
 const AppStack = () => (
-  <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false }}>
+  <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false, contentStyle: { backgroundColor: franko.canvas } }}>
     <Stack.Screen name="Home" component={HomeScreenWithFooter} />
     <Stack.Screen name="ProductDetails" component={ProductDetailsScreen} />
-    <Stack.Screen name="cart" component={CartScreen} />
+    <Stack.Screen name="cart" component={CartScreenWithFooter} />
     <Stack.Screen name="Signup" component={SignupScreen} />
+    <Stack.Screen name="SignIn" component={SignInRoute} />
     <Stack.Screen name="Checkout" component={CheckoutScreen} />
     <Stack.Screen name="Category" component={CategoryScreenWithFooter} />
     <Stack.Screen name="Account" component={AccountScreenWithFooter} />
@@ -299,7 +321,7 @@ const AppStack = () => (
     <Stack.Screen name="PaymentGatewayScreen" component={PaymentGatewayScreen} />
     <Stack.Screen name="OrderPlacedScreen" component={OrderPlacedScreen} />
     <Stack.Screen name="AboutUs" component={AboutScreen} />
-    <Stack.Screen name="showroom" component={ShowroomScreen} />
+    <Stack.Screen name="showroom" component={ShowroomScreenWithFooter} />
     <Stack.Screen name="PaymentHelpScreen" component={PaymentHelpScreen} />
     <Stack.Screen name="Phones" component={PhoneScreen} />
     <Stack.Screen name="WashingMachine" component={MachineScreen} />
@@ -326,7 +348,9 @@ const AppStack = () => (
     />
     <Stack.Screen name="Search" component={SearchScreen} />
     <Stack.Screen name="HelpFAQ" component={FAQScreen} />
-    <Stack.Screen name="Wishlist" component={WishlistScreen} />
+    <Stack.Screen name="ContactUs" component={ContactUsScreen} />
+    <Stack.Screen name="Policy" component={PolicyScreen} />
+    <Stack.Screen name="Wishlist" component={WishlistScreenWithFooter} />
   </Stack.Navigator>
 );
 
@@ -353,13 +377,13 @@ const AuthLoadingScreen = () => {
       />
       <View style={[styles.authLoadingContent, { paddingTop: insets.top + 50 }]}>
         <Image
-          source={require("./assets/frankoIcon.png")}
+          source={require('./assets/frankoIcon.png')}
           style={styles.authLoadingLogo}
           resizeMode="contain"
         />
         <ActivityIndicator
           size="large"
-          color="#10B981"
+          color="#086942"
           style={styles.authLoadingIndicator}
         />
         <Text style={styles.authLoadingText}>Loading...</Text>
@@ -376,8 +400,7 @@ const MainAppContainer = () => (
       translucent
       backgroundColor="#FFFFFF"
     />
-    <Header />
-    <View style={styles.contentContainer}>
+    <View style={styles.contentContainer} onTouchMove={notifyScrollActivity} {...(Platform.OS === "web" ? { onWheel: notifyScrollActivity } : {})}>
       <AppStack />
       <FloatingTawkChat />
     </View>
@@ -387,11 +410,11 @@ const MainAppContainer = () => (
 const PersistLoadingScreen = () => (
   <View style={styles.persistLoadingContainer}>
     <Image
-      source={require("./assets/frankoIcon.png")}
+      source={require('./assets/frankoIcon.png')}
       style={styles.authLoadingLogo}
       resizeMode="contain"
     />
-    <ActivityIndicator size="large" color="#10B981" />
+    <ActivityIndicator size="large" color="#086942" />
   </View>
 );
 
@@ -403,34 +426,6 @@ const AppContent = () => {
   const dispatch = useDispatch();
 
   const isAuthChecked = useSelector(selectIsAuthChecked);
-  const products = useSelector((state) =>
-    Array.isArray(state.products?.products) ? state.products.products : EMPTY_PRODUCTS
-  );
-  const productsByShowroom = useSelector((state) =>
-    state.products?.productsByShowroom &&
-    typeof state.products.productsByShowroom === "object"
-      ? state.products.productsByShowroom
-      : EMPTY_PRODUCT_GROUPS
-  );
-
-  const productsToPreload = useMemo(() => {
-    const showroomProducts = Object.values(productsByShowroom).flatMap((rows) =>
-      Array.isArray(rows) ? rows.slice(0, 4) : []
-    );
-    // Prioritize the first cards in showroom carousels, then general products.
-    return [...showroomProducts, ...products.slice(0, 6)].slice(0, 12);
-  }, [products, productsByShowroom]);
-
-  useEffect(() => {
-    if (!isConnected || !productsToPreload.length) return;
-    // If Redux Persist has product data from the last session, warm the native
-    // image cache while the short welcome/auth screens are still visible.
-    void preloadProductImages(productsToPreload, {
-      maxImages: 8,
-      concurrency: 3,
-    });
-  }, [isConnected, productsToPreload]);
-
   const handleReady = useCallback(() => setShowWelcome(false), []);
 
   useEffect(() => {
@@ -445,7 +440,9 @@ const AppContent = () => {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
+        await checkActiveSession({ logoutIfExpiredWhileAway: true });
         await dispatch(checkAuthStatus()).unwrap();
+        await updateLastActivity();
       } catch (error) {
         console.log("[App] Auth initialization completed");
       } finally {
@@ -456,27 +453,26 @@ const AppContent = () => {
   }, [dispatch]);
 
   useEffect(() => {
-    updateLastActivity();
-
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
-      if (nextAppState === "active") {
-        const isInactive = await checkInactivityTimeout();
-        if (isInactive) {
-          console.log("[App] User inactive for 3+ days - logging out");
-          dispatch({ type: "customer/silentLogoutAction" });
-          await logoutAndRedirect();
-        } else {
-          await updateLastActivity();
-        }
+      if (nextAppState === "active" && !isInitializing) {
+        const active = await checkActiveSession({ logoutIfExpiredWhileAway: true });
+        if (active) await updateLastActivity();
       }
     });
+    return () => subscription?.remove?.();
+  }, [isInitializing]);
 
-    return () => subscription.remove();
-  }, [dispatch]);
+  // Auth can expire before the welcome view has mounted the navigator.
+  useEffect(() => {
+    if (!showWelcome && !isInitializing) {
+      const timer = setTimeout(flushAuthRedirect, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [showWelcome, isInitializing]);
 
   // Keep one NavigationContainer mounted through welcome, auth, and app states.
   return (
-    <NavigationContainer ref={navigationRef}>
+    <NavigationContainer ref={navigationRef} onStateChange={flushAuthRedirect}>
       {!isConnected && <NoInternetBanner />}
       {showWelcome ? (
         <WelcomeScreen onReady={handleReady} />
@@ -492,8 +488,17 @@ const AppContent = () => {
 };
 
 /* App Root */
-const App = () => (
-  <Provider store={store}>
+const App = () => {
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular, Inter_500Medium, Inter_600SemiBold,
+    Inter_700Bold, Inter_800ExtraBold, Inter_900Black,
+  });
+  if (!fontsLoaded && !fontError) {
+    return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}>
+      <ActivityIndicator size="large" color={franko.primary} />
+    </View>;
+  }
+  return <Provider store={store}>
     <PersistGate loading={<PersistLoadingScreen />} persistor={persistor}>
       <SafeAreaProvider>
         <ForceUpdateGate>
@@ -501,13 +506,13 @@ const App = () => (
         </ForceUpdateGate>
       </SafeAreaProvider>
     </PersistGate>
-  </Provider>
-);
+  </Provider>;
+};
 
 export default App;
 
 /* Styles */
-const styles = StyleSheet.create({
+const styles = createWebSafeStyles({
   container: {
     flex: 1,
     backgroundColor: "#FFFFFF",
@@ -636,16 +641,16 @@ const styles = StyleSheet.create({
     fontWeight: "400",
     color: "rgba(255,255,255,0.8)",
     textAlign: "center",
-    fontStyle: "italic",
+    fontStyle: "normal",
   },
   loadingContainer: {
     alignItems: "center",
   },
   loadingText: {
     marginTop: 15,
-    fontSize: 16,
+    fontSize: 13,
     color: "rgba(255,255,255,0.9)",
-    fontWeight: "400",
+    fontWeight: "500",
   },
   bottomWave: {
     position: "absolute",

@@ -1,4 +1,7 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+// The prebundled ESM build avoids Metro Web resolving pdf-lib's old
+// tslib/modules -> CommonJS default interop (tslib.default was undefined).
+// The library/API stays the same for web, Android and iOS invoice exports.
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib/dist/pdf-lib.esm.js";
 
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;

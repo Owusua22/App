@@ -1,14 +1,7 @@
+import { createWebSafeStyles } from '../theme/webSafeStyles';
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  Linking,
-  Platform,
-  ActivityIndicator,
-  StyleSheet,
-  AppState,
-} from "react-native";
+import { View, TouchableOpacity, Linking, Platform, ActivityIndicator, StyleSheet, AppState } from 'react-native';
+import Text from '../components/AppText';
 import * as Application from "expo-application";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -224,7 +217,7 @@ export default function ForceUpdateGate({ children }) {
   return children;
 }
 
-const styles = StyleSheet.create({
+const styles = createWebSafeStyles({
   loadingWrap: {
     flex: 1,
     justifyContent: "center",

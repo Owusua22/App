@@ -1,9 +1,17 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import api from "./axiosInstance";
+import { invalidateCatalog } from "../../utils/catalogRefresh";
 
 // helpers
 const sortByNewest = (arr = []) =>
-  [...arr].sort((a, b) => new Date(b.dateCreated) - new Date(a.dateCreated));
+  [...(Array.isArray(arr) ? arr : [])].sort((a, b) => {
+    const date = (p) => new Date(p.dateCreated || p.createdAt || p.createdDate || 0).getTime() || 0;
+    return date(b) - date(a);
+  });
+
+// Unique URL per fetch bypasses browser/CDN caches without changing the
+// existing Lambda endpoint or the Product API's request body.
+const fresh = (endpoint, extra = {}) => ({ params: { endpoint, ...extra, _fresh: Date.now() } });
 
 const activeOnly = (arr = []) => arr.filter((p) => String(p.status) === "1");
 
@@ -17,7 +25,7 @@ export const fetchProducts = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const { data } = await api.get("/", {
-        params: { endpoint: "/Product/Product-Get" },
+        ...fresh("/Product/Product-Get"),
       });
       return sortByNewest(activeOnly(data));
     } catch (e) {
@@ -32,7 +40,7 @@ export const fetchProduct = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const { data } = await api.get("/", {
-        params: { endpoint: "/Product/Product-Get" },
+        ...fresh("/Product/Product-Get"),
       });
       return sortByNewest(activeOnly(data)).slice(0, 24);
     } catch (e) {
@@ -46,9 +54,9 @@ export const fetchProductsByBrand = createAsyncThunk(
   async (brandId, { rejectWithValue }) => {
     try {
       const { data } = await api.get("/", {
-        params: { endpoint: `/Product/Product-Get-by-Brand/${brandId}` },
+        ...fresh(`/Product/Product-Get-by-Brand/${brandId}`),
       });
-      return sortByNewest(data);
+      return { brandId, products: sortByNewest(data) };
     } catch (e) {
       return rejectWithValue(e.response?.data || e.message);
     }
@@ -60,7 +68,7 @@ export const fetchProductsByShowroom = createAsyncThunk(
   async (showRoomID, { rejectWithValue }) => {
     try {
       const { data } = await api.get("/", {
-        params: { endpoint: `/Product/Product-Get-by-ShowRoom/${showRoomID}` },
+        ...fresh(`/Product/Product-Get-by-ShowRoom/${showRoomID}`),
       });
       return { showRoomID, products: sortByNewest(data) };
     } catch (e) {
@@ -74,7 +82,7 @@ export const fetchProductById = createAsyncThunk(
   async (productId, { rejectWithValue }) => {
     try {
       const { data } = await api.get("/", {
-        params: { endpoint: `/Product/Product-Get-by-Product_ID/${productId}` },
+        ...fresh(`/Product/Product-Get-by-Product_ID/${productId}`),
       });
       return data;
     } catch (e) {
@@ -88,11 +96,7 @@ export const fetchPaginatedProducts = createAsyncThunk(
   async ({ pageNumber, pageSize = 24 }, { rejectWithValue }) => {
     try {
       const { data } = await api.get("/", {
-        params: {
-          endpoint: "/Product/Product-Get-Paginated",
-          PageNumber: pageNumber,
-          PageSize: pageSize,
-        },
+        ...fresh("/Product/Product-Get-Paginated", { PageNumber: pageNumber, PageSize: pageSize }),
       });
       return sortByNewest(data);
     } catch (e) {
@@ -106,7 +110,7 @@ export const fetchProductsByCategory = createAsyncThunk(
   async (categoryId, { rejectWithValue }) => {
     try {
       const { data } = await api.get("/", {
-        params: { endpoint: `/Product/Product-Get-by-Category/${categoryId}` },
+        ...fresh(`/Product/Product-Get-by-Category/${categoryId}`),
       });
       return { categoryId, products: sortByNewest(data) };
     } catch (e) {
@@ -120,11 +124,10 @@ export const fetchProductByShowroomAndRecord = createAsyncThunk(
   async ({ showRoomCode, recordNumber }, { rejectWithValue }) => {
     try {
       const { data } = await api.get("/", {
-        params: {
-          endpoint: "/Product/Product-Get-by-ShowRoom_RecordNumber",
+        ...fresh("/Product/Product-Get-by-ShowRoom_RecordNumber", {
           ShowRommCode: showRoomCode, // keep exact API param name
           RecordNumber: recordNumber,
-        },
+        }),
       });
       return { showRoomCode, products: sortByNewest(data) };
     } catch (e) {
@@ -138,12 +141,11 @@ export const fetchPaginatedProductsByShowroom = createAsyncThunk(
   async ({ showRoomCode, pageNumber = 1, pageSize = 4 }, { rejectWithValue }) => {
     try {
       const { data } = await api.get("/", {
-        params: {
-          endpoint: "/Product/Product-Get-by-ShowRoom-Pageinated",
+        ...fresh("/Product/Product-Get-by-ShowRoom-Pageinated", {
           Code: showRoomCode,
           PageNumber: pageNumber,
           PageSize: pageSize,
-        },
+        }),
       });
 
       return { showRoomCode, pageNumber, products: sortByNewest(data) };
@@ -167,6 +169,7 @@ export const addProduct = createAsyncThunk(
           : { "Content-Type": "application/json" },
       });
 
+      invalidateCatalog();
       return data;
     } catch (e) {
       return rejectWithValue(e.response?.data || e.message);
@@ -186,6 +189,7 @@ export const updateProduct = createAsyncThunk(
         headers: { "Content-Type": "application/json" },
       });
 
+      invalidateCatalog();
       return data;
     } catch (e) {
       return rejectWithValue(e.response?.data || e.message);
@@ -211,6 +215,7 @@ export const updateProductImage = createAsyncThunk(
         // DO NOT set Content-Type manually in RN multipart
       });
 
+      invalidateCatalog();
       return data;
     } catch (e) {
       return rejectWithValue(e.response?.data || e.message);
@@ -218,14 +223,14 @@ export const updateProductImage = createAsyncThunk(
   }
 );
 
-
-
 // Create the product slice
 const productSlice = createSlice({
   name: 'products',
   initialState: {
     products: [],
     filteredProducts: [],
+    productsByBrand: {},
+    paginatedProducts: [],
     productsByShowroom: {},
     productsByCategory: {},
      showroomPages: {},        // { KUMASI: [], ACCRA: [] }
@@ -279,7 +284,8 @@ const productSlice = createSlice({
       })
       .addCase(fetchProductsByBrand.fulfilled, (state, action) => {
         state.loading = false;
-        state.products = action.payload;
+        const { brandId, products } = action.payload;
+        state.productsByBrand[brandId] = products;
       })
       .addCase(fetchProductsByBrand.rejected, (state, action) => {
         state.loading = false;
@@ -349,7 +355,7 @@ const productSlice = createSlice({
       })
       .addCase(fetchPaginatedProducts.fulfilled, (state, action) => {
         state.loading = false;
-        state.products = action.payload; // Assign fetched products
+        if (action.meta.arg.pageNumber === 1) state.paginatedProducts = action.payload;
       })
       .addCase(fetchPaginatedProducts.rejected, (state, action) => {
         state.loading = false;
