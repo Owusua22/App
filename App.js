@@ -1,8 +1,18 @@
 import { createWebSafeStyles } from './theme/webSafeStyles';
 // App.js
 import React, { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, ActivityIndicator, Image, StatusBar as RNStatusBar, Animated, AppState, Platform } from 'react-native';
+import {
+  StyleSheet,
+  View,
+  ActivityIndicator,
+  Image,
+  StatusBar as RNStatusBar,
+  Animated,
+  AppState,
+  Platform,
+} from 'react-native';
 import Text from './components/AppText';
+import * as SplashScreen from 'expo-splash-screen';
 
 import { Provider, useDispatch, useSelector } from "react-redux";
 import { PersistGate } from "redux-persist/integration/react";
@@ -25,7 +35,6 @@ import { checkAuthStatus, selectIsAuthChecked } from './redux/slice/customerSlic
 import { navigationRef, reset, flushAuthRedirect } from './services/navigationService';
 import {
   updateLastActivity,
-  logoutAndRedirect,
   checkActiveSession,
 } from './redux/slice/axiosInstance';
 import ForceUpdateGate from './config/ForceUpdateGate';
@@ -75,13 +84,29 @@ import TermsScreen from './screens/support/TermsScreen';
 import PolicyScreen from './screens/support/PolicyScreen';
 import ContactUsScreen from './screens/support/ContactUsScreen';
 import WishlistScreen from './screens/shop/WishlistScreen';
+import PaymentHelpScreen from './screens/orders/PaymentHelpScreen';
 
 // Components
 import Header from './components/Header';
 import Footer from './components/Footer';
 import FloatingTawkChat from './components/FloatingTawkChat';
 import { notifyScrollActivity } from './utils/scrollActivity';
-import PaymentHelpScreen from './screens/orders/PaymentHelpScreen';
+
+/* ------------------------------------------------------------------ */
+/* Native splash hand-off                                              */
+/* ------------------------------------------------------------------ */
+// Hold the native splash (a plain green screen, configured in app.json) until
+// the Welcome screen has painted, so the default Expo asset, a white view or a
+// spinner never shows between app launch and the Welcome screen.
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+const hideSplash = () => SplashScreen.hideAsync().catch(() => {});
+
+// Last-resort safety net: never leave the native splash up forever.
+setTimeout(hideSplash, 8000);
+
+// How long the Welcome screen stays up once it is visible.
+const WELCOME_DURATION_MS = 1200;
 
 const Stack = createNativeStackNavigator();
 const WELCOME_DOTS = Array.from({ length: 20 }, () => ({
@@ -90,9 +115,12 @@ const WELCOME_DOTS = Array.from({ length: 20 }, () => ({
   opacity: 0.1 + Math.random() * 0.2,
 }));
 
-/* WelcomeScreen */
+/* ------------------------------------------------------------------ */
+/* WelcomeScreen                                                       */
+/* ------------------------------------------------------------------ */
 const WelcomeScreen = ({ onReady }) => {
   const [loading, setLoading] = useState(true);
+  const [layoutReady, setLayoutReady] = useState(false);
   const dispatch = useDispatch();
   const insets = useSafeAreaInsets();
 
@@ -106,7 +134,13 @@ const WelcomeScreen = ({ onReady }) => {
   }, [dispatch]);
 
   useEffect(() => {
-    Animated.parallel([
+    // Wait until the gradient has been laid out, then drop the native splash
+    // and start the entrance animation.
+    if (!layoutReady) return undefined;
+
+    const raf = requestAnimationFrame(hideSplash);
+
+    const entrance = Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 700,
@@ -124,7 +158,8 @@ const WelcomeScreen = ({ onReady }) => {
         delay: 100,
         useNativeDriver: true,
       }),
-    ]).start();
+    ]);
+    entrance.start();
 
     const pulseLoop = Animated.loop(
       Animated.sequence([
@@ -142,21 +177,23 @@ const WelcomeScreen = ({ onReady }) => {
     );
     pulseLoop.start();
 
-    // Keep a brief branded transition, but don't hold the app behind a fixed
-    // three-second delay. Authentication continues independently in AppContent.
+    // Brief branded transition. Authentication continues independently in
+    // AppContent, so this never blocks the app behind a fixed delay.
     const readyTimer = setTimeout(() => {
       setLoading(false);
       onReady();
-    }, 600);
+    }, WELCOME_DURATION_MS);
 
     return () => {
+      cancelAnimationFrame(raf);
       clearTimeout(readyTimer);
+      entrance.stop();
       pulseLoop.stop();
     };
-  }, [onReady, fadeAnim, scaleAnim, slideAnim, pulseAnim]);
+  }, [layoutReady, onReady, fadeAnim, scaleAnim, slideAnim, pulseAnim]);
 
   return (
-    <View style={styles.welcomeWrapper}>
+    <View style={styles.welcomeWrapper} onLayout={() => setLayoutReady(true)}>
       <RNStatusBar
         barStyle="light-content"
         translucent
@@ -164,7 +201,7 @@ const WelcomeScreen = ({ onReady }) => {
       />
 
       <LinearGradient
-        colors={["#086942", "#086942", "#84e8b9"]}
+        colors={["#BBF7D0", "#10B981", "#059669"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.welcomeContainer}
@@ -201,7 +238,8 @@ const WelcomeScreen = ({ onReady }) => {
             style={[styles.textContainer, { transform: [{ translateY: slideAnim }] }]}
           >
             <Text style={styles.welcomeTitle}>Welcome to</Text>
-            <Text style={styles.companyName}>Franko Trading</Text>
+            <Text style={styles.companyName}>Franko Trading Ent</Text>
+            <Text style={styles.tagline}>Your trusted electronics partner</Text>
           </Animated.View>
 
           {loading && (
@@ -213,7 +251,7 @@ const WelcomeScreen = ({ onReady }) => {
             >
               <ActivityIndicator size="large" color="#ffffff" />
               <Text style={styles.loadingText}>
-                Loading products…
+                Home of quality phones and electronic appliances.
               </Text>
             </Animated.View>
           )}
@@ -225,76 +263,35 @@ const WelcomeScreen = ({ onReady }) => {
   );
 };
 
-/* Screen Wrappers */
-const ScreenWithFooter = ({ children }) => (
-  <View style={{ flex: 1 }}>
-    {children}
-    <Footer />
-  </View>
-);
+/* ------------------------------------------------------------------ */
+/* Screen wrappers                                                     */
+/* ------------------------------------------------------------------ */
+const withFooter = (Screen, { header = false } = {}) => {
+  const Wrapped = () => (
+    <View style={{ flex: 1 }}>
+      {header && <Header />}
+      <View style={{ flex: 1 }}>
+        <Screen />
+        <Footer />
+      </View>
+    </View>
+  );
+  Wrapped.displayName = `WithFooter(${Screen.displayName || Screen.name || 'Screen'})`;
+  return Wrapped;
+};
 
-const CartScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <CartScreen />
-  </ScreenWithFooter>
-);
-const ShowroomScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <ShowroomScreen />
-  </ScreenWithFooter>
-);
-const HomeScreenWithFooter = () => (
-  <View style={{ flex: 1 }}>
-    <Header />
-    <ScreenWithFooter><HomeScreen /></ScreenWithFooter>
-  </View>
-);
-const CategoryScreenWithFooter = () => (
-  <View style={{ flex: 1 }}>
-    <Header />
-    <ScreenWithFooter><CategoryScreen /></ScreenWithFooter>
-  </View>
-);
-const AccountScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <AccountScreen />
-  </ScreenWithFooter>
-);
-const ProductsScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <ProductsScreen />
-  </ScreenWithFooter>
-);
-const WishlistScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <WishlistScreen />
-  </ScreenWithFooter>
-);
-const ShopScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <ShopScreen />
-  </ScreenWithFooter>
-);
-const RecentlyViewedScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <RecentlyViewedScreen />
-  </ScreenWithFooter>
-);
-const CustomerServiceScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <CustomerServiceScreen />
-  </ScreenWithFooter>
-);
-const InviteScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <InviteScreen />
-  </ScreenWithFooter>
-);
-const AddressManagementScreenWithFooter = () => (
-  <ScreenWithFooter>
-    <AddressManagementScreen />
-  </ScreenWithFooter>
-);
+const HomeScreenWithFooter = withFooter(HomeScreen, { header: true });
+const CategoryScreenWithFooter = withFooter(CategoryScreen, { header: true });
+const CartScreenWithFooter = withFooter(CartScreen);
+const ShowroomScreenWithFooter = withFooter(ShowroomScreen);
+const AccountScreenWithFooter = withFooter(AccountScreen);
+const ProductsScreenWithFooter = withFooter(ProductsScreen);
+const WishlistScreenWithFooter = withFooter(WishlistScreen);
+const ShopScreenWithFooter = withFooter(ShopScreen);
+const RecentlyViewedScreenWithFooter = withFooter(RecentlyViewedScreen);
+const CustomerServiceScreenWithFooter = withFooter(CustomerServiceScreen);
+const InviteScreenWithFooter = withFooter(InviteScreen);
+const AddressManagementScreenWithFooter = withFooter(AddressManagementScreen);
 
 // The account screen uses SignupScreen as a modal. A navigation route must
 // explicitly show it; otherwise reset('Signup') lands on an invisible modal.
@@ -302,9 +299,14 @@ const SignInRoute = () => (
   <SignupScreen visible onClose={() => reset('Home')} onSuccess={() => reset('Home')} />
 );
 
-/* App Stack */
+/* ------------------------------------------------------------------ */
+/* App stack                                                           */
+/* ------------------------------------------------------------------ */
 const AppStack = () => (
-  <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: false, contentStyle: { backgroundColor: franko.canvas } }}>
+  <Stack.Navigator
+    initialRouteName="Home"
+    screenOptions={{ headerShown: false, contentStyle: { backgroundColor: franko.canvas } }}
+  >
     <Stack.Screen name="Home" component={HomeScreenWithFooter} />
     <Stack.Screen name="ProductDetails" component={ProductDetailsScreen} />
     <Stack.Screen name="cart" component={CartScreenWithFooter} />
@@ -332,20 +334,14 @@ const AppStack = () => (
     <Stack.Screen name="Fridge" component={FridgeScreen} />
     <Stack.Screen name="Fan" component={FanScreen} />
     <Stack.Screen name="AirCondition" component={AirConditionScreen} />
-    <Stack.Screen
-      name="OrderCancellationScreen"
-      component={OrderCancellationScreen}
-    />
+    <Stack.Screen name="OrderCancellationScreen" component={OrderCancellationScreen} />
     <Stack.Screen name="terms" component={TermsScreen} />
     <Stack.Screen name="Combo" component={ComboScreen} />
     <Stack.Screen name="Appliances" component={ApplianceScreen} />
     <Stack.Screen name="RecentlyViewed" component={RecentlyViewedScreenWithFooter} />
     <Stack.Screen name="CustomerService" component={CustomerServiceScreenWithFooter} />
     <Stack.Screen name="Invite" component={InviteScreenWithFooter} />
-    <Stack.Screen
-      name="AddressManagement"
-      component={AddressManagementScreenWithFooter}
-    />
+    <Stack.Screen name="AddressManagement" component={AddressManagementScreenWithFooter} />
     <Stack.Screen name="Search" component={SearchScreen} />
     <Stack.Screen name="HelpFAQ" component={FAQScreen} />
     <Stack.Screen name="ContactUs" component={ContactUsScreen} />
@@ -354,7 +350,9 @@ const AppStack = () => (
   </Stack.Navigator>
 );
 
-/* No Internet Banner */
+/* ------------------------------------------------------------------ */
+/* Banners / loading                                                   */
+/* ------------------------------------------------------------------ */
 const NoInternetBanner = () => {
   const insets = useSafeAreaInsets();
   return (
@@ -364,17 +362,12 @@ const NoInternetBanner = () => {
   );
 };
 
-/* Auth Loading Screen */
 const AuthLoadingScreen = () => {
   const insets = useSafeAreaInsets();
 
   return (
     <View style={styles.authLoadingContainer}>
-      <RNStatusBar
-        barStyle="dark-content"
-        translucent
-        backgroundColor="transparent"
-      />
+      <RNStatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
       <View style={[styles.authLoadingContent, { paddingTop: insets.top + 50 }]}>
         <Image
           source={require('./assets/frankoIcon.png')}
@@ -392,33 +385,26 @@ const AuthLoadingScreen = () => {
   );
 };
 
-/* Main App Container */
+/* ------------------------------------------------------------------ */
+/* Main container                                                      */
+/* ------------------------------------------------------------------ */
 const MainAppContainer = () => (
   <View style={styles.mainContainer}>
-    <RNStatusBar
-      barStyle="dark-content"
-      translucent
-      backgroundColor="#FFFFFF"
-    />
-    <View style={styles.contentContainer} onTouchMove={notifyScrollActivity} {...(Platform.OS === "web" ? { onWheel: notifyScrollActivity } : {})}>
+    <RNStatusBar barStyle="dark-content" translucent backgroundColor="#FFFFFF" />
+    <View
+      style={styles.contentContainer}
+      onTouchMove={notifyScrollActivity}
+      {...(Platform.OS === "web" ? { onWheel: notifyScrollActivity } : {})}
+    >
       <AppStack />
       <FloatingTawkChat />
     </View>
   </View>
 );
 
-const PersistLoadingScreen = () => (
-  <View style={styles.persistLoadingContainer}>
-    <Image
-      source={require('./assets/frankoIcon.png')}
-      style={styles.authLoadingLogo}
-      resizeMode="contain"
-    />
-    <ActivityIndicator size="large" color="#086942" />
-  </View>
-);
-
-/* App Content */
+/* ------------------------------------------------------------------ */
+/* App content                                                         */
+/* ------------------------------------------------------------------ */
 const AppContent = () => {
   const [showWelcome, setShowWelcome] = useState(true);
   const [isConnected, setIsConnected] = useState(true);
@@ -430,8 +416,7 @@ const AppContent = () => {
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
-      const hasInternet =
-        state.isConnected && state.isInternetReachable !== false;
+      const hasInternet = state.isConnected && state.isInternetReachable !== false;
       setIsConnected(Boolean(hasInternet));
     });
     return () => unsubscribe();
@@ -468,6 +453,7 @@ const AppContent = () => {
       const timer = setTimeout(flushAuthRedirect, 0);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [showWelcome, isInitializing]);
 
   // Keep one NavigationContainer mounted through welcome, auth, and app states.
@@ -487,31 +473,37 @@ const AppContent = () => {
   );
 };
 
-/* App Root */
+/* ------------------------------------------------------------------ */
+/* App root                                                            */
+/* ------------------------------------------------------------------ */
 const App = () => {
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular, Inter_500Medium, Inter_600SemiBold,
     Inter_700Bold, Inter_800ExtraBold, Inter_900Black,
   });
-  if (!fontsLoaded && !fontError) {
-    return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}>
-      <ActivityIndicator size="large" color={franko.primary} />
-    </View>;
-  }
-  return <Provider store={store}>
-    <PersistGate loading={<PersistLoadingScreen />} persistor={persistor}>
-      <SafeAreaProvider>
-        <ForceUpdateGate>
-          <AppContent />
-        </ForceUpdateGate>
-      </SafeAreaProvider>
-    </PersistGate>
-  </Provider>;
+
+  // The native splash is still visible while fonts and the persisted store
+  // load, so render nothing here instead of a white view or a spinner.
+  if (!fontsLoaded && !fontError) return null;
+
+  return (
+    <Provider store={store}>
+      <PersistGate loading={null} persistor={persistor}>
+        <SafeAreaProvider>
+          <ForceUpdateGate>
+            <AppContent />
+          </ForceUpdateGate>
+        </SafeAreaProvider>
+      </PersistGate>
+    </Provider>
+  );
 };
 
 export default App;
 
-/* Styles */
+/* ------------------------------------------------------------------ */
+/* Styles                                                              */
+/* ------------------------------------------------------------------ */
 const styles = createWebSafeStyles({
   container: {
     flex: 1,
@@ -564,14 +556,11 @@ const styles = createWebSafeStyles({
     fontWeight: "500",
     textAlign: "center",
   },
-  persistLoadingContainer: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-    justifyContent: "center",
-    alignItems: "center",
-  },
+
+  /* Welcome */
   welcomeWrapper: {
     flex: 1,
+    backgroundColor: "#10B981",
   },
   welcomeContainer: {
     flex: 1,
@@ -641,16 +630,16 @@ const styles = createWebSafeStyles({
     fontWeight: "400",
     color: "rgba(255,255,255,0.8)",
     textAlign: "center",
-    fontStyle: "normal",
+    fontStyle: "italic",
   },
   loadingContainer: {
     alignItems: "center",
   },
   loadingText: {
     marginTop: 15,
-    fontSize: 13,
+    fontSize: 16,
     color: "rgba(255,255,255,0.9)",
-    fontWeight: "500",
+    fontWeight: "400",
   },
   bottomWave: {
     position: "absolute",

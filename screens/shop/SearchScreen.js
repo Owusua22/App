@@ -3,8 +3,6 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { View, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, ScrollView, useWindowDimensions } from 'react-native';
 import Text, { AppTextInput as TextInput } from '../../components/AppText';
 import CatalogProductCard, { getCatalogLayout } from '../../components/CatalogProductCard';
-import CachedImage from '../../components/CachedImage';
-import { resolveProductImageUri } from '../../utils/ImageCache';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Icon from "react-native-vector-icons/MaterialIcons";
 import { useNavigation } from "@react-navigation/native";

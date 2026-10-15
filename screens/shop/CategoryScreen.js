@@ -1,110 +1,410 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import Text from '../../components/AppText';
-import { MaterialIcons, Feather } from '@expo/vector-icons';
+import { useEffect, useState, useMemo, useCallback } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  ActivityIndicator,
+  TouchableOpacity,
+  ScrollView,
+} from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import { useNavigation } from '@react-navigation/native';
 import { fetchCategories } from '../../redux/slice/categorySlice';
 import { fetchBrands } from '../../redux/slice/brandSlice';
-import { useCatalogRevalidation } from '../../hooks/useCatalogRevalidation';
-import CatalogFetchNotice from '../../components/CatalogFetchNotice';
+import { useNavigation } from '@react-navigation/native';
 
-const CATEGORY_ICONS = ['smartphone', 'laptop-mac', 'tv', 'kitchen', 'headphones', 'speaker', 'ac-unit', 'devices-other'];
-
-export default function CategoryScreen() {
+const CategoryScreen = () => {
   const dispatch = useDispatch();
   const navigation = useNavigation();
-  const { categories = [], status, error } = useSelector((state) => state.categories);
-  const { brands = [], loading: brandsLoading } = useSelector((state) => state.brands);
+
+  const { categories, status, error } = useSelector((state) => state.categories);
+  const { brands } = useSelector((state) => state.brands);
   const [selectedCategoryId, setSelectedCategoryId] = useState(null);
-  const categoriesFetching = useCatalogRevalidation('categories:all', () => fetchCategories());
-  const brandsFetching = useCatalogRevalidation('brands:all', () => fetchBrands());
 
-  const visibleCategories = useMemo(() => categories.filter((category) =>
-    category.categoryName?.toLowerCase() !== 'products out of stock'
-  ), [categories]);
-  const selectedCategory = useMemo(() => visibleCategories.find((category) => category.categoryId === selectedCategoryId), [visibleCategories, selectedCategoryId]);
-  const visibleBrands = useMemo(() => brands.filter((brand) => brand.categoryId === selectedCategoryId), [brands, selectedCategoryId]);
-
-  useEffect(() => {
-    if (visibleCategories.length && !selectedCategoryId) setSelectedCategoryId(visibleCategories[0].categoryId);
-  }, [visibleCategories, selectedCategoryId]);
-
-  const renderCategory = useCallback(({ item, index }) => {
-    const active = item.categoryId === selectedCategoryId;
-    return (
-      <Pressable onPress={() => setSelectedCategoryId(item.categoryId)} style={[styles.category, active && styles.selected]} accessibilityRole="button" accessibilityState={{ selected: active }}>
-        <View style={[styles.categoryIcon, active && styles.selectedIcon]}>
-          <MaterialIcons name={CATEGORY_ICONS[index % CATEGORY_ICONS.length]} size={22} color={active ? '#086942' : '#397354'} />
-        </View>
-        <Text style={[styles.categoryName, active && styles.selectedName]} numberOfLines={2}>{item.categoryName}</Text>
-      </Pressable>
+  // Memoize filtered categories to avoid recalculation on every render
+  const filteredCategories = useMemo(() => {
+    return categories.filter(
+      (category) => category.categoryName.toLowerCase() !== 'products out of stock'
     );
-  }, [selectedCategoryId]);
+  }, [categories]);
 
-  if (status === 'loading' && !visibleCategories.length) return <View style={styles.center}><ActivityIndicator size="large" color="#086942"/><Text style={styles.muted}>Loading categories...</Text></View>;
-  if (status === 'failed' && !visibleCategories.length) return <View style={styles.center}><Text style={styles.muted}>{String(error || 'Could not load categories')}</Text><Pressable onPress={() => dispatch(fetchCategories())} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>;
+  // Memoize selected category name
+  const selectedCategoryName = useMemo(() => {
+    const category = filteredCategories.find(cat => cat.categoryId === selectedCategoryId);
+    return category ? category.categoryName : "";
+  }, [filteredCategories, selectedCategoryId]);
+
+  // Memoize filtered brands for the selected category
+  const filteredBrands = useMemo(() => {
+    return brands.filter((brand) => brand.categoryId === selectedCategoryId);
+  }, [brands, selectedCategoryId]);
+
+  // Fetch categories only once on mount
+  useEffect(() => {
+    if (status === 'idle') {
+      dispatch(fetchCategories());
+    }
+  }, [dispatch, status]);
+
+  // Auto-select first category when categories load
+  useEffect(() => {
+    if (filteredCategories.length > 0 && !selectedCategoryId) {
+      const firstCategory = filteredCategories[0];
+      setSelectedCategoryId(firstCategory.categoryId);
+    }
+  }, [filteredCategories, selectedCategoryId]);
+
+  // Fetch brands when category is selected
+  useEffect(() => {
+    if (selectedCategoryId) {
+      dispatch(fetchBrands(selectedCategoryId));
+    }
+  }, [dispatch, selectedCategoryId]);
+
+  // Memoize category selection handler
+  const handleCategoryPress = useCallback((categoryId) => {
+    setSelectedCategoryId(categoryId);
+  }, []);
+
+  // Memoize brand press handler
+  const handleBrandPress = useCallback((brandId) => {
+    navigation.navigate('Brands', { brandId });
+  }, [navigation]);
+
+  // Memoize category render item
+  const renderCategoryItem = useCallback(({ item }) => (
+    <TouchableOpacity
+      style={[
+        styles.categoryItem,
+        selectedCategoryId === item.categoryId && styles.activeCategory,
+      ]}
+      onPress={() => handleCategoryPress(item.categoryId)}
+      activeOpacity={0.8}
+    >
+      <View style={styles.categoryItemContent}>
+        <View style={[
+          styles.categoryIndicator,
+          selectedCategoryId === item.categoryId && styles.activeCategoryIndicator,
+        ]} />
+        <Text
+          style={[
+            styles.categoryText,
+            selectedCategoryId === item.categoryId && styles.activeCategoryText,
+          ]}
+        >
+          {item.categoryName}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  ), [selectedCategoryId, handleCategoryPress]);
+
+  // Optimize key extractor
+  const keyExtractor = useCallback((item) => item.categoryId.toString(), []);
+
+  if (status === 'loading') {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#22C55E" />
+        <Text style={styles.loadingText}>Loading categories...</Text>
+      </View>
+    );
+  }
+
+  if (status === 'failed') {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>{error}</Text>
+      </View>
+    );
+  }
+
+  const renderBrands = () => {
+    if (filteredBrands.length === 0) {
+      return (
+        <View style={styles.noBrandsContainer}>
+          <Text style={styles.noBrandsText}>No brands available</Text>
+          <Text style={styles.noBrandsSubtext}>Try selecting a different category</Text>
+        </View>
+      );
+    }
+    
+    return (
+      <ScrollView style={styles.brandsContainer} showsVerticalScrollIndicator={false}>
+        <View style={styles.brandGrid}>
+          {filteredBrands.map((item) => (
+            <TouchableOpacity
+              key={item.brandId}
+              style={styles.brandCard}
+              onPress={() => handleBrandPress(item.brandId)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.brandName}>{item.brandName}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
+    );
+  };
 
   return (
     <View style={styles.screen}>
-      <View style={styles.heading}>
-        <Text style={styles.title}>Categories<Text style={styles.titleDot}>.</Text></Text>
-      </View>
-      <CatalogFetchNotice loading={categoriesFetching || brandsFetching} hasCachedData={Boolean(visibleCategories.length)} label="categories" />
-      <View style={styles.columns}>
-        <View style={styles.sidebar}>
-          <FlatList data={visibleCategories} keyExtractor={(item) => String(item.categoryId)} renderItem={renderCategory} showsVerticalScrollIndicator={false} initialNumToRender={10} maxToRenderPerBatch={10} />
+      <View style={styles.categoryContainer}>
+        <View style={styles.categoryHeader}>
+          <Text style={styles.categoryHeaderText}>Categories</Text>
         </View>
-        <ScrollView style={styles.main} contentContainerStyle={styles.mainContent} showsVerticalScrollIndicator={false}>
-          {selectedCategory ? <>
-            <View style={styles.mainHeading}>
-              <Text style={styles.mainTitle}>{selectedCategory.categoryName}</Text>
-              <Text style={styles.mainSubtitle}>Shop your favourite brands</Text>
+        <FlatList
+          data={filteredCategories}
+          keyExtractor={keyExtractor}
+          renderItem={renderCategoryItem}
+          showsVerticalScrollIndicator={false}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={true}
+          getItemLayout={(data, index) => ({
+            length: 60,
+            offset: 60 * index,
+            index,
+          })}
+        />
+      </View>
+      
+      <View style={styles.brandContainer}>
+        {selectedCategoryId ? (
+          <>
+            <View style={styles.brandHeader}>
+              <Text style={styles.categoryTitle}>{selectedCategoryName}</Text>
+              <Text style={styles.categorySubtitle}>Explore brands in this category</Text>
             </View>
-            {visibleBrands.length ? visibleBrands.map((brand) => (
-              <Pressable key={String(brand.brandId)} style={styles.brandCard} onPress={() => navigation.navigate('Brands', { brandId: brand.brandId })} accessibilityRole="button" accessibilityLabel={`Shop ${brand.brandName}`}>
-                <View style={styles.brandMark}><Text style={styles.brandInitial}>{brand.brandName?.slice(0, 1)?.toUpperCase() || 'F'}</Text></View>
-                <Text numberOfLines={2} style={styles.brandName}>{brand.brandName}</Text>
-                <Feather name="arrow-up-right" size={16} color="#086942" />
-              </Pressable>
-            )) : brandsLoading ? <View style={styles.loadingBrands}><ActivityIndicator color="#086942" /><Text style={styles.muted}>Finding brands...</Text></View> : <View style={styles.empty}><Feather name="grid" size={27} color="#9CB9A5"/><Text style={styles.emptyTitle}>No brands here yet</Text><Text style={styles.muted}>Try another category on the left.</Text></View>}
-          </> : <View style={styles.empty}><Text style={styles.muted}>Select a category to begin.</Text></View>}
-        </ScrollView>
+            {renderBrands()}
+          </>
+        ) : (
+          <View style={styles.emptyStateContainer}>
+            <View style={styles.emptyStateIcon}>
+              <Text style={styles.emptyStateEmoji}>📂</Text>
+            </View>
+            <Text style={styles.selectPrompt}>Select a category to view brands</Text>
+            <Text style={styles.selectSubPrompt}>Choose from the categories on the left</Text>
+          </View>
+        )}
       </View>
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#FFFFFF' },
-  heading: { backgroundColor: '#FFFFFF', paddingHorizontal: 17, paddingTop: 17, paddingBottom: 13, borderBottomWidth: 1, borderBottomColor: '#EDF1EE' },
-  kicker: { fontSize: 9, color: '#086942', fontWeight: '800', letterSpacing: 1.6 },
-  title: { color: '#163A29', fontSize: 22, fontWeight: '900', letterSpacing: -0.6 },
-  titleDot: { color: '#B21F36' },
-  subtitle: { fontSize: 12, color: '#87968B', marginTop: 4 },
-  columns: { flex: 1, flexDirection: 'row' },
-  sidebar: { width: 108, backgroundColor: '#F0F5F1', paddingTop: 7 },
-  category: { minHeight: 86, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5, borderLeftWidth: 3, borderLeftColor: 'transparent' },
-  selected: { backgroundColor: '#FFFFFF', borderLeftColor: '#086942' },
-  categoryIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#E1EEE4', alignItems: 'center', justifyContent: 'center', marginBottom: 5 },
-  selectedIcon: { backgroundColor: '#84e8b9' },
-  categoryName: { color: '#577260', fontSize: 11, textAlign: 'center', fontWeight: '600', lineHeight: 14 },
-  selectedName: { color: '#086942', fontWeight: '800' },
-  main: { flex: 1 },
-  mainContent: { padding: 13, paddingBottom: 35 },
-  mainHeading: { marginBottom: 14 },
-  mainKicker: { color: '#086942', fontWeight: '800', fontSize: 9, letterSpacing: 1.4 },
-  mainTitle: { color: '#183D2A', fontWeight: '900', fontSize: 17, marginTop: 4 },
-  mainSubtitle: { color: '#839489', fontSize: 12, marginTop: 4 },
-  brandCard: { backgroundColor: '#FFFFFF', borderRadius: 8, minHeight: 66, padding: 9, marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: '#ECF0EC' },
-  brandMark: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#84e8b9', alignItems: 'center', justifyContent: 'center' },
-  brandInitial: { fontWeight: '900', color: '#086942', fontSize: 17 },
-  brandName: { flex: 1, color: '#163A29', fontWeight: '700', fontSize: 12 },
-  loadingBrands: { alignItems: 'center', paddingVertical: 35 },
-  empty: { alignItems: 'center', paddingVertical: 35, gap: 10 },
-  emptyTitle: { color: '#163A29', fontWeight: '800', fontSize: 14 },
-  muted: { color: '#839489', textAlign: 'center', fontSize: 12, marginTop: 8 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F7FAF8' },
-  retry: { paddingHorizontal: 18, paddingVertical: 10, backgroundColor: '#086942', borderRadius: 10, marginTop: 12 },
-  retryText: { color: 'white', fontWeight: '700' },
+  screen: {
+    flex: 1,
+    flexDirection: 'row',
+    
+  },
+  categoryContainer: {
+    flex: 1.5,
+    backgroundColor: '#DCFCE7',
+    shadowColor: '#16A34A',
+    shadowOffset: { width: 2, height: 0 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  categoryHeader: {
+    padding: 10,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#BBF7D0',
+  },
+  categoryHeaderText: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#15803D',
+    textAlign: 'center',
+  },
+  brandContainer: {
+    flex: 2,
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+  },
+  categoryItem: {
+    marginVertical: 4,
+    marginHorizontal: 2,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  activeCategory: {
+    backgroundColor: '#22C55E',
+    shadowColor: '#16A34A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  categoryItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+  },
+  categoryIndicator: {
+    width: 4,
+    height: 20,
+    backgroundColor: '#BBF7D0',
+    borderRadius: 2,
+    marginRight: 12,
+  },
+  activeCategoryIndicator: {
+    backgroundColor: '#FFFFFF',
+  },
+  categoryText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#166534',
+    flex: 1,
+  },
+  activeCategoryText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  brandHeader: {
+    marginBottom: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 2,
+    borderBottomColor: '#F0FDF4',
+  },
+  categoryTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#15803D',
+    marginBottom: 4,
+  },
+  categorySubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#16A34A',
+    fontWeight: '500',
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#DC2626',
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  emptyStateContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyStateIcon: {
+    width: 80,
+    height: 80,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+    borderWidth: 2,
+    borderColor: '#BBF7D0',
+  },
+  emptyStateEmoji: {
+    fontSize: 32,
+  },
+  selectPrompt: {
+    fontSize: 18,
+    color: '#16A34A',
+    textAlign: 'center',
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  selectSubPrompt: {
+    fontSize: 14,
+    color: '#22C55E',
+    textAlign: 'center',
+  },
+  brandsContainer: {
+    flex: 1,
+  },
+  brandGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    paddingBottom: 20,
+  },
+  brandCard: {
+    width: '48%',
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    padding: 10,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    shadowColor: '#16A34A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    position: 'relative',
+  },
+  brandIconContainer: {
+    width: 40,
+    height: 40,
+    backgroundColor: '#DCFCE7',
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+    alignSelf: 'center',
+  },
+  brandIcon: {
+    fontSize: 20,
+  },
+  brandName: {
+    fontSize: 13,
+    color: '#15803D',
+    textAlign: 'center',
+    fontWeight: '600',
+    lineHeight: 20,
+  },
+  brandArrow: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 24,
+    height: 24,
+    backgroundColor: '#22C55E',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  arrowText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  noBrandsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  noBrandsText: {
+    fontSize: 18,
+    color: '#16A34A',
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  noBrandsSubtext: {
+    fontSize: 14,
+    color: '#22C55E',
+    textAlign: 'center',
+  },
 });
+
+export default CategoryScreen;

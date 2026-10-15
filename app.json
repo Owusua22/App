@@ -2,7 +2,7 @@
   "expo": {
     "name": "FrankoTrading",
     "slug": "Franko",
-    "version": "60.0.7",
+    "version": "60.0.8",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
@@ -16,15 +16,15 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.poldark.mrfranky2",
-      "buildNumber": "600007",
+      "buildNumber": "600008",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.poldark.mrfranky2",
-      "versionCode": 600007,
-      "targetSdkVersion": 34,
+      "versionCode": 600008,
+      "targetSdkVersion": 36,
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#ffffff"
@@ -51,7 +51,16 @@
       "@react-native-community/datetimepicker",
       "expo-image",
       "expo-status-bar",
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36
+          }
+        }
+      ]
     ]
   }
 }

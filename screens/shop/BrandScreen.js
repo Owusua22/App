@@ -12,6 +12,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { fetchProductsByBrand } from '../../redux/slice/productSlice';
 import { useCatalogRevalidation } from '../../hooks/useCatalogRevalidation';
 import CatalogFetchNotice from '../../components/CatalogFetchNotice';
+import { refreshCatalog } from '../../utils/catalogRefresh';
+import { getBrandCatalogPreview } from '../../utils/brandCatalogPreview';
 import { addToCart } from '../../redux/slice/cartSlice';
 import { AntDesign, MaterialIcons, Entypo } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -59,21 +61,52 @@ const BrandScreen = () => {
 
   const [selectedBrandId, setSelectedBrandId] = useState(brandId.current);
   useEffect(() => { if (route.params?.brandId) setSelectedBrandId(route.params.brandId); }, [route.params?.brandId]);
-  const brandProducts = productsState.productsByBrand?.[selectedBrandId] || EMPTY_BRAND_PRODUCTS;
-  const fetching = useCatalogRevalidation(`brand:${selectedBrandId}`, () => fetchProductsByBrand(selectedBrandId), { enabled: Boolean(selectedBrandId) });
+  const selectedBrand = brandsState.brands?.find((brand) => String(brand.brandId) === String(selectedBrandId)) || {};
+  // The home brand strip knows the brand name even before the Brand list API
+  // runs, so its saved products can still be matched by name if IDs are absent.
+  const previewBrandName = selectedBrand.brandName ||
+    (String(route.params?.brandId) === String(selectedBrandId) ? route.params?.brandName : undefined);
+  // Do not hold back already-downloaded category/search products while the
+  // dedicated brand request runs. Never write a partial preview into Redux.
+  const savedBrandProducts = productsState.productsByBrand?.[selectedBrandId];
+  const previewProducts = useMemo(() => savedBrandProducts === undefined
+    ? getBrandCatalogPreview(productsState, selectedBrandId, previewBrandName)
+    : EMPTY_BRAND_PRODUCTS,
+  [savedBrandProducts, productsState.productsByCategory, productsState.productsByShowroom,
+    productsState.products, productsState.paginatedProducts, selectedBrandId, previewBrandName]);
+  const usingPreview = savedBrandProducts === undefined && previewProducts.length > 0;
+  const brandProducts = savedBrandProducts ?? previewProducts;
+  const [requestState, setRequestState] = useState({ brandId: null, complete: false, error: false });
+  const [retrying, setRetrying] = useState(false);
+  const requestComplete = requestState.brandId === selectedBrandId && requestState.complete;
+  const requestError = requestState.brandId === selectedBrandId && requestState.error;
+  const fetching = useCatalogRevalidation(`brand:${selectedBrandId}`, () => fetchProductsByBrand(selectedBrandId), {
+    enabled: Boolean(selectedBrandId),
+    onResult: (result) => setRequestState({ brandId: selectedBrandId, complete: true,
+      error: Boolean(result?.error || (result === null && savedBrandProducts === undefined)) }),
+  });
+  const retryBrand = useCallback(() => {
+    if (retrying || !selectedBrandId) return;
+    setRetrying(true);
+    setRequestState({ brandId: selectedBrandId, complete: false, error: false });
+    void refreshCatalog(dispatch, `brand:${selectedBrandId}`, () => fetchProductsByBrand(selectedBrandId), { force: true })
+      .then((result) => setRequestState({ brandId: selectedBrandId, complete: true, error: Boolean(result?.error) }))
+      .catch(() => setRequestState({ brandId: selectedBrandId, complete: true, error: true }))
+      .finally(() => setRetrying(false));
+  }, [dispatch, retrying, selectedBrandId]);
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [showBrandsDropdown, setShowBrandsDropdown] = useState(false);
   const [showSellersDropdown, setShowSellersDropdown] = useState(false);
-  const [filteredProducts, setFilteredProducts] = useState([]);
+  // Filtering is derived synchronously: cached cards paint on the first render
+  // instead of waiting for an effect and a second render.
   const [sortBy, setSortBy] = useState('name');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedSeller, setSelectedSeller] = useState('');
   const [addingToCart, setAddingToCart] = useState({});
   const { listRef: flatListRef, onScroll: handleScroll, onContentSizeChange, rememberPosition } = useCatalogScroll(`brand:${selectedBrandId}`);
-  const { visibleProducts, showMore, hasMore } = useProgressiveCatalog(filteredProducts, `brand:${selectedBrandId}`);
 
   // ─── Derived data ───────────────────────────────────────────────────────────
   const { categories, sellers } = useMemo(() => {
@@ -82,7 +115,7 @@ const BrandScreen = () => {
     return { categories: cats, sellers: sels };
   }, [brandProducts]);
 
-  useEffect(() => {
+  const filteredProducts = useMemo(() => {
     let filtered = [...brandProducts];
 
     if (minPrice !== '' || maxPrice !== '') {
@@ -124,10 +157,10 @@ const BrandScreen = () => {
       }
     });
 
-    setFilteredProducts(filtered);
+    return filtered;
   }, [brandProducts, minPrice, maxPrice, sortBy, selectedCategory, selectedSeller]);
+  const { visibleProducts, showMore, hasMore } = useProgressiveCatalog(filteredProducts, `brand:${selectedBrandId}`);
 
-  const selectedBrand = brandsState.brands?.find((brand) => brand.brandId === brandId.current) || {};
   const relatedBrands = selectedBrand?.categoryId
     ? brandsState.brands.filter((brand) => brand.categoryId === selectedBrand.categoryId)
     : [];
@@ -169,8 +202,8 @@ const BrandScreen = () => {
 
   const handleNavigateProduct = useCallback((productId) => {
     rememberPosition();
-    navigation.navigate('ProductDetails', { productId, brandId: brandId.current });
-  }, [navigation, rememberPosition]);
+    navigation.navigate('ProductDetails', { productId, brandId: selectedBrandId });
+  }, [navigation, rememberPosition, selectedBrandId]);
 
   const handleBackPress = useCallback(() => {
     try {
@@ -186,7 +219,7 @@ const BrandScreen = () => {
 
   const handleShare = useCallback(async () => {
     try {
-      const brandName = selectedBrand.brandName || 'Brand';
+      const brandName = previewBrandName || 'Brand';
       await Share.share({
         message: `Check out ${brandName} on Franko Trading! Amazing products available. Download the app to explore more!`,
         title: `${brandName} - Products on Franko Trading`,
@@ -194,7 +227,7 @@ const BrandScreen = () => {
     } catch {
       Alert.alert('Error', 'Unable to share at the moment. Please try again.');
     }
-  }, [selectedBrand.brandName]);
+  }, [previewBrandName]);
 
   const clearFilters = useCallback(() => {
     setMinPrice('');
@@ -403,16 +436,24 @@ const BrandScreen = () => {
   // ─── Main render ─────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <CatalogFetchNotice loading={fetching} hasCachedData={Boolean(brandProducts.length)} label="products" />
+      <CatalogFetchNotice loading={fetching || retrying} hasCachedData={Boolean(brandProducts.length)} label="products" />
+      {usingPreview && !requestError && (
+        <View style={styles.previewNotice}></View>
+      )}
+      {requestError && (
+        <TouchableOpacity onPress={retryBrand} style={styles.previewNotice} accessibilityRole="button">
+         
+        </TouchableOpacity>
+      )}
       <View style={styles.brandheader}>
         <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#333" />
         </TouchableOpacity>
         <View style={styles.logoContainer}>
           <Text style={styles.logoText} numberOfLines={1}>
-            {selectedBrand.brandName || 'Franko Trading'}
+            {previewBrandName || 'Franko Trading'}
           </Text>
-          {selectedBrand.brandName && (
+          {previewBrandName && (
             <Text style={styles.productCount}>
               {filteredProducts.length} product{filteredProducts.length !== 1 ? 's' : ''}
             </Text>
@@ -461,10 +502,10 @@ const BrandScreen = () => {
       {showSortDropdown && renderDropdown(sortOptions, handleSortSelect, sortBy)}
       {showBrandsDropdown && renderBrandsDropdown()}
 
-      {productsState.loading && !brandProducts.length ? (
+      {!brandProducts.length && selectedBrandId && !requestError && (fetching || retrying || !requestComplete) ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#B21F36" />
-          <Text style={styles.loadingText}>Loading products...</Text>
+          <ActivityIndicator size="large" color="#086942" />
+          <Text style={styles.loadingText}>Loading brand products...</Text>
         </View>
       ) : filteredProducts.length === 0 ? (
         <View style={styles.emptyContainer}>
@@ -511,6 +552,8 @@ const BrandScreen = () => {
 };
 
 const styles = createWebSafeStyles({
+  previewNotice: { backgroundColor: '#F0F8F3', paddingHorizontal: 16, paddingVertical: 6 },
+  previewText: { fontSize: 11, color: '#086942', fontWeight: '600' },
   catalogGrid: { width: '100%', maxWidth: 1100, alignSelf: 'center' },
   container: {
     flex: 1,

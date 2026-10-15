@@ -1869,8 +1869,7 @@ const CheckoutScreen = ({ navigation }) => {
             <Ionicons name="information-circle-outline" size={14} color={C.blue} />
             <Text style={s.noticeText}>
               The {money(serviceCharge)} service charge is applied by your mobile
-              money provider. Your account will be automatically validated in the
-              payment screen.
+              money service provider. 
             </Text>
           </View>
         )}
@@ -2198,10 +2197,7 @@ const CheckoutScreen = ({ navigation }) => {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={s.hTitle}>Checkout</Text>
-          <View style={s.hSec}>
-            <Ionicons name="lock-closed" size={9} color={C.brandLight} />
-            <Text style={s.hSecText}>Secure checkout</Text>
-          </View>
+         
         </View>
         <View style={s.hBag}>
           <Ionicons name="bag-handle-outline" size={19} color={C.white} />
