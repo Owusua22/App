@@ -1,7 +1,9 @@
 import React, { memo, useCallback, useMemo } from "react";
+import { StyleSheet } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import { markImageCached } from '../utils/ImageCache';
 
+const DEFAULT_PLACEHOLDER = require("../assets/frankoIcon.png");
 const CONTENT_FIT_BY_RESIZE_MODE = {
   cover: "cover",
   contain: "contain",
@@ -28,8 +30,11 @@ const CachedImage = memo(
     ...props
   }) => {
     const resolvedContentFit = useMemo(
-      () => contentFit || CONTENT_FIT_BY_RESIZE_MODE[resizeMode] || "cover",
-      [contentFit, resizeMode]
+      () => {
+        const styleResizeMode = StyleSheet.flatten(props.style)?.resizeMode;
+        return contentFit || CONTENT_FIT_BY_RESIZE_MODE[resizeMode || styleResizeMode] || "cover";
+      },
+      [contentFit, resizeMode, props.style]
     );
     const onImageLoad = useCallback((event) => {
       if (source?.uri) markImageCached(source.uri);
@@ -40,7 +45,7 @@ const CachedImage = memo(
       <ExpoImage
         {...props}
         source={source}
-        placeholder={placeholder === undefined && source?.uri ? require("../assets/frankoIcon.png") : placeholder}
+        placeholder={placeholder === undefined && source?.uri ? DEFAULT_PLACEHOLDER : placeholder}
         placeholderContentFit="contain"
         contentFit={resolvedContentFit}
         cachePolicy={cachePolicy}

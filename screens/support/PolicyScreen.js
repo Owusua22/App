@@ -3,6 +3,8 @@ import { View, FlatList, StyleSheet, Image } from 'react-native';
 import Text from '../../components/AppText';
 import { franko } from "../../theme/franko";
 
+const frankoLogo = require("../../assets/logo.png");
+
 const data = [
   {
     type: "header",
@@ -59,7 +61,7 @@ const PolicyScreen = () => {
     if (item.type === "header") {
       return (
         <View style={styles.header}>
-          <Image source={require("../../assets/logo.png")} style={styles.logo} resizeMode="contain" />
+          <Image source={frankoLogo} style={styles.logo} resizeMode="contain" />
           <Text style={styles.companyTitle}>{item.title}</Text>
           <Text style={styles.policyTitle}>{item.subtitle}</Text>
         </View>

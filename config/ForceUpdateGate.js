@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, TouchableOpacity, Linking, Platform, ActivityIndicator, StyleSheet, AppState } from 'react-native';
 import Text from '../components/AppText';
 import * as Application from "expo-application";
+import * as SplashScreen from "expo-splash-screen";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -145,6 +146,12 @@ export default function ForceUpdateGate({ children }) {
       setOpeningStore(false);
     }
   }, [storeUrl]);
+
+  useEffect(() => {
+    if (!loading && blocked) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [loading, blocked]);
 
   if (loading) {
     return (

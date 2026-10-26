@@ -19,7 +19,7 @@ import {
   Mail,
   ExternalLink,
 } from "lucide-react-native";
-import logo from '../../assets/frankoIcon.png';
+const logo = require('../../assets/frankoIcon.png');
 
 const TermsScreen = () => {
   const navigation = useNavigation();

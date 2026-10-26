@@ -10,6 +10,7 @@ import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { fetchProducts } from "../redux/slice/productSlice";
 import { useCatalogRevalidation } from '../hooks/useCatalogRevalidation';
 
+const frankoLogo = require("../assets/frankoIcon.png");
 const screenWidth = Dimensions.get("window").width;
 
 const formatPrice = (price) =>
@@ -52,8 +53,9 @@ export default function ProductsComponent() {
     <View style={styles.skeletonCard}>
       <View style={styles.skeletonBackgroundLogo}>
         <Image
-          source={require("../assets/frankoIcon.png")}
+          source={frankoLogo}
           style={styles.skeletonLogo}
+          resizeMode="contain"
         />
       </View>
       <View style={styles.skeletonImage} />
@@ -205,5 +207,39 @@ const styles = createWebSafeStyles({
     color: "#fff",
     fontSize: 12,
     fontWeight: "bold",
+  },
+  skeletonCard: {
+    flex: 1,
+    margin: 8,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: "#fff",
+    maxWidth: "48%",
+    overflow: "hidden",
+  },
+  skeletonBackgroundLogo: {
+    height: 100,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  skeletonLogo: {
+    width: 60,
+    height: 60,
+    opacity: 0.2,
+  },
+  skeletonImage: {
+    height: 16,
+    backgroundColor: "#EAF1E9",
+    borderRadius: 4,
+    marginTop: 8,
+  },
+  skeletonText: {
+    height: 12,
+    backgroundColor: "#EAF1E9",
+    borderRadius: 4,
+    marginTop: 6,
+  },
+  skeletonTextShort: {
+    width: "60%",
   },
 });

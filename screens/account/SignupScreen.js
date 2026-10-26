@@ -14,6 +14,7 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
 const { width, height } = Dimensions.get('window');
+const frankoLogo = require('../../assets/frankoIcon.png');
 
 const PASSWORD_RULES = [
   { id: 'length', label: '8+ characters', test: (p) => p.length >= 8 },
@@ -733,7 +734,7 @@ const SignupScreen = ({ visible = false, onClose = () => {}, onSuccess = () => {
               <TouchableOpacity style={styles.closeBtn} onPress={handleClose}>
                 <Text style={styles.closeBtnText}>×</Text>
               </TouchableOpacity>
-              <Image source={require('../../assets/frankoIcon.png')} style={styles.logo} resizeMode="contain" />
+              <Image source={frankoLogo} style={styles.logo} resizeMode="contain" />
               <Text style={styles.title}>{headings[authMode].title}</Text>
               <Text style={styles.subtitle}>{headings[authMode].sub}</Text>
             </View>

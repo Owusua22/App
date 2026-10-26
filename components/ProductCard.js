@@ -9,8 +9,9 @@ import { addToWishlist } from '../redux/wishlistSlice';
 import { Feather, FontAwesome } from "@expo/vector-icons";
 import CatalogProductCard, { CATALOG_CARD_HEIGHT } from './CatalogProductCard';
 import CachedImage from './CachedImage';
-import frankoLogo from '../assets/frankoIcon.png';
 import { preloadProductImages, resolveProductImageUri } from '../utils/ImageCache';
+
+const frankoLogo = require('../assets/frankoIcon.png');
 
 const CARD_MARGIN = 18; // 160px card + 10px left + 8px right
 const CARD_WIDTH = 160;

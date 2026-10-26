@@ -14,11 +14,12 @@ import CatalogFetchNotice from './CatalogFetchNotice';
 import { refreshCatalog } from '../utils/catalogRefresh';
 import { addToCart } from "../redux/slice/cartSlice";
 import { addToWishlist } from "../redux/wishlistSlice";
-import frankoLogo from "../assets/frankoIcon.png";
 import {
   preloadProductImages,
   resolveProductImageUri,
 } from "../utils/ImageCache";
+
+const frankoLogo = require("../assets/frankoIcon.png");
 
 const MAX_GRID_WIDTH = 1100;
 const CARD_WIDTH = 120;

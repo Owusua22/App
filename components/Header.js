@@ -7,6 +7,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { loadCart } from '../redux/slice/cartSlice';
 
 const DEALS_SHOWROOM = '1e93aeb7-bba7-4bd4-b017-ea3267047d46';
+const FRANKO_LOGO = require('../assets/logo.png');
 const QUICK = [
   { label: 'Deals', route: 'showroom', params: { showRoomID: DEALS_SHOWROOM } },
   { label: 'Phones', route: 'Phones' },
@@ -31,7 +32,7 @@ function Header() {
     <View style={styles.header}>
       <View style={styles.topRow}>
         <Pressable onPress={() => navigation.navigate('Home')} accessibilityRole="button" accessibilityLabel="Franko home" style={[styles.logoTouch, width < 350 && styles.logoCompact]}>
-          <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
+          <Image source={FRANKO_LOGO} style={[styles.logo, width < 350 && styles.logoCompact]} resizeMode="contain" />
         </Pressable>
         <Pressable onPress={() => navigation.navigate('Search')} style={styles.search} accessibilityRole="search" accessibilityLabel="Search Franko products">
           <Feather name="search" size={17} color="#8C9B91" />
@@ -65,7 +66,7 @@ const styles = StyleSheet.create({
   topRow: { height: 60, flexDirection: 'row', alignItems: 'center', paddingLeft: 4, paddingRight: 8, gap: 5, maxWidth: 920, width: '100%', alignSelf: 'center' },
   logoTouch: { width: 81, alignItems: 'flex-start', justifyContent: 'center' },
   logoCompact: { width: 69 },
-  logo: { width: '100%', height: 38 },
+  logo: { width: 81, height: 38 },
   search: { minWidth: 0, height: 40, borderWidth: 1, borderColor: '#E2E9E4', borderRadius: 8, paddingHorizontal: 11, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#FFFFFF' },
   placeholder: { color: '#A0AAA2', fontSize: 11, flex: 1, flexShrink: 1 },
   cart: { width: 30, height: 40, justifyContent: 'center', alignItems: 'center' },

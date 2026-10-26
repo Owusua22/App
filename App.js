@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Text from './components/AppText';
 import * as SplashScreen from 'expo-splash-screen';
+import { Asset, ANDROID_EMBEDDED_URL_BASE_RESOURCE } from 'expo-asset';
 
 import { Provider, useDispatch, useSelector } from "react-redux";
 import { PersistGate } from "redux-persist/integration/react";
@@ -95,15 +96,80 @@ import { notifyScrollActivity } from './utils/scrollActivity';
 /* ------------------------------------------------------------------ */
 /* Native splash hand-off                                              */
 /* ------------------------------------------------------------------ */
-// Hold the native splash (a plain green screen, configured in app.json) until
-// the Welcome screen has painted, so the default Expo asset, a white view or a
-// spinner never shows between app launch and the Welcome screen.
+// Hold the native splash (configured via expo-splash-screen in app.json) until
+// the Welcome screen and bundled brand logo are ready, so a blank view or
+// unstyled flash never shows between app launch and the Welcome screen.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const hideSplash = () => SplashScreen.hideAsync().catch(() => {});
 
 // Last-resort safety net: never leave the native splash up forever.
 setTimeout(hideSplash, 8000);
+
+const FRANKO_LOGO = require('./assets/logo.png');
+const FRANKO_ICON = require('./assets/frankoIcon.png');
+
+try {
+  const setTransformer = Image?.resolveAssetSource?.setCustomSourceTransformer;
+  if (typeof setTransformer === 'function') {
+    setTransformer((resolver) => {
+      try {
+        if (resolver?.asset && 'fileHashes' in resolver.asset && resolver.asset.fileHashes) {
+          const asset = Asset.fromMetadata(resolver.asset);
+          if (asset?.uri?.startsWith(ANDROID_EMBEDDED_URL_BASE_RESOURCE)) {
+            return resolver.resourceIdentifierWithoutScale();
+          }
+          const candidateUri = asset?.downloaded ? asset.localUri : asset?.uri;
+          if (
+            candidateUri &&
+            !(resolver.isLoadedFromServer?.() && candidateUri.includes('classic-assets.eascdn.net'))
+          ) {
+            return resolver.fromSource(candidateUri);
+          }
+        }
+        return resolver.defaultAsset();
+      } catch {
+        return resolver.defaultAsset();
+      }
+    });
+  }
+} catch {
+  // Ignore on platforms where setCustomSourceTransformer is not used
+}
+
+/* ------------------------------------------------------------------ */
+/* StartupBrandSplash (shown while fonts / persisted store initialize) */
+/* ------------------------------------------------------------------ */
+const StartupBrandSplash = () => {
+  const [layoutDone, setLayoutDone] = useState(false);
+  const [imageDone, setImageDone] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setImageDone(true), 300);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!layoutDone || !imageDone) return undefined;
+    const raf = requestAnimationFrame(hideSplash);
+    return () => cancelAnimationFrame(raf);
+  }, [layoutDone, imageDone]);
+
+  return (
+    <View style={styles.startupSplashContainer} onLayout={() => setLayoutDone(true)}>
+      <RNStatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <Image
+        source={FRANKO_LOGO}
+        style={styles.startupSplashLogo}
+        resizeMode="contain"
+        fadeDuration={0}
+        onLoad={() => setImageDone(true)}
+        onError={() => setImageDone(true)}
+      />
+      <ActivityIndicator size="small" color="#059669" style={styles.startupSplashSpinner} />
+    </View>
+  );
+};
 
 // How long the Welcome screen stays up once it is visible.
 const WELCOME_DURATION_MS = 1200;
@@ -121,12 +187,13 @@ const WELCOME_DOTS = Array.from({ length: 20 }, () => ({
 const WelcomeScreen = ({ onReady }) => {
   const [loading, setLoading] = useState(true);
   const [layoutReady, setLayoutReady] = useState(false);
+  const [logoReady, setLogoReady] = useState(false);
   const dispatch = useDispatch();
   const insets = useSafeAreaInsets();
 
-  const [fadeAnim] = useState(() => new Animated.Value(0));
-  const [scaleAnim] = useState(() => new Animated.Value(0.3));
-  const [slideAnim] = useState(() => new Animated.Value(50));
+  const [fadeAnim] = useState(() => new Animated.Value(1));
+  const [scaleAnim] = useState(() => new Animated.Value(0.92));
+  const [slideAnim] = useState(() => new Animated.Value(20));
   const [pulseAnim] = useState(() => new Animated.Value(1));
 
   useEffect(() => {
@@ -134,16 +201,21 @@ const WelcomeScreen = ({ onReady }) => {
   }, [dispatch]);
 
   useEffect(() => {
-    // Wait until the gradient has been laid out, then drop the native splash
-    // and start the entrance animation.
-    if (!layoutReady) return undefined;
+    const fallback = setTimeout(() => setLogoReady(true), 250);
+    return () => clearTimeout(fallback);
+  }, []);
+
+  useEffect(() => {
+    // Wait until the gradient has been laid out and the logo is ready, then
+    // drop the native splash and start the entrance animation.
+    if (!layoutReady || !logoReady) return undefined;
 
     const raf = requestAnimationFrame(hideSplash);
 
     const entrance = Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 700,
+        duration: 350,
         useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
@@ -154,8 +226,7 @@ const WelcomeScreen = ({ onReady }) => {
       }),
       Animated.timing(slideAnim, {
         toValue: 0,
-        duration: 550,
-        delay: 100,
+        duration: 400,
         useNativeDriver: true,
       }),
     ]);
@@ -190,7 +261,7 @@ const WelcomeScreen = ({ onReady }) => {
       entrance.stop();
       pulseLoop.stop();
     };
-  }, [layoutReady, onReady, fadeAnim, scaleAnim, slideAnim, pulseAnim]);
+  }, [layoutReady, logoReady, onReady, fadeAnim, scaleAnim, slideAnim, pulseAnim]);
 
   return (
     <View style={styles.welcomeWrapper} onLayout={() => setLayoutReady(true)}>
@@ -227,9 +298,12 @@ const WelcomeScreen = ({ onReady }) => {
           >
             <View style={styles.logoShadow}>
               <Image
-                source={require('./assets/frankoIcon.png')}
+                source={FRANKO_ICON}
                 style={styles.logo}
                 resizeMode="contain"
+                fadeDuration={0}
+                onLoad={() => setLogoReady(true)}
+                onError={() => setLogoReady(true)}
               />
             </View>
           </Animated.View>
@@ -370,7 +444,7 @@ const AuthLoadingScreen = () => {
       <RNStatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
       <View style={[styles.authLoadingContent, { paddingTop: insets.top + 50 }]}>
         <Image
-          source={require('./assets/frankoIcon.png')}
+          source={FRANKO_LOGO}
           style={styles.authLoadingLogo}
           resizeMode="contain"
         />
@@ -482,13 +556,19 @@ const App = () => {
     Inter_700Bold, Inter_800ExtraBold, Inter_900Black,
   });
 
-  // The native splash is still visible while fonts and the persisted store
-  // load, so render nothing here instead of a white view or a spinner.
-  if (!fontsLoaded && !fontError) return null;
+  useEffect(() => {
+    Asset.loadAsync([FRANKO_LOGO, FRANKO_ICON]).catch(() => {});
+  }, []);
+
+  // Show the branded Franko splash immediately while fonts load so the user
+  // never sees a blank screen during or right after JS bundling.
+  if (!fontsLoaded && !fontError) {
+    return <StartupBrandSplash />;
+  }
 
   return (
     <Provider store={store}>
-      <PersistGate loading={null} persistor={persistor}>
+      <PersistGate loading={<StartupBrandSplash />} persistor={persistor}>
         <SafeAreaProvider>
           <ForceUpdateGate>
             <AppContent />
@@ -531,6 +611,19 @@ const styles = createWebSafeStyles({
     fontSize: 12,
     fontWeight: "700",
   },
+  startupSplashContainer: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  startupSplashLogo: {
+    width: 200,
+    height: 120,
+  },
+  startupSplashSpinner: {
+    marginTop: 24,
+  },
   authLoadingContainer: {
     flex: 1,
     backgroundColor: "#FFFFFF",
@@ -542,10 +635,9 @@ const styles = createWebSafeStyles({
     paddingHorizontal: 20,
   },
   authLoadingLogo: {
-    width: 100,
+    width: 140,
     height: 100,
     marginBottom: 30,
-    opacity: 0.8,
   },
   authLoadingIndicator: {
     marginBottom: 20,
@@ -593,15 +685,21 @@ const styles = createWebSafeStyles({
     justifyContent: "center",
   },
   logoShadow: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
   logo: {
-    width: 120,
-    height: 120,
+    width: 150,
+    height: 90,
   },
   textContainer: {
     alignItems: "center",
