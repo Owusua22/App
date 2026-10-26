@@ -60,7 +60,8 @@
             "targetSdkVersion": 36
           }
         }
-      ]
+      ],
+      "expo-splash-screen"
     ]
   }
 }
