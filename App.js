@@ -1,8 +1,8 @@
 import { createWebSafeStyles } from './theme/webSafeStyles';
 // App.js
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  StyleSheet,
+ 
   View,
   ActivityIndicator,
   Image,
@@ -96,9 +96,6 @@ import { notifyScrollActivity } from './utils/scrollActivity';
 /* ------------------------------------------------------------------ */
 /* Native splash hand-off                                              */
 /* ------------------------------------------------------------------ */
-// Hold the native splash (configured via expo-splash-screen in app.json) until
-// the Welcome screen and bundled brand logo are ready, so a blank view or
-// unstyled flash never shows between app launch and the Welcome screen.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const hideSplash = () => SplashScreen.hideAsync().catch(() => {});
@@ -184,12 +181,21 @@ const WELCOME_DOTS = Array.from({ length: 20 }, () => ({
 /* ------------------------------------------------------------------ */
 /* WelcomeScreen                                                       */
 /* ------------------------------------------------------------------ */
+// The Welcome screen is a standalone view. It is NOT a navigation route and
+// no navigator is mounted while it is visible, so no screen (Signup included)
+// can render on top of or behind it.
 const WelcomeScreen = ({ onReady }) => {
   const [loading, setLoading] = useState(true);
   const [layoutReady, setLayoutReady] = useState(false);
   const [logoReady, setLogoReady] = useState(false);
   const dispatch = useDispatch();
   const insets = useSafeAreaInsets();
+
+  // Keep the latest onReady without restarting the timer if the parent re-renders.
+  const onReadyRef = useRef(onReady);
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
 
   const [fadeAnim] = useState(() => new Animated.Value(1));
   const [scaleAnim] = useState(() => new Animated.Value(0.92));
@@ -206,53 +212,28 @@ const WelcomeScreen = ({ onReady }) => {
   }, []);
 
   useEffect(() => {
-    // Wait until the gradient has been laid out and the logo is ready, then
-    // drop the native splash and start the entrance animation.
     if (!layoutReady || !logoReady) return undefined;
 
     const raf = requestAnimationFrame(hideSplash);
 
     const entrance = Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 350,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        tension: 50,
-        friction: 7,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 400,
-        useNativeDriver: true,
-      }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
+      Animated.spring(scaleAnim, { toValue: 1, tension: 50, friction: 7, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
     ]);
     entrance.start();
 
     const pulseLoop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.1,
-          duration: 1500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1500,
-          useNativeDriver: true,
-        }),
+        Animated.timing(pulseAnim, { toValue: 1.1, duration: 1500, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
       ])
     );
     pulseLoop.start();
 
-    // Brief branded transition. Authentication continues independently in
-    // AppContent, so this never blocks the app behind a fixed delay.
     const readyTimer = setTimeout(() => {
       setLoading(false);
-      onReady();
+      onReadyRef.current?.();
     }, WELCOME_DURATION_MS);
 
     return () => {
@@ -261,15 +242,11 @@ const WelcomeScreen = ({ onReady }) => {
       entrance.stop();
       pulseLoop.stop();
     };
-  }, [layoutReady, logoReady, onReady, fadeAnim, scaleAnim, slideAnim, pulseAnim]);
+  }, [layoutReady, logoReady, fadeAnim, scaleAnim, slideAnim, pulseAnim]);
 
   return (
     <View style={styles.welcomeWrapper} onLayout={() => setLayoutReady(true)}>
-      <RNStatusBar
-        barStyle="light-content"
-        translucent
-        backgroundColor="transparent"
-      />
+      <RNStatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
       <LinearGradient
         colors={["#BBF7D0", "#10B981", "#059669"]}
@@ -293,9 +270,7 @@ const WelcomeScreen = ({ onReady }) => {
             },
           ]}
         >
-          <Animated.View
-            style={[styles.logoContainer, { transform: [{ scale: pulseAnim }] }]}
-          >
+          <Animated.View style={[styles.logoContainer, { transform: [{ scale: pulseAnim }] }]}>
             <View style={styles.logoShadow}>
               <Image
                 source={FRANKO_ICON}
@@ -308,9 +283,7 @@ const WelcomeScreen = ({ onReady }) => {
             </View>
           </Animated.View>
 
-          <Animated.View
-            style={[styles.textContainer, { transform: [{ translateY: slideAnim }] }]}
-          >
+          <Animated.View style={[styles.textContainer, { transform: [{ translateY: slideAnim }] }]}>
             <Text style={styles.welcomeTitle}>Welcome to</Text>
             <Text style={styles.companyName}>Franko Trading Ent</Text>
             <Text style={styles.tagline}>Your trusted electronics partner</Text>
@@ -376,6 +349,8 @@ const SignInRoute = () => (
 /* ------------------------------------------------------------------ */
 /* App stack                                                           */
 /* ------------------------------------------------------------------ */
+// Home is always the initial route. Signup / SignIn are only reachable by an
+// explicit navigation after the Welcome screen has been dismissed.
 const AppStack = () => (
   <Stack.Navigator
     initialRouteName="Home"
@@ -443,16 +418,8 @@ const AuthLoadingScreen = () => {
     <View style={styles.authLoadingContainer}>
       <RNStatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
       <View style={[styles.authLoadingContent, { paddingTop: insets.top + 50 }]}>
-        <Image
-          source={FRANKO_LOGO}
-          style={styles.authLoadingLogo}
-          resizeMode="contain"
-        />
-        <ActivityIndicator
-          size="large"
-          color="#086942"
-          style={styles.authLoadingIndicator}
-        />
+        <Image source={FRANKO_LOGO} style={styles.authLoadingLogo} resizeMode="contain" />
+        <ActivityIndicator size="large" color="#086942" style={styles.authLoadingIndicator} />
         <Text style={styles.authLoadingText}>Loading...</Text>
       </View>
     </View>
@@ -488,6 +455,12 @@ const AppContent = () => {
   const isAuthChecked = useSelector(selectIsAuthChecked);
   const handleReady = useCallback(() => setShowWelcome(false), []);
 
+  // True only once the Welcome screen is gone AND auth has been resolved.
+  // Until then, no auth redirect (e.g. to Signup) is allowed to run.
+  const canRedirect = !showWelcome && !isInitializing && isAuthChecked;
+  const canRedirectRef = useRef(false);
+  canRedirectRef.current = canRedirect;
+
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
       const hasInternet = state.isConnected && state.isInternetReachable !== false;
@@ -521,18 +494,22 @@ const AppContent = () => {
     return () => subscription?.remove?.();
   }, [isInitializing]);
 
-  // Auth can expire before the welcome view has mounted the navigator.
+  // Run any queued auth redirect only after the Welcome screen has been
+  // dismissed and the navigator is mounted.
   useEffect(() => {
-    if (!showWelcome && !isInitializing) {
-      const timer = setTimeout(flushAuthRedirect, 0);
-      return () => clearTimeout(timer);
-    }
-    return undefined;
-  }, [showWelcome, isInitializing]);
+    if (!canRedirect) return undefined;
+    const timer = setTimeout(flushAuthRedirect, 0);
+    return () => clearTimeout(timer);
+  }, [canRedirect]);
 
-  // Keep one NavigationContainer mounted through welcome, auth, and app states.
+  const handleNavStateChange = useCallback(() => {
+    if (canRedirectRef.current) flushAuthRedirect();
+  }, []);
+
+  // Keep one NavigationContainer mounted so navigationRef is stable, but only
+  // mount the navigator (AppStack) after Welcome + auth are done.
   return (
-    <NavigationContainer ref={navigationRef} onStateChange={flushAuthRedirect}>
+    <NavigationContainer ref={navigationRef} onStateChange={handleNavStateChange}>
       {!isConnected && <NoInternetBanner />}
       {showWelcome ? (
         <WelcomeScreen onReady={handleReady} />
@@ -560,8 +537,6 @@ const App = () => {
     Asset.loadAsync([FRANKO_LOGO, FRANKO_ICON]).catch(() => {});
   }, []);
 
-  // Show the branded Franko splash immediately while fonts load so the user
-  // never sees a blank screen during or right after JS bundling.
   if (!fontsLoaded && !fontError) {
     return <StartupBrandSplash />;
   }
@@ -585,17 +560,9 @@ export default App;
 /* Styles                                                              */
 /* ------------------------------------------------------------------ */
 const styles = createWebSafeStyles({
-  container: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-  },
-  mainContainer: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
-  contentContainer: {
-    flex: 1,
-  },
+  container: { flex: 1, backgroundColor: "#FFFFFF" },
+  mainContainer: { flex: 1, backgroundColor: "#fff" },
+  contentContainer: { flex: 1 },
   offlineContainer: {
     position: "absolute",
     left: 0,
@@ -606,42 +573,24 @@ const styles = createWebSafeStyles({
     alignItems: "center",
     zIndex: 999,
   },
-  offlineText: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "700",
-  },
+  offlineText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
   startupSplashContainer: {
     flex: 1,
     backgroundColor: "#FFFFFF",
     justifyContent: "center",
     alignItems: "center",
   },
-  startupSplashLogo: {
-    width: 200,
-    height: 120,
-  },
-  startupSplashSpinner: {
-    marginTop: 24,
-  },
-  authLoadingContainer: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-  },
+  startupSplashLogo: { width: 200, height: 120 },
+  startupSplashSpinner: { marginTop: 24 },
+  authLoadingContainer: { flex: 1, backgroundColor: "#FFFFFF" },
   authLoadingContent: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 20,
   },
-  authLoadingLogo: {
-    width: 140,
-    height: 100,
-    marginBottom: 30,
-  },
-  authLoadingIndicator: {
-    marginBottom: 20,
-  },
+  authLoadingLogo: { width: 140, height: 100, marginBottom: 30 },
+  authLoadingIndicator: { marginBottom: 20 },
   authLoadingText: {
     fontSize: 16,
     color: "#4B5563",
@@ -650,10 +599,7 @@ const styles = createWebSafeStyles({
   },
 
   /* Welcome */
-  welcomeWrapper: {
-    flex: 1,
-    backgroundColor: "#10B981",
-  },
+  welcomeWrapper: { flex: 1, backgroundColor: "#10B981" },
   welcomeContainer: {
     flex: 1,
     justifyContent: "center",
@@ -661,13 +607,7 @@ const styles = createWebSafeStyles({
     position: "relative",
     overflow: "hidden",
   },
-  backgroundPattern: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
+  backgroundPattern: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 },
   patternDot: {
     position: "absolute",
     width: 4,
@@ -675,15 +615,8 @@ const styles = createWebSafeStyles({
     borderRadius: 2,
     backgroundColor: "#ffffff",
   },
-  contentWrapper: {
-    alignItems: "center",
-    zIndex: 1,
-  },
-  logoContainer: {
-    marginBottom: 30,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  contentWrapper: { alignItems: "center", zIndex: 1 },
+  logoContainer: { marginBottom: 30, alignItems: "center", justifyContent: "center" },
   logoShadow: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
@@ -697,14 +630,8 @@ const styles = createWebSafeStyles({
     alignItems: "center",
     justifyContent: "center",
   },
-  logo: {
-    width: 150,
-    height: 90,
-  },
-  textContainer: {
-    alignItems: "center",
-    marginBottom: 40,
-  },
+  logo: { width: 150, height: 90 },
+  textContainer: { alignItems: "center", marginBottom: 40 },
   welcomeTitle: {
     fontSize: 24,
     fontWeight: "300",
@@ -730,9 +657,7 @@ const styles = createWebSafeStyles({
     textAlign: "center",
     fontStyle: "italic",
   },
-  loadingContainer: {
-    alignItems: "center",
-  },
+  loadingContainer: { alignItems: "center" },
   loadingText: {
     marginTop: 15,
     fontSize: 16,

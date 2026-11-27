@@ -335,29 +335,8 @@ const ComboComponent = () => {
 
         {showStatusNotice && (
           <View style={styles.statusNotice}>
-            <View style={styles.statusLogoWrap}>
-              <CachedImage source={frankoLogo} style={styles.statusLogo} />
-            </View>
-            <View style={styles.statusCopy}>
-              <Text style={styles.statusTitle}>
-                {hasNetworkError ? "Connection issue" : "No new arrivals yet"}
-              </Text>
-              <Text style={styles.statusSubtitle}>
-                {hasNetworkError
-                  ? "Check your connection and try again."
-                  : "We’ll check again for fresh products."}
-              </Text>
-            </View>
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Retry loading products"
-              activeOpacity={0.82}
-              style={styles.retryButton}
-              onPress={loadProducts}
-            >
-              <FontAwesome name="refresh" size={12} color={COLORS.surface} />
-              <Text style={styles.retryText}>Retry</Text>
-            </TouchableOpacity>
+          
+         
           </View>
         )}
       </>

@@ -6,22 +6,10 @@
     "orientation": "default",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "developmentClient": false,
-    "splash": {
-      "image": "./assets/logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.poldark.mrfranky2",
       "buildNumber": "600008",
-      "splash": {
-        "image": "./assets/logo.png",
-        "resizeMode": "contain",
-        "backgroundColor": "#ffffff"
-      },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -29,12 +17,6 @@
     "android": {
       "package": "com.poldark.mrfranky2",
       "versionCode": 600009,
-      "targetSdkVersion": 36,
-      "splash": {
-        "image": "./assets/logo.png",
-        "resizeMode": "contain",
-        "backgroundColor": "#ffffff"
-      },
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#ffffff"
